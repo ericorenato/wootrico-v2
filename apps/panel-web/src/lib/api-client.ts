@@ -24,7 +24,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   const token = getToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const res = await fetch(path, { ...options, headers });
+  // Nunca usar o cache HTTP do navegador para chamadas de API: respostas como
+  // /api/setup/status são dinâmicas e, se cacheadas, geram estado obsoleto
+  // (ex: loop no wizard de setup achando que não foi concluído).
+  const res = await fetch(path, { ...options, headers, cache: 'no-store' });
   if (res.status === 204) return undefined as T;
 
   const data = await res.json().catch(() => ({}));

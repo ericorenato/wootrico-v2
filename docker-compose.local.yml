@@ -44,7 +44,11 @@ services:
 
   app:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
-    # Para buildar localmente em vez de puxar do Hub, comente a linha acima e descomente:
+    # Imagem multi-arch (amd64+arm64): o Docker baixa a variante nativa do host,
+    # sem emulação. Deixe WOOTRICO_PLATFORM vazio para auto-seleção; defina só se
+    # quiser forçar uma arquitetura específica (ex: linux/amd64).
+    platform: ${WOOTRICO_PLATFORM:-}
+    # Para buildar localmente em vez de puxar do Hub, comente a linha 'image' acima e descomente:
     # build: { context: ., dockerfile: Dockerfile }
     restart: unless-stopped
     env_file: .env
@@ -60,6 +64,7 @@ services:
 
   worker:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
+    platform: ${WOOTRICO_PLATFORM:-}
     # build: { context: ., dockerfile: Dockerfile }
     restart: unless-stopped
     env_file: .env

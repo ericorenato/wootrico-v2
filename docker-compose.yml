@@ -62,6 +62,7 @@ services:
 
   app:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
+    platform: ${WOOTRICO_PLATFORM:-}
     env_file: .env
     command: >-
       sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
@@ -79,6 +80,7 @@ services:
 
   worker:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
+    platform: ${WOOTRICO_PLATFORM:-}
     env_file: .env
     command: node apps/worker/dist/main.cjs
     networks: [wootrico]

@@ -24,6 +24,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, { origin: true, credentials: true });
 
+  // API responses are dynamic — never let the browser/proxy cache them.
+  // (Cached GET /api/setup/status caused the setup wizard to loop.)
+  app.addHook('onSend', async (req, reply) => {
+    if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store');
+  });
+
   // Tolerate bodyless POSTs and any content-type (best-effort JSON). Replaces the
   // strict default JSON parser that rejects empty bodies.
   const jsonParser = (_req: unknown, payload: NodeJS.ReadableStream, done: (e: Error | null, body?: unknown) => void) => {
