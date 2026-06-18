@@ -14,6 +14,7 @@ function mapMediaType(m: Record<string, any>): MessageType | null {
   if (raw === 'ptt' || raw === 'audio' || typeName === 'audiomessage') return 'audio';
   if (raw === 'video' || typeName === 'videomessage') return 'video';
   if (raw === 'document' || typeName === 'documentmessage') return 'document';
+  if (raw === 'sticker' || typeName === 'stickermessage') return 'image';
   return null;
 }
 
@@ -55,33 +56,52 @@ export function parseUazapiInbound(
     };
   }
 
-  const senderRaw = stripJid(m.sender) || stripJid(m.chatid);
-  const { digits } = senderRaw ? normalizePhone(senderRaw, ctx.defaultCountry) : { digits: null };
-
   const isGroup =
     m.isGroup === true ||
     (typeof m.chatid === 'string' && m.chatid.endsWith('@g.us')) ||
     (typeof chat.wa_chatid === 'string' && chat.wa_chatid.endsWith('@g.us'));
 
-  const text = content.text ?? m.text ?? content.caption ?? '';
+  // uazapi exposes the sender's phone (sender_pn) and LID (sender_lid) directly.
+  // The contact is always the OTHER party: for an outgoing (fromMe) DM the
+  // sender is US, so the contact comes from the chat id instead.
+  const fromMe = !!m.fromMe;
+  const pnRaw =
+    !isGroup && fromMe
+      ? stripJid(m.chatid) || stripJid(m.sender_pn)
+      : stripJid(m.sender_pn) || stripJid(m.sender) || stripJid(m.chatid);
+  const { digits } = pnRaw ? normalizePhone(pnRaw, ctx.defaultCountry) : { digits: null };
+  const lidRaw = stripJid(m.sender_lid) || stripJid(m.lid);
+
+  // Reaction: the emoji is in m.reaction. Chatwoot has no reaction type, so we
+  // mirror it as a short text threaded under the reacted message. Empty = removed.
+  const reactionEmoji = (m.reaction ?? '').toString().trim();
+  const isReaction =
+    messageTypeLc === 'reactionmessage' || (!!m.reaction && !content.text && !m.text);
+  if (isReaction && !reactionEmoji) {
+    return { ...base, kind: 'ignored' };
+  }
+
+  const text = isReaction
+    ? `reagiu com ${reactionEmoji}`
+    : (content.text ?? m.text ?? content.caption ?? '');
 
   let media: InboundMedia | null = null;
-  const mediaType = mapMediaType(m);
+  const mediaType = isReaction ? null : mapMediaType(m);
   if (mediaType) {
     media = {
       type: mediaType,
       url: content.URL ?? content.url,
       mimeType: content.mimetype,
       fileName: content.fileName ?? content.title,
-      caption: text,
+      caption: content.caption ?? '',
     };
   }
 
   const result: NormalizedInboundMessage = {
     ...base,
     phone: digits,
-    lid: stripJid(m.lid) || null,
-    jid: senderRaw || null,
+    lid: lidRaw || null,
+    jid: pnRaw || null,
     text,
     media,
     name: chat.name ?? chat.wa_name ?? chat.wa_contactName ?? body.name ?? null,
@@ -91,7 +111,8 @@ export function parseUazapiInbound(
     isGroup: !!isGroup,
     groupId: isGroup ? (chat.wa_chatid ?? m.chatid ?? null) : null,
     groupName: isGroup ? (m.groupName ?? chat.name ?? null) : null,
-    replyToProviderMessageId: content.contextInfo?.stanzaID ?? null,
+    replyToProviderMessageId:
+      m.quoted ?? content.contextInfo?.stanzaID ?? content.contextInfo?.stanzaId ?? null,
     editedProviderMessageId: m.edited ?? m.editMessageId ?? null,
   };
 
