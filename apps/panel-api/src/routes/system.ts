@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '@wootrico/config';
 import { evaluateLicense, getLicenseState } from '@wootrico/license-client';
+import { pingRabbit } from '@wootrico/queue';
+import { pingRedis } from '@wootrico/cache';
 import { getPublicBaseUrl } from '../lib/webhook-urls.js';
 
 /** System configuration overview — what's set up and what's in use. */
@@ -70,5 +72,27 @@ export default async function systemRoutes(app: FastifyInstance) {
         items: integrations,
       },
     };
+  });
+
+  // Live connection diagnostics — tests Postgres/RabbitMQ/Redis from INSIDE the
+  // running container (so it validates exactly what the app uses, no installer).
+  app.post('/api/system/diagnostics', guard, async () => {
+    const testPostgres = async () => {
+      const t0 = Date.now();
+      try {
+        await app.prisma.$queryRaw`SELECT 1`;
+        return { ok: true, detail: `ok (${Date.now() - t0}ms)` };
+      } catch (err) {
+        return { ok: false, detail: (err as Error).message };
+      }
+    };
+
+    const [postgres, rabbitmq, redis] = await Promise.all([
+      testPostgres(),
+      pingRabbit(),
+      pingRedis(),
+    ]);
+
+    return { postgres, rabbitmq, redis };
   });
 }

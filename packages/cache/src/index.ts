@@ -17,6 +17,42 @@ export async function closeRedis(): Promise<void> {
   }
 }
 
+export interface PingResult {
+  ok: boolean;
+  detail?: string;
+}
+
+/** Ping the active Redis (the one the app is actually using). */
+export async function pingRedis(): Promise<PingResult> {
+  try {
+    const pong = await getRedis().ping();
+    return { ok: pong === 'PONG', detail: pong };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
+/** Connect to an arbitrary Redis URL, PING, and disconnect. Used to validate a
+ *  new connection string BEFORE persisting it (test-before-apply). */
+export async function testRedisUrl(url: string): Promise<PingResult> {
+  let client: Redis | undefined;
+  try {
+    client = new Redis(url, {
+      maxRetriesPerRequest: 1,
+      connectTimeout: 8000,
+      lazyConnect: true,
+      retryStrategy: () => null,
+    });
+    await client.connect();
+    const pong = await client.ping();
+    return { ok: pong === 'PONG', detail: pong };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  } finally {
+    if (client) client.disconnect();
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─────────────────────────── distributed lock ───────────────────────────

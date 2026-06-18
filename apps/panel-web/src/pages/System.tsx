@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Badge, Card, Eyebrow } from '../components/ui';
-import { getSystemInfo, type SystemInfo } from '../lib/system-api';
+import { Badge, Button, Card, Eyebrow } from '../components/ui';
+import {
+  getSystemInfo,
+  runDiagnostics,
+  type Diagnostics,
+  type SystemInfo,
+} from '../lib/system-api';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -31,15 +36,52 @@ const STATUS_TONE: Record<string, 'ok' | 'neutral' | 'error'> = {
   blocked: 'error',
 };
 
+function ConnRow({ label, r }: { label: string; r?: { ok: boolean; detail?: string } }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
+      <span className="text-sm text-neutral-200">{label}</span>
+      {r ? (
+        <span className="flex items-center gap-2 min-w-0">
+          {r.detail && (
+            <span className="text-xs text-neutral-500 truncate max-w-[18rem]" title={r.detail}>
+              {r.detail}
+            </span>
+          )}
+          <Badge tone={r.ok ? 'ok' : 'error'}>{r.ok ? 'ok' : 'falhou'}</Badge>
+        </span>
+      ) : (
+        <span className="text-xs text-neutral-600">—</span>
+      )}
+    </div>
+  );
+}
+
 export default function System() {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [error, setError] = useState('');
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
 
   useEffect(() => {
     getSystemInfo()
       .then(setInfo)
       .catch(() => setError('Falha ao carregar informações do sistema.'));
   }, []);
+
+  async function testConnections() {
+    setDiagBusy(true);
+    try {
+      setDiag(await runDiagnostics());
+    } catch {
+      setDiag({
+        postgres: { ok: false, detail: 'falha na requisição' },
+        rabbitmq: { ok: false, detail: 'falha na requisição' },
+        redis: { ok: false, detail: 'falha na requisição' },
+      });
+    } finally {
+      setDiagBusy(false);
+    }
+  }
 
   return (
     <div className="max-w-4xl">
@@ -78,6 +120,24 @@ export default function System() {
               }
             />
             <Row label="Ambiente" value={info.app.nodeEnv} />
+          </Card>
+
+          {/* Conexões */}
+          <Card>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-medium text-white">Conexões</h3>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Testa Postgres, RabbitMQ e Redis de dentro do container.
+                </p>
+              </div>
+              <Button type="button" variant="ghost" onClick={testConnections} loading={diagBusy}>
+                Testar conexões
+              </Button>
+            </div>
+            <ConnRow label="Postgres" r={diag?.postgres} />
+            <ConnRow label="RabbitMQ" r={diag?.rabbitmq} />
+            <ConnRow label="Redis" r={diag?.redis} />
           </Card>
 
           {/* Licença */}

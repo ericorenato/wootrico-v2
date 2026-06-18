@@ -36,3 +36,17 @@ export interface SystemInfo {
 }
 
 export const getSystemInfo = () => api<SystemInfo>('/api/system/info');
+
+export interface PingResult {
+  ok: boolean;
+  detail?: string;
+}
+
+export interface Diagnostics {
+  postgres: PingResult;
+  rabbitmq: PingResult;
+  redis: PingResult;
+}
+
+export const runDiagnostics = () =>
+  api<Diagnostics>('/api/system/diagnostics', { method: 'POST' });

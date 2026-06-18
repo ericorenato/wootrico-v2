@@ -26,6 +26,9 @@ import { ApiError } from '../lib/api-client';
 
 type TestState = { ok?: boolean; detail?: string; busy?: boolean };
 
+type FlowStatus = 'pending' | 'running' | 'ok' | 'info' | 'fail';
+type FlowStep = { key: string; label: string; status: FlowStatus; detail?: string };
+
 export default function IntegrationForm() {
   const { id } = useParams();
   const editing = !!id;
@@ -68,16 +71,10 @@ export default function IntegrationForm() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // inbox handling
-  const [createInbox, setCreateInbox] = useState(true);
-  const [inboxChk, setInboxChk] = useState<{
-    busy?: boolean;
-    done?: boolean;
-    exists?: boolean;
-    channelType?: string | null;
-    isApi?: boolean;
-    error?: string;
-  }>({});
+  // create flow: a sequence of steps shown in a loading overlay
+  // (testar Chatwoot → verificar inbox → criar integração).
+  const [flow, setFlow] = useState<FlowStep[] | null>(null);
+  const [flowDone, setFlowDone] = useState(false);
   const [result, setResult] = useState<{
     inbox: InboxResult;
     webhookUrls: { provider: string; chatwoot: string };
@@ -155,18 +152,92 @@ export default function IntegrationForm() {
     }
   }
 
-  async function runInboxCheck() {
-    setInboxChk({ busy: true });
+  // Run the guided create flow: test Chatwoot → check inbox (create-new vs
+  // update-webhook) → create the integration automatically. No manual buttons.
+  async function runCreateFlow() {
+    const steps: FlowStep[] = [
+      { key: 'chatwoot', label: 'Testando conexão com o Chatwoot', status: 'running' },
+      { key: 'inbox', label: 'Verificando a caixa (inbox)', status: 'pending' },
+      { key: 'create', label: 'Criando a integração', status: 'pending' },
+    ];
+    const set = (i: number, patch: Partial<FlowStep>) =>
+      setFlow((prev) => {
+        const next: FlowStep[] = (prev ?? steps).map((s) => ({ ...s }));
+        next[i] = { ...next[i], ...patch } as FlowStep;
+        return next;
+      });
+    setFlowDone(false);
+    setFlow(steps.map((s) => ({ ...s })));
+
+    // 1) Chatwoot connection
     try {
-      const r = await checkInbox({
+      const cw = await testChatwoot({
+        chatwootBaseUrl: cwBaseUrl,
+        chatwootApiToken: cwToken,
+        chatwootAccountId: cwAccount,
+      });
+      if (!cw.ok) {
+        set(0, { status: 'fail', detail: cw.detail ?? 'conexão recusada' });
+        setFlowDone(true);
+        return;
+      }
+      set(0, { status: 'ok', detail: 'conectado' });
+    } catch (e) {
+      set(0, { status: 'fail', detail: (e as Error).message });
+      setFlowDone(true);
+      return;
+    }
+
+    // 2) Inbox check — tell the user what will happen
+    set(1, { status: 'running' });
+    try {
+      const chk = await checkInbox({
         chatwootBaseUrl: cwBaseUrl,
         chatwootApiToken: cwToken,
         chatwootAccountId: cwAccount,
         chatwootInboxName: cwInbox,
       });
-      setInboxChk({ done: true, ...r });
+      if (!chk.exists) {
+        set(1, { status: 'info', detail: 'Não existe — uma nova caixa (canal API) será criada.' });
+      } else if (chk.isApi) {
+        set(1, { status: 'ok', detail: 'Já existe (canal API) — o webhook será atualizado.' });
+      } else {
+        set(1, {
+          status: 'info',
+          detail: `Já existe (canal ${chk.channelType ?? '?'}) — o webhook precisará ser configurado manualmente.`,
+        });
+      }
     } catch (e) {
-      setInboxChk({ done: true, error: (e as Error).message });
+      // Non-fatal: creation still proceeds (createIfMissing handles it).
+      set(1, { status: 'info', detail: `Não foi possível verificar (${(e as Error).message}).` });
+    }
+
+    // 3) Create the integration (always create the inbox if missing)
+    set(2, { status: 'running' });
+    try {
+      const saved = await createIntegration({
+        name,
+        isEnabled,
+        providerType,
+        providerConfig: providerConfig(),
+        chatwootBaseUrl: cwBaseUrl,
+        chatwootApiToken: cwToken,
+        chatwootAccountId: cwAccount,
+        chatwootInboxName: cwInbox,
+        conversationStatus: convStatus,
+        reabrirConversa: reabrir,
+        desconsiderarGrupo: desconsiderar,
+        assinarMensagem: assinar,
+        defaultCountry: country,
+        createInboxIfMissing: true,
+      });
+      set(2, { status: 'ok', detail: 'integração criada' });
+      setFlowDone(true);
+      setResult({ inbox: saved.inbox, webhookUrls: saved.integration.webhookUrls });
+    } catch (err) {
+      const msg = err instanceof ApiError ? `Erro: ${err.code}` : 'Falha ao criar.';
+      set(2, { status: 'fail', detail: msg });
+      setFlowDone(true);
     }
   }
 
@@ -193,48 +264,34 @@ export default function IntegrationForm() {
       setError(invalid);
       return;
     }
+    // On CREATE: run the guided flow (testa Chatwoot → verifica inbox → cria).
+    if (!editing || !id) {
+      await runCreateFlow();
+      return;
+    }
+
+    // On EDIT: update in place and re-reconcile the inbox/webhook.
     setSaving(true);
     try {
-      let saved;
-      if (editing && id) {
-        const body: Record<string, unknown> = {
-          name,
-          isEnabled,
-          chatwootBaseUrl: cwBaseUrl,
-          chatwootAccountId: cwAccount,
-          chatwootInboxName: cwInbox,
-          conversationStatus: convStatus,
-          reabrirConversa: reabrir,
-          desconsiderarGrupo: desconsiderar,
-          assinarMensagem: assinar,
-          defaultCountry: country,
-          createInboxIfMissing: createInbox,
-        };
-        if (cwToken) body.chatwootApiToken = cwToken;
-        if (providerConfigComplete()) {
-          body.providerType = providerType;
-          body.providerConfig = providerConfig();
-        }
-        saved = await updateIntegration(id, body);
-      } else {
-        saved = await createIntegration({
-          name,
-          isEnabled,
-          providerType,
-          providerConfig: providerConfig(),
-          chatwootBaseUrl: cwBaseUrl,
-          chatwootApiToken: cwToken,
-          chatwootAccountId: cwAccount,
-          chatwootInboxName: cwInbox,
-          conversationStatus: convStatus,
-          reabrirConversa: reabrir,
-          desconsiderarGrupo: desconsiderar,
-          assinarMensagem: assinar,
-          defaultCountry: country,
-          createInboxIfMissing: createInbox,
-        });
+      const body: Record<string, unknown> = {
+        name,
+        isEnabled,
+        chatwootBaseUrl: cwBaseUrl,
+        chatwootAccountId: cwAccount,
+        chatwootInboxName: cwInbox,
+        conversationStatus: convStatus,
+        reabrirConversa: reabrir,
+        desconsiderarGrupo: desconsiderar,
+        assinarMensagem: assinar,
+        defaultCountry: country,
+        createInboxIfMissing: true,
+      };
+      if (cwToken) body.chatwootApiToken = cwToken;
+      if (providerConfigComplete()) {
+        body.providerType = providerType;
+        body.providerConfig = providerConfig();
       }
-      // Show the inbox/webhook result instead of navigating away immediately.
+      const saved = await updateIntegration(id, body);
       setResult({ inbox: saved.inbox, webhookUrls: saved.integration.webhookUrls });
     } catch (err) {
       if (err instanceof ApiError) setError(`Erro: ${err.code}`);
@@ -357,50 +414,10 @@ export default function IntegrationForm() {
                 <Input value={cwInbox} onChange={(e) => setCwInbox(e.target.value)} placeholder="WhatsApp" />
               </Field>
             </div>
-
-            <div className="pt-2 border-t border-white/5 space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-neutral-400">
-                  Verifique se a caixa existe no Chatwoot antes de salvar.
-                </p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={runInboxCheck}
-                  loading={inboxChk.busy}
-                  disabled={!cwBaseUrl || !cwToken || !cwAccount || !cwInbox}
-                >
-                  Verificar inbox
-                </Button>
-              </div>
-              {inboxChk.done && (
-                <div className="text-xs">
-                  {inboxChk.error ? (
-                    <Badge tone="error">Falha: {inboxChk.error}</Badge>
-                  ) : inboxChk.exists ? (
-                    inboxChk.isApi ? (
-                      <Badge tone="ok">
-                        Existe (canal API) — o webhook será atualizado ao salvar
-                      </Badge>
-                    ) : (
-                      <Badge tone="neutral">
-                        Existe (canal {inboxChk.channelType ?? '?'}) — webhook precisa ser
-                        configurado manualmente
-                      </Badge>
-                    )
-                  ) : (
-                    <Badge tone="neutral">
-                      Não existe — {createInbox ? 'será criada ao salvar' : 'criação automática desligada'}
-                    </Badge>
-                  )}
-                </div>
-              )}
-              <Checkbox
-                label="Criar a inbox automaticamente se não existir (canal API + webhook)"
-                checked={createInbox}
-                onChange={setCreateInbox}
-              />
-            </div>
+            <p className="text-xs text-neutral-500 pt-1">
+              Ao criar, o sistema verifica a caixa automaticamente: se não existir, cria uma nova
+              (canal API); se já existir, atualiza o webhook.
+            </p>
           </div>
         </Card>
 
@@ -446,7 +463,7 @@ export default function IntegrationForm() {
             <ErrorText>{error}</ErrorText>
 
             <div className="flex items-center gap-4">
-              <Button type="submit" loading={saving}>
+              <Button type="submit" loading={saving || (!!flow && !flowDone)}>
                 {editing ? 'Salvar' : 'Criar integração'}
               </Button>
               <button
@@ -460,6 +477,83 @@ export default function IntegrationForm() {
           </>
         )}
       </form>
+
+      {flow && !result && (
+        <FlowOverlay
+          steps={flow}
+          done={flowDone}
+          onClose={() => {
+            setFlow(null);
+            setFlowDone(false);
+          }}
+          onRetry={() => runCreateFlow()}
+        />
+      )}
+    </div>
+  );
+}
+
+const FLOW_ICON: Record<FlowStatus, { ch: string; cls: string; spin?: boolean }> = {
+  pending: { ch: '○', cls: 'text-neutral-600' },
+  running: { ch: '◐', cls: 'text-blue-400', spin: true },
+  ok: { ch: '✓', cls: 'text-emerald-400' },
+  info: { ch: 'ℹ', cls: 'text-blue-300' },
+  fail: { ch: '✕', cls: 'text-red-400' },
+};
+
+function FlowOverlay({
+  steps,
+  done,
+  onClose,
+  onRetry,
+}: {
+  steps: FlowStep[];
+  done: boolean;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const failed = steps.some((s) => s.status === 'fail');
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
+      <div className="w-full max-w-md bg-[#161618] border border-white/10 rounded-2xl p-6 shadow-2xl">
+        <h3 className="text-sm font-medium text-white mb-5">Criando integração</h3>
+        <ul className="space-y-4">
+          {steps.map((s) => {
+            const ic = FLOW_ICON[s.status];
+            return (
+              <li key={s.key} className="flex items-start gap-3">
+                <span className={`mt-0.5 text-base leading-none ${ic.cls} ${ic.spin ? 'animate-spin' : ''}`}>
+                  {ic.ch}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm text-neutral-200">{s.label}</p>
+                  {s.detail && <p className="text-xs text-neutral-500 mt-0.5">{s.detail}</p>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        {done && (
+          <div className="flex items-center gap-4 mt-6">
+            {failed ? (
+              <>
+                <Button type="button" onClick={onRetry}>
+                  Tentar novamente
+                </Button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="text-sm text-neutral-400 hover:text-white"
+                >
+                  Fechar
+                </button>
+              </>
+            ) : (
+              <p className="text-xs text-neutral-500">Concluído.</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

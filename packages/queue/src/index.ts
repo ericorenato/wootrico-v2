@@ -128,6 +128,40 @@ export async function consume(
   return ch;
 }
 
+export interface PingResult {
+  ok: boolean;
+  detail?: string;
+}
+
+/** Open (or reuse) the active connection and a channel to prove the broker is
+ *  reachable AND the credentials are accepted (auth failures surface here). */
+export async function pingRabbit(): Promise<PingResult> {
+  try {
+    const conn = await getConnection();
+    const ch = await conn.createChannel();
+    await ch.close();
+    return { ok: true, detail: 'connection + channel ok' };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
+}
+
+/** Connect to an arbitrary AMQP URL, open a channel, and close it. Validates a
+ *  new connection string (incl. credentials) BEFORE persisting it. */
+export async function testRabbitUrl(url: string): Promise<PingResult> {
+  let conn: ChannelModel | undefined;
+  try {
+    conn = await amqplib.connect(url, { timeout: 8000 });
+    const ch = await conn.createChannel();
+    await ch.close();
+    return { ok: true, detail: 'connection + channel ok' };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  } finally {
+    if (conn) await conn.close().catch(() => undefined);
+  }
+}
+
 export async function closeQueue(): Promise<void> {
   try {
     await pubChannel?.close();

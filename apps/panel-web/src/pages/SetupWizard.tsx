@@ -1,35 +1,60 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Check, Globe, KeyRound, Plug } from 'lucide-react';
+import { Check, Globe, KeyRound, Plug, Activity } from 'lucide-react';
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import { completeSetup, setBaseUrl } from '../lib/setup-api';
 import { activateLicense, getLicenseStatus, type LicenseStatus } from '../lib/license-api';
+import { runDiagnostics, type Diagnostics } from '../lib/system-api';
 import { ApiError } from '../lib/api-client';
 
-const STEPS = ['URL pública', 'Licença', 'Integração'] as const;
+const STEPS = ['Conexões', 'URL pública', 'Licença', 'Integração'] as const;
 
 export default function SetupWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
 
-  // step 1
+  // step 0 — connection diagnostics
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
+  // step 1 — public URL
   const [baseUrl, setBaseUrlValue] = useState(window.location.origin);
-  // step 2
+  // step 2 — license
   const [license, setLicense] = useState<LicenseStatus | null>(null);
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (step === 1) getLicenseStatus().then(setLicense).catch(() => {});
+    if (step === 2) getLicenseStatus().then(setLicense).catch(() => {});
   }, [step]);
+
+  // Auto-run the connection test when landing on the first step.
+  useEffect(() => {
+    testConnections();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function testConnections() {
+    setDiagBusy(true);
+    try {
+      setDiag(await runDiagnostics());
+    } catch {
+      setDiag({
+        postgres: { ok: false, detail: 'falha na requisição' },
+        rabbitmq: { ok: false, detail: 'falha na requisição' },
+        redis: { ok: false, detail: 'falha na requisição' },
+      });
+    } finally {
+      setDiagBusy(false);
+    }
+  }
 
   async function saveBaseUrl() {
     setError('');
     setBusy(true);
     try {
       await setBaseUrl(baseUrl.trim());
-      setStep(1);
+      setStep(2);
     } catch {
       setError('URL inválida.');
     } finally {
@@ -44,7 +69,7 @@ export default function SetupWizard() {
       await activateLicense(key.trim());
       const st = await getLicenseStatus();
       setLicense(st);
-      setStep(2);
+      setStep(3);
     } catch (e) {
       setError(e instanceof ApiError ? `Falha: ${e.code}` : 'Falha ao ativar.');
     } finally {
@@ -98,6 +123,34 @@ export default function SetupWizard() {
           {step === 0 && (
             <div className="space-y-5">
               <div className="flex items-center gap-2 text-white">
+                <Activity size={16} className="text-blue-400" />
+                <h3 className="text-sm font-medium">Testar conexões</h3>
+              </div>
+              <p className="text-sm text-neutral-400">
+                Valida Postgres, RabbitMQ e Redis de dentro do container antes de prosseguir.
+              </p>
+              <div className="rounded-xl border border-white/5 bg-[#121212] divide-y divide-white/5">
+                <DiagLine label="Postgres" r={diag?.postgres} busy={diagBusy} />
+                <DiagLine label="RabbitMQ" r={diag?.rabbitmq} busy={diagBusy} />
+                <DiagLine label="Redis" r={diag?.redis} busy={diagBusy} />
+              </div>
+              <div className="flex items-center gap-4">
+                <Button onClick={() => setStep(1)} loading={diagBusy}>
+                  Continuar
+                </Button>
+                <button
+                  onClick={testConnections}
+                  className="text-sm text-neutral-400 hover:text-white"
+                >
+                  Testar novamente
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div className="space-y-5">
+              <div className="flex items-center gap-2 text-white">
                 <Globe size={16} className="text-blue-400" />
                 <h3 className="text-sm font-medium">URL pública desta instância</h3>
               </div>
@@ -114,7 +167,7 @@ export default function SetupWizard() {
             </div>
           )}
 
-          {step === 1 && (
+          {step === 2 && (
             <div className="space-y-5">
               <div className="flex items-center gap-2 text-white">
                 <KeyRound size={16} className="text-blue-400" />
@@ -132,14 +185,14 @@ export default function SetupWizard() {
                 <Button onClick={activate} loading={busy}>
                   Ativar
                 </Button>
-                <button onClick={() => setStep(2)} className="text-sm text-neutral-400 hover:text-white">
+                <button onClick={() => setStep(3)} className="text-sm text-neutral-400 hover:text-white">
                   Pular por enquanto
                 </button>
               </div>
             </div>
           )}
 
-          {step === 2 && (
+          {step === 3 && (
             <div className="space-y-5">
               <div className="flex items-center gap-2 text-white">
                 <Plug size={16} className="text-blue-400" />
@@ -161,6 +214,36 @@ export default function SetupWizard() {
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+function DiagLine({
+  label,
+  r,
+  busy,
+}: {
+  label: string;
+  r?: { ok: boolean; detail?: string };
+  busy: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-4 py-3">
+      <span className="text-sm text-neutral-200">{label}</span>
+      {busy && !r ? (
+        <span className="text-xs text-neutral-500">testando…</span>
+      ) : r ? (
+        <span className="flex items-center gap-2 min-w-0">
+          {r.detail && (
+            <span className="text-xs text-neutral-500 truncate max-w-[14rem]" title={r.detail}>
+              {r.detail}
+            </span>
+          )}
+          <Badge tone={r.ok ? 'ok' : 'error'}>{r.ok ? 'ok' : 'falhou'}</Badge>
+        </span>
+      ) : (
+        <span className="text-xs text-neutral-600">—</span>
+      )}
     </div>
   );
 }
