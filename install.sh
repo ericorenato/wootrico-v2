@@ -171,8 +171,8 @@ cmd_install() {
   decide_traefik
   decide_infra
   configure_env
+  pull_image      # resolve o digest ANTES de gerar o compose (fixa por digest)
   write_compose
-  pull_image
   deploy_stack
   print_summary
 }
@@ -640,7 +640,24 @@ YAML
   ok "Compose gerado em ${PWD}/${f} (imagem ${IMAGE}; rede ${net}; serviços novos: ${vols[*]:-nenhum})"
 }
 
-pull_image() { title "Imagem"; $SUDO docker pull "$IMAGE"; ok "Imagem $IMAGE baixada"; note "Imagem: $IMAGE"; }
+pull_image() {
+  title "Imagem"
+  # Puxa a TAG móvel e RESOLVE para o digest imutável, fixando a stack nesse
+  # digest (repo@sha256:…). Assim o deploy usa exatamente a imagem recém-baixada
+  # e o Swarm nunca reaproveita uma versão antiga em cache no host.
+  local ref repo digest
+  ref="${IMAGE%@*}"          # remove um @sha256 pré-existente, se houver
+  repo="${ref%%:*}"          # repo sem tag (p/ casar o RepoDigest certo)
+  $SUDO docker pull "$ref"
+  digest="$($SUDO docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null \
+            | grep -E "^${repo}@" | head -1)"
+  if [ -n "$digest" ]; then
+    IMAGE="$digest"; ok "Imagem fixada por digest: $IMAGE"
+  else
+    IMAGE="$ref"; warn "Não consegui resolver o digest; usando a tag: $IMAGE"
+  fi
+  note "Imagem: $IMAGE"
+}
 deploy_stack() {
   title "Deploy (Swarm)"
   set -a; . "./$ENV_FILE"; set +a
@@ -678,8 +695,8 @@ cmd_update() {
   # apontando para a imagem mais recente do Docker Hub. Sem git.
   USE_TRAEFIK="$(genv WOOTRICO_TRAEFIK)"; USE_TRAEFIK="${USE_TRAEFIK:-1}"
   NET_NAME="$(genv WOOTRICO_NETWORK)"; NET_NAME="${NET_NAME:-${STACK_NAME}-net}"
+  pull_image      # repega o :latest e refixa pelo digest mais novo
   write_compose
-  pull_image
   deploy_stack
   ok "Atualizado."; $SUDO docker stack services "$STACK_NAME"
 }
