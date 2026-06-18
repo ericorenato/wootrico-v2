@@ -83,6 +83,75 @@ export class ChatwootClient {
     return String(created?.id);
   }
 
+  /** Find an inbox by its exact name. */
+  async findInboxByName(name: string): Promise<any | null> {
+    const inboxes = await this.listInboxes();
+    return inboxes.find((i) => i?.name === name) ?? null;
+  }
+
+  /** Update the webhook_url of an existing API-channel inbox. */
+  async updateApiInboxWebhook(inboxId: string | number, webhookUrl: string): Promise<void> {
+    await this.http.patch(this.acc(`/inboxes/${inboxId}`), {
+      channel: { webhook_url: webhookUrl },
+    });
+  }
+
+  /** Inspect whether an inbox with the given name exists and what channel it uses. */
+  async checkInbox(
+    name: string,
+  ): Promise<{ exists: boolean; channelType: string | null; isApi: boolean; inboxId: string | null }> {
+    const inbox = await this.findInboxByName(name);
+    if (!inbox?.id) return { exists: false, channelType: null, isApi: false, inboxId: null };
+    const channelType = inbox.channel_type ?? null;
+    return {
+      exists: true,
+      channelType,
+      isApi: channelType === 'Channel::Api',
+      inboxId: String(inbox.id),
+    };
+  }
+
+  /**
+   * Reconcile the Chatwoot inbox for an integration:
+   *  - existing API inbox → update its webhook_url (auto-wire);
+   *  - existing non-API inbox → leave it (caller configures the webhook manually);
+   *  - missing & allowed → create an API inbox with the webhook already wired.
+   */
+  async setupInbox(opts: {
+    name: string;
+    webhookUrl: string;
+    createIfMissing: boolean;
+    allowMessagesAfterResolved?: boolean;
+    knownInboxId?: string | null;
+  }): Promise<{
+    inboxId: string | null;
+    channelType: string | null;
+    action: 'created' | 'webhook_updated' | 'manual_required' | 'not_created';
+  }> {
+    let inbox: any = null;
+    if (opts.knownInboxId) inbox = await this.getInbox(opts.knownInboxId);
+    if (!inbox?.id) inbox = await this.findInboxByName(opts.name);
+
+    if (inbox?.id) {
+      const channelType = inbox.channel_type ?? null;
+      if (channelType === 'Channel::Api') {
+        await this.updateApiInboxWebhook(inbox.id, opts.webhookUrl);
+        return { inboxId: String(inbox.id), channelType, action: 'webhook_updated' };
+      }
+      return { inboxId: String(inbox.id), channelType, action: 'manual_required' };
+    }
+
+    if (opts.createIfMissing) {
+      const created = await this.createApiInbox({
+        name: opts.name,
+        webhookUrl: opts.webhookUrl,
+        allowMessagesAfterResolved: opts.allowMessagesAfterResolved ?? true,
+      });
+      return { inboxId: String(created?.id), channelType: 'Channel::Api', action: 'created' };
+    }
+    return { inboxId: null, channelType: null, action: 'not_created' };
+  }
+
   // ───────────────────────── contacts ─────────────────────────
 
   async searchContact(query: string): Promise<any[]> {

@@ -12,7 +12,18 @@ const chatwootBase = {
   desconsiderarGrupo: z.boolean().default(true),
   assinarMensagem: z.boolean().default(true),
   defaultCountry: z.string().length(2).default('BR'),
+  /** When the named inbox does not exist, create it (API channel) automatically. */
+  createInboxIfMissing: z.boolean().default(true),
 };
+
+/** Check whether a Chatwoot inbox already exists (before saving). */
+export const CheckInboxSchema = z.object({
+  chatwootBaseUrl: z.string().url(),
+  chatwootApiToken: z.string().min(1),
+  chatwootAccountId: z.string().min(1),
+  chatwootInboxName: z.string().min(1),
+});
+export type CheckInboxInput = z.infer<typeof CheckInboxSchema>;
 
 /** Create-integration DTO from the panel. */
 export const CreateIntegrationSchema = z.object({

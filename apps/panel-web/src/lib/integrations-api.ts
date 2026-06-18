@@ -25,17 +25,41 @@ export const listIntegrations = () =>
 export const getIntegration = (id: string) =>
   api<{ integration: IntegrationDTO }>(`/api/integrations/${id}`).then((r) => r.integration);
 
+export interface InboxResult {
+  action: 'created' | 'webhook_updated' | 'manual_required' | 'not_created' | 'unchanged' | 'error';
+  channelType: string | null;
+  error?: string;
+}
+
+export interface SaveResult {
+  integration: IntegrationDTO;
+  inbox: InboxResult;
+}
+
 export const createIntegration = (body: unknown) =>
-  api<{ integration: IntegrationDTO }>('/api/integrations', {
+  api<SaveResult>('/api/integrations', {
     method: 'POST',
     body: JSON.stringify(body),
-  }).then((r) => r.integration);
+  });
 
 export const updateIntegration = (id: string, body: unknown) =>
-  api<{ integration: IntegrationDTO }>(`/api/integrations/${id}`, {
+  api<SaveResult>(`/api/integrations/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
-  }).then((r) => r.integration);
+  });
+
+export interface InboxCheck {
+  exists: boolean;
+  channelType: string | null;
+  isApi: boolean;
+  inboxId: string | null;
+}
+
+export const checkInbox = (body: unknown) =>
+  api<InboxCheck>('/api/integrations/inbox/check', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 
 export const deleteIntegration = (id: string) =>
   api<void>(`/api/integrations/${id}`, { method: 'DELETE' });

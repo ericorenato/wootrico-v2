@@ -5,6 +5,7 @@ import {
   CreateIntegrationSchema,
   UpdateIntegrationSchema,
   TestChatwootSchema,
+  CheckInboxSchema,
   ProviderConfigSchema,
   providerIdentifier,
   type ProviderConfig,
@@ -68,25 +69,35 @@ export default async function integrationRoutes(app: FastifyInstance) {
       },
     });
 
-    // Best-effort: ensure the Chatwoot API inbox exists and wire its webhook.
+    // Reconcile the Chatwoot inbox: create it (API channel) or update the webhook
+    // of an existing API inbox; a non-API inbox is left for manual configuration.
     const base = await getPublicBaseUrl(app.prisma);
     const urls = buildWebhookUrls(base, webhookToken);
-    let status: 'ok' | 'error' = 'ok';
+    let status: 'unconfigured' | 'ok' | 'error' = 'ok';
     let inboxId: string | null = null;
+    let inbox: { action: string; channelType: string | null; error?: string } = {
+      action: 'not_created',
+      channelType: null,
+    };
     try {
       const cw = new ChatwootClient({
         baseUrl: d.chatwootBaseUrl,
         apiToken: d.chatwootApiToken,
         accountId: d.chatwootAccountId,
       });
-      inboxId = await cw.ensureInbox({
+      const setup = await cw.setupInbox({
         name: d.chatwootInboxName,
         webhookUrl: urls.chatwoot,
+        createIfMissing: d.createInboxIfMissing,
         allowMessagesAfterResolved: true,
       });
+      inboxId = setup.inboxId;
+      inbox = { action: setup.action, channelType: setup.channelType };
+      status = inboxId ? 'ok' : 'unconfigured';
     } catch (err) {
       status = 'error';
-      app.log.warn({ err }, 'ensureInbox failed during integration create');
+      inbox = { action: 'error', channelType: null, error: (err as Error).message };
+      app.log.warn({ err }, 'setupInbox failed during integration create');
     }
 
     const updated = await app.prisma.integration.update({
@@ -103,7 +114,24 @@ export default async function integrationRoutes(app: FastifyInstance) {
       },
     });
 
-    return reply.code(201).send({ integration: serializeIntegration(updated, base) });
+    return reply.code(201).send({ integration: serializeIntegration(updated, base), inbox });
+  });
+
+  // ── check whether a Chatwoot inbox exists (pre-save) ──
+  app.post('/api/integrations/inbox/check', guard, async (req, reply) => {
+    const parsed = CheckInboxSchema.safeParse(req.body);
+    if (!parsed.success)
+      return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
+    try {
+      const cw = new ChatwootClient({
+        baseUrl: parsed.data.chatwootBaseUrl,
+        apiToken: parsed.data.chatwootApiToken,
+        accountId: parsed.data.chatwootAccountId,
+      });
+      return await cw.checkInbox(parsed.data.chatwootInboxName);
+    } catch (err) {
+      return reply.code(400).send({ error: 'check_failed', detail: (err as Error).message });
+    }
   });
 
   // ── update ──
@@ -148,7 +176,38 @@ export default async function integrationRoutes(app: FastifyInstance) {
       });
     }
 
-    const updated = await app.prisma.integration.update({ where: { id }, data });
+    let updated = await app.prisma.integration.update({ where: { id }, data });
+
+    // Re-reconcile the Chatwoot inbox/webhook with the (possibly new) settings.
+    const base = await getPublicBaseUrl(app.prisma);
+    const urls = buildWebhookUrls(base, updated.webhookToken);
+    let inbox: { action: string; channelType: string | null; error?: string } = {
+      action: 'unchanged',
+      channelType: null,
+    };
+    try {
+      const cw = new ChatwootClient({
+        baseUrl: updated.chatwootBaseUrl,
+        apiToken: d.chatwootApiToken ?? decrypt(existing.chatwootApiToken),
+        accountId: updated.chatwootAccountId,
+      });
+      const setup = await cw.setupInbox({
+        name: updated.chatwootInboxName,
+        webhookUrl: urls.chatwoot,
+        createIfMissing: d.createInboxIfMissing ?? true,
+        allowMessagesAfterResolved: true,
+        knownInboxId: updated.chatwootInboxId,
+      });
+      inbox = { action: setup.action, channelType: setup.channelType };
+      updated = await app.prisma.integration.update({
+        where: { id },
+        data: { chatwootInboxId: setup.inboxId, status: setup.inboxId ? 'ok' : 'unconfigured' },
+      });
+    } catch (err) {
+      inbox = { action: 'error', channelType: null, error: (err as Error).message };
+      app.log.warn({ err }, 'setupInbox failed during integration update');
+    }
+
     await app.prisma.auditLog.create({
       data: {
         adminUserId: req.user.sub,
@@ -157,8 +216,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
         entityId: id,
       },
     });
-    const base = await getPublicBaseUrl(app.prisma);
-    return { integration: serializeIntegration(updated, base) };
+    return { integration: serializeIntegration(updated, base), inbox };
   });
 
   // ── delete ──

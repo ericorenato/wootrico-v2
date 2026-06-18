@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import Integrations from './pages/Integrations';
 import IntegrationForm from './pages/IntegrationForm';
 import License from './pages/License';
+import System from './pages/System';
 import SetupWizard from './pages/SetupWizard';
 import Placeholder from './pages/Placeholder';
 
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="/integrations/new" element={<Protected><IntegrationForm /></Protected>} />
           <Route path="/integrations/:id" element={<Protected><IntegrationForm /></Protected>} />
           <Route path="/license" element={<Protected><License /></Protected>} />
+          <Route path="/system" element={<Protected><System /></Protected>} />
           <Route path="/audit" element={<Protected><Placeholder eyebrow="Auditoria" title="Auditoria" /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -13,12 +13,14 @@ import {
   Select,
 } from '../components/ui';
 import {
+  checkInbox,
   createIntegration,
   getIntegration,
   testChatwoot,
   testProvider,
   updateIntegration,
   type IntegrationDTO,
+  type InboxResult,
 } from '../lib/integrations-api';
 import { ApiError } from '../lib/api-client';
 
@@ -65,6 +67,21 @@ export default function IntegrationForm() {
   const [provTest, setProvTest] = useState<TestState>({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // inbox handling
+  const [createInbox, setCreateInbox] = useState(true);
+  const [inboxChk, setInboxChk] = useState<{
+    busy?: boolean;
+    done?: boolean;
+    exists?: boolean;
+    channelType?: string | null;
+    isApi?: boolean;
+    error?: string;
+  }>({});
+  const [result, setResult] = useState<{
+    inbox: InboxResult;
+    webhookUrls: { provider: string; chatwoot: string };
+  } | null>(null);
 
   useEffect(() => {
     if (!editing || !id) return;
@@ -121,11 +138,27 @@ export default function IntegrationForm() {
     }
   }
 
+  async function runInboxCheck() {
+    setInboxChk({ busy: true });
+    try {
+      const r = await checkInbox({
+        chatwootBaseUrl: cwBaseUrl,
+        chatwootApiToken: cwToken,
+        chatwootAccountId: cwAccount,
+        chatwootInboxName: cwInbox,
+      });
+      setInboxChk({ done: true, ...r });
+    } catch (e) {
+      setInboxChk({ done: true, error: (e as Error).message });
+    }
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setSaving(true);
     try {
+      let saved;
       if (editing && id) {
         const body: Record<string, unknown> = {
           name,
@@ -138,15 +171,16 @@ export default function IntegrationForm() {
           desconsiderarGrupo: desconsiderar,
           assinarMensagem: assinar,
           defaultCountry: country,
+          createInboxIfMissing: createInbox,
         };
         if (cwToken) body.chatwootApiToken = cwToken;
         if (providerConfigComplete()) {
           body.providerType = providerType;
           body.providerConfig = providerConfig();
         }
-        await updateIntegration(id, body);
+        saved = await updateIntegration(id, body);
       } else {
-        await createIntegration({
+        saved = await createIntegration({
           name,
           isEnabled,
           providerType,
@@ -160,9 +194,11 @@ export default function IntegrationForm() {
           desconsiderarGrupo: desconsiderar,
           assinarMensagem: assinar,
           defaultCountry: country,
+          createInboxIfMissing: createInbox,
         });
       }
-      navigate('/integrations');
+      // Show the inbox/webhook result instead of navigating away immediately.
+      setResult({ inbox: saved.inbox, webhookUrls: saved.integration.webhookUrls });
     } catch (err) {
       if (err instanceof ApiError) setError(`Erro: ${err.code}`);
       else setError('Falha ao salvar.');
@@ -284,6 +320,50 @@ export default function IntegrationForm() {
                 <Input value={cwInbox} onChange={(e) => setCwInbox(e.target.value)} placeholder="WhatsApp" />
               </Field>
             </div>
+
+            <div className="pt-2 border-t border-white/5 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-neutral-400">
+                  Verifique se a caixa existe no Chatwoot antes de salvar.
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={runInboxCheck}
+                  loading={inboxChk.busy}
+                  disabled={!cwBaseUrl || !cwToken || !cwAccount || !cwInbox}
+                >
+                  Verificar inbox
+                </Button>
+              </div>
+              {inboxChk.done && (
+                <div className="text-xs">
+                  {inboxChk.error ? (
+                    <Badge tone="error">Falha: {inboxChk.error}</Badge>
+                  ) : inboxChk.exists ? (
+                    inboxChk.isApi ? (
+                      <Badge tone="ok">
+                        Existe (canal API) — o webhook será atualizado ao salvar
+                      </Badge>
+                    ) : (
+                      <Badge tone="neutral">
+                        Existe (canal {inboxChk.channelType ?? '?'}) — webhook precisa ser
+                        configurado manualmente
+                      </Badge>
+                    )
+                  ) : (
+                    <Badge tone="neutral">
+                      Não existe — {createInbox ? 'será criada ao salvar' : 'criação automática desligada'}
+                    </Badge>
+                  )}
+                </div>
+              )}
+              <Checkbox
+                label="Criar a inbox automaticamente se não existir (canal API + webhook)"
+                checked={createInbox}
+                onChange={setCreateInbox}
+              />
+            </div>
           </div>
         </Card>
 
@@ -306,24 +386,93 @@ export default function IntegrationForm() {
           </div>
         </Card>
 
-        {editing && loaded && <WebhookUrls urls={loaded.webhookUrls} />}
+        {result ? (
+          <>
+            <InboxResultCard inbox={result.inbox} urls={result.webhookUrls} />
+            <div className="flex items-center gap-4">
+              <Button type="button" onClick={() => navigate('/integrations')}>
+                Concluir
+              </Button>
+              <button
+                type="button"
+                onClick={() => setResult(null)}
+                className="text-sm text-neutral-400 hover:text-white"
+              >
+                Continuar editando
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {editing && loaded && <WebhookUrls urls={loaded.webhookUrls} />}
 
-        <ErrorText>{error}</ErrorText>
+            <ErrorText>{error}</ErrorText>
 
-        <div className="flex items-center gap-4">
-          <Button type="submit" loading={saving}>
-            {editing ? 'Salvar' : 'Criar integração'}
-          </Button>
-          <button
-            type="button"
-            onClick={() => navigate('/integrations')}
-            className="text-sm text-neutral-400 hover:text-white"
-          >
-            Cancelar
-          </button>
-        </div>
+            <div className="flex items-center gap-4">
+              <Button type="submit" loading={saving}>
+                {editing ? 'Salvar' : 'Criar integração'}
+              </Button>
+              <button
+                type="button"
+                onClick={() => navigate('/integrations')}
+                className="text-sm text-neutral-400 hover:text-white"
+              >
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
       </form>
     </div>
+  );
+}
+
+function inboxMessage(action: InboxResult['action']): { tone: 'ok' | 'neutral' | 'error'; text: string } {
+  switch (action) {
+    case 'created':
+      return { tone: 'ok', text: 'Inbox criada no Chatwoot e webhook configurado automaticamente.' };
+    case 'webhook_updated':
+      return { tone: 'ok', text: 'A inbox já existia (canal API) — o webhook foi atualizado automaticamente.' };
+    case 'unchanged':
+      return { tone: 'ok', text: 'Configuração salva.' };
+    case 'manual_required':
+      return {
+        tone: 'neutral',
+        text: 'A inbox existe, mas não é um canal API. Configure o webhook manualmente no Chatwoot usando a URL abaixo.',
+      };
+    case 'not_created':
+      return {
+        tone: 'neutral',
+        text: 'A inbox não existe e a criação automática está desligada. Ligue a opção e salve novamente, ou crie a inbox manualmente.',
+      };
+    default:
+      return { tone: 'error', text: 'Não foi possível configurar a inbox automaticamente.' };
+  }
+}
+
+function InboxResultCard({
+  inbox,
+  urls,
+}: {
+  inbox: InboxResult;
+  urls: { provider: string; chatwoot: string };
+}) {
+  const m = inboxMessage(inbox.action);
+  return (
+    <Card>
+      <div className="flex items-center gap-3 mb-3">
+        <h3 className="text-sm font-medium text-white">Inbox & webhook</h3>
+        <Badge tone={m.tone}>{inbox.action}</Badge>
+      </div>
+      <p className="text-sm text-neutral-300 mb-4">
+        {m.text}
+        {inbox.error ? ` (${inbox.error})` : ''}
+      </p>
+      <div className="space-y-3">
+        <CopyRow label="Provider" value={urls.provider} />
+        <CopyRow label="Chatwoot" value={urls.chatwoot} />
+      </div>
+    </Card>
   );
 }
 
