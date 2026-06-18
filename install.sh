@@ -298,6 +298,27 @@ resolve_domain_ip() {
 # Detecta um Traefik já em execução (Swarm ou container) para não duplicar o
 # proxy/portas 80/443. Se não detectar, pergunta se deve instalar. A escolha é
 # persistida no .env (WOOTRICO_TRAEFIK) para o 'update' reutilizá-la.
+# Lê a configuração do Traefik existente (args de CLI do serviço/container) e
+# descobre AUTOMATICAMENTE o entrypoint ligado à :443 e o nome do certresolver
+# (ACME). Sem perguntar nada ao usuário. Cai em defaults se não conseguir ler.
+detect_traefik_config() {
+  local args="" svc cid
+  svc="$($SUDO docker service ls --format '{{.Name}} {{.Image}}' 2>/dev/null | grep -i traefik | awk '{print $1}' | head -1)"
+  if [ -n "$svc" ]; then
+    args="$($SUDO docker service inspect "$svc" --format '{{range .Spec.TaskTemplate.ContainerSpec.Args}}{{println .}}{{end}}{{range .Spec.TaskTemplate.ContainerSpec.Command}}{{println .}}{{end}}' 2>/dev/null)"
+  fi
+  if [ -z "$args" ]; then
+    cid="$($SUDO docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null | grep -i traefik | awk '{print $1}' | head -1)"
+    [ -n "$cid" ] && args="$($SUDO docker inspect "$cid" --format '{{range .Args}}{{println .}}{{end}}{{range .Config.Cmd}}{{println .}}{{end}}' 2>/dev/null)"
+  fi
+  local ep rs
+  ep="$(printf '%s\n' "$args" | grep -oE 'entrypoints\.[A-Za-z0-9_-]+\.address=:443' | sed -E 's/.*entrypoints\.([A-Za-z0-9_-]+)\.address.*/\1/' | head -1)"
+  rs="$(printf '%s\n' "$args" | grep -oE 'certificatesresolvers\.[A-Za-z0-9_-]+\.acme' | sed -E 's/.*certificatesresolvers\.([A-Za-z0-9_-]+)\.acme.*/\1/' | head -1)"
+  TRAEFIK_ENTRYPOINT="${ep:-${TRAEFIK_ENTRYPOINT:-websecure}}"
+  TRAEFIK_RESOLVER="${rs:-${TRAEFIK_RESOLVER:-letsencryptresolver}}"
+  [ -n "$ep" ] && [ -n "$rs" ] && return 0 || return 1
+}
+
 decide_traefik() {
   title "Traefik (proxy reverso + TLS)"
   local found=""
@@ -305,15 +326,14 @@ decide_traefik() {
   if printf '%s\n' "$found" | grep -qi 'traefik'; then
     USE_TRAEFIK=0
     ok "Traefik já detectado — NÃO vou subir outro nem alterar a configuração dele."
-    warn "Para rotear o painel/webhook, seu Traefik precisa usar o provider Swarm e observar a rede '${NET_NAME:-<rede selecionada>}' (o app já expõe as labels na porta 3000). O instalador não modifica o Traefik."
-    # As labels do app precisam casar com os NOMES do seu Traefik, senão o TLS
-    # cai no certificado padrão (autoassinado) e os webhooks são recusados.
-    info "Os nomes abaixo precisam ser EXATAMENTE os do seu Traefik (veja a config dele)."
-    TRAEFIK_ENTRYPOINT="$(ask "Nome do entrypoint HTTPS do seu Traefik" "$(genv WOOTRICO_TRAEFIK_ENTRYPOINT || true)")"
-    TRAEFIK_ENTRYPOINT="${TRAEFIK_ENTRYPOINT:-websecure}"
-    local _rs_def; _rs_def="$(genv WOOTRICO_TRAEFIK_RESOLVER)"; _rs_def="${_rs_def:-letsencryptresolver}"
-    TRAEFIK_RESOLVER="$(ask "Nome do certresolver (ACME/Let's Encrypt) do seu Traefik" "$_rs_def")"
-    TRAEFIK_RESOLVER="${TRAEFIK_RESOLVER:-letsencryptresolver}"
+    # Descobre automaticamente entrypoint HTTPS + certresolver da config do Traefik.
+    if detect_traefik_config; then
+      ok "Config do Traefik detectada: entrypoint='${TRAEFIK_ENTRYPOINT}', certresolver='${TRAEFIK_RESOLVER}'."
+    else
+      warn "Não consegui ler toda a config do Traefik; usando: entrypoint='${TRAEFIK_ENTRYPOINT}', certresolver='${TRAEFIK_RESOLVER}'."
+      info "Se o TLS não emitir, ajuste WOOTRICO_TRAEFIK_ENTRYPOINT/RESOLVER no .env e rode 'install.sh update'."
+    fi
+    warn "Seu Traefik precisa usar o provider Swarm e observar a rede '${NET_NAME:-<rede selecionada>}' (o app expõe as labels na porta 3000). O instalador não modifica o Traefik."
     note "Traefik: existente (intocado); entrypoint=${TRAEFIK_ENTRYPOINT} resolver=${TRAEFIK_RESOLVER}"
   elif confirm "Traefik não detectado. Instalar o Traefik (com TLS Let's Encrypt)?"; then
     USE_TRAEFIK=1
