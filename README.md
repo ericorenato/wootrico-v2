@@ -53,12 +53,18 @@ curl -fsSL -H "Authorization: token SEU_PAT" \
 sudo bash install.sh
 ```
 
-Durante a instalação ele: **pergunta a rede Docker (overlay)** em que a stack
-deve entrar (detecta as existentes ou cria uma nova), **detecta se já há um
-Traefik** (e só instala outro se você quiser), gera o Compose com a imagem do
-Hub e sobe tudo automaticamente.
+Durante a instalação ele:
 
-> Sem `git` na VPS? `sudo apt-get update && sudo apt-get install -y git` (Debian/Ubuntu)
+- **Rede:** lista as redes overlay do Swarm e usa a 1ª como padrão (você escolhe);
+  só **cria** uma rede dedicada (`wootrico-net`) se **não existir nenhuma**. Nunca
+  edita redes nem o Traefik.
+- **Traefik:** se já houver um, **não sobe outro nem o altera**; se não houver,
+  oferece instalar o próprio (TLS Let's Encrypt).
+- **Postgres / RabbitMQ / Redis:** detecta os existentes. Se estiverem **na mesma
+  rede** do Wootrico, você pode **reusar** (host/porta/senha); se estiverem em
+  **outra rede** (inalcançável), sugere subir uma **instância nova** na rede do
+  Wootrico, **com porta alterada**. Em instância nova, **senha em branco = gerada**.
+- Gera o `docker-compose.yml` com a imagem do Hub e **sobe a stack automaticamente**.
 > — ou o próprio `install.sh` instala o que faltar.
 >
 > Alternativa via `curl` (repo privado precisa de um Personal Access Token):

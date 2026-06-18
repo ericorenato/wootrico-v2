@@ -44,6 +44,25 @@ need_root() {
 }
 # Leitura global de um valor do .env (helpers get_env/set_env locais ficam em configure_env).
 genv() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+# IP primário do host (sugestão para conectar a serviços já existentes).
+host_gw() { hostname -I 2>/dev/null | awk '{print $1}'; }
+# Porta TCP escutando em 127.0.0.1 (via /dev/tcp do bash).
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1 && { exec 3>&- 3<&-; return 0; }; return 1; }
+# Containers em execução cuja imagem casa com o regex $1 → nomes.
+containers_for() { $SUDO docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | grep -iE "$1" | awk '{print $1}'; }
+# Detecta um serviço por imagem de container OU porta em uso. $1=regex img $2=porta
+svc_detected() { [ -n "$(containers_for "$1")" ] && return 0; port_open "$2"; }
+# 0 se ALGUM container do serviço ($1=regex img) está na rede $NET_NAME.
+existing_on_selected_net() {
+  local c nets
+  for c in $(containers_for "$1"); do
+    nets="$($SUDO docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c" 2>/dev/null)"
+    case " $nets " in *" ${NET_NAME} "*) return 0 ;; esac
+  done
+  return 1
+}
+# Lê uma senha sem ecoar; valor vai p/ stdout, prompt/linha p/ stderr.
+ask_pass() { local p="$1" a; read -rsp "$(echo -e "${C_C}?${C_0} ${p}: ")" a </dev/tty || true; printf '\n' >&2; printf '%s' "$a"; }
 
 # ───────────────────────────── INSTALL ─────────────────────────────
 cmd_install() {
@@ -94,6 +113,7 @@ cmd_install() {
   # imagem publicada no Docker Hub.
   decide_network
   decide_traefik
+  decide_infra
   configure_env
   write_compose
   pull_image
@@ -143,21 +163,27 @@ configure_env() {
   LICENSE_PUBLIC_KEY="$(ask "Chave pública da licença (base64 PEM)" "$(get_env LICENSE_PUBLIC_KEY)")"
   LICENSE_KEY="$(ask "Chave de licença (opcional, ativável no painel)" "$(get_env LICENSE_KEY)")"
 
-  local PGU PGDB RBU
-  PGU="$(keep_or POSTGRES_USER wootrico)"; PGDB="$(keep_or POSTGRES_DB wootrico)"; RBU="$(keep_or RABBITMQ_USER wootrico)"
-  POSTGRES_PASSWORD="$(secret_for POSTGRES_PASSWORD genhex 16)"
-  RABBITMQ_PASSWORD="$(secret_for RABBITMQ_PASSWORD genhex 16)"
   JWT_SECRET="$(secret_for JWT_SECRET gen 48)"
   APP_ENCRYPTION_KEY="$(get_env APP_ENCRYPTION_KEY)"; [ -z "$APP_ENCRYPTION_KEY" ] && { APP_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"; note "APP_ENCRYPTION_KEY: gerado automaticamente"; }
 
   set_env DOMAIN "$DOMAIN"; set_env ACME_EMAIL "$ACME_EMAIL"
   set_env WOOTRICO_TRAEFIK "${USE_TRAEFIK:-1}"
   set_env WOOTRICO_NETWORK "${NET_NAME:-${STACK_NAME}-net}"
-  set_env POSTGRES_USER "$PGU"; set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD"; set_env POSTGRES_DB "$PGDB"
-  set_env DATABASE_URL "$(keep_or DATABASE_URL "postgresql://${PGU}:${POSTGRES_PASSWORD}@postgres:5432/${PGDB}?schema=public")"
-  set_env RABBITMQ_USER "$RBU"; set_env RABBITMQ_PASSWORD "$RABBITMQ_PASSWORD"
-  set_env RABBITMQ_URL "$(keep_or RABBITMQ_URL "amqp://${RBU}:${RABBITMQ_PASSWORD}@rabbitmq:5672")"
-  set_env REDIS_URL "$(keep_or REDIS_URL 'redis://redis:6379')"
+
+  # Banco/fila/cache — modos/host/porta/credenciais decididos em decide_infra.
+  set_env POSTGRES_USER "$PG_USER"; set_env POSTGRES_PASSWORD "$PG_PASS"; set_env POSTGRES_DB "$PG_DB"
+  set_env DATABASE_URL "postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${PG_DB}?schema=public"
+  set_env RABBITMQ_USER "$RB_USER"; set_env RABBITMQ_PASSWORD "$RB_PASS"
+  set_env RABBITMQ_URL "amqp://${RB_USER}:${RB_PASS}@${RB_HOST}:${RB_PORT}"
+  if [ -n "${RD_PASS:-}" ]; then
+    set_env REDIS_PASSWORD "$RD_PASS"; set_env REDIS_URL "redis://:${RD_PASS}@${RD_HOST}:${RD_PORT}"
+  else
+    set_env REDIS_PASSWORD ""; set_env REDIS_URL "redis://${RD_HOST}:${RD_PORT}"
+  fi
+  # modos/portas persistidos p/ o 'update' regenerar o compose sem perguntar.
+  set_env WOOTRICO_PG_MODE "$PG_MODE"; set_env WOOTRICO_PG_PORT "$PG_PORT"
+  set_env WOOTRICO_RB_MODE "$RB_MODE"; set_env WOOTRICO_RB_PORT "$RB_PORT"
+  set_env WOOTRICO_RD_MODE "$RD_MODE"; set_env WOOTRICO_RD_PORT "$RD_PORT"
   set_env PUBLIC_BASE_URL "$(keep_or PUBLIC_BASE_URL "https://${DOMAIN}")"
   set_env LICENSE_SERVER_URL "$LICENSE_SERVER_URL"
   [ -n "$LICENSE_PUBLIC_KEY" ] && set_env LICENSE_PUBLIC_KEY "$LICENSE_PUBLIC_KEY"
@@ -187,9 +213,9 @@ decide_traefik() {
   found="$($SUDO docker service ls --format '{{.Image}}' 2>/dev/null; $SUDO docker ps --format '{{.Image}}' 2>/dev/null)"
   if printf '%s\n' "$found" | grep -qi 'traefik'; then
     USE_TRAEFIK=0
-    ok "Traefik já detectado neste host — não vou subir outro (evita conflito em 80/443)."
-    warn "Use seu Traefik com provider Swarm na rede '${NET_NAME:-<rede informada>}' para rotear o painel/webhook (porta 3000 do serviço app)."
-    note "Traefik: existente (não instalado pelo Wootrico)"
+    ok "Traefik já detectado — NÃO vou subir outro nem alterar a configuração dele."
+    warn "Para rotear o painel/webhook, seu Traefik precisa usar o provider Swarm e observar a rede '${NET_NAME:-<rede selecionada>}' (o app já expõe as labels na porta 3000). O instalador não modifica o Traefik."
+    note "Traefik: existente (intocado pelo instalador)"
   elif confirm "Traefik não detectado. Instalar o Traefik (com TLS Let's Encrypt)?"; then
     USE_TRAEFIK=1
     note "Traefik: será instalado pelo Wootrico"
@@ -200,43 +226,152 @@ decide_traefik() {
   fi
 }
 
-# Detecta redes overlay existentes e pergunta em qual a stack deve entrar.
-# Se a rede não existir, oferece criá-la (overlay, attachable). Persistida no
-# .env (WOOTRICO_NETWORK) para o 'update' reutilizar.
+# Seleção da rede overlay. NÃO cria rede se já existir alguma: lista todas,
+# usa a 1ª como padrão e deixa o usuário escolher. Só cria uma rede dedicada
+# ('wootrico-net') quando NÃO existe nenhuma. Nunca altera o Traefik nem redes.
 decide_network() {
   title "Rede Docker (overlay/Swarm)"
-  local overlays
-  overlays="$($SUDO docker network ls --filter driver=overlay --format '{{.Name}}' 2>/dev/null | grep -vE '^(ingress|docker_gwbridge)$' || true)"
-  if [ -n "$overlays" ]; then
-    info "Redes overlay existentes neste Swarm:"; printf '   • %s\n' $overlays
-  else
-    info "Nenhuma rede overlay personalizada encontrada."
-  fi
-  local net_def; net_def="$(genv WOOTRICO_NETWORK)"; [ -z "$net_def" ] && net_def="${STACK_NAME}-net"
-  NET_NAME="$(ask "Nome da rede Docker (overlay) para a stack" "$net_def")"
-  [ -z "$NET_NAME" ] && NET_NAME="$net_def"
-  if $SUDO docker network inspect "$NET_NAME" >/dev/null 2>&1; then
+  local overlays=()
+  while IFS= read -r n; do [ -n "$n" ] && overlays+=("$n"); done < <(
+    $SUDO docker network ls --filter driver=overlay --format '{{.Name}}' 2>/dev/null | grep -vE '^(ingress|docker_gwbridge)$' || true
+  )
+  if [ "${#overlays[@]}" -gt 0 ]; then
+    local first="${overlays[0]}"
+    info "Redes overlay encontradas (a 1ª é o padrão; o instalador NÃO cria/edita redes):"
+    local i=1 n; for n in "${overlays[@]}"; do printf '   %d) %s\n' "$i" "$n"; i=$((i+1)); done
+    local sel; sel="$(ask "Selecione a rede (número ou nome)" "$first")"
+    if printf '%s' "$sel" | grep -qE '^[0-9]+$'; then NET_NAME="${overlays[$((sel-1))]:-$first}"; else NET_NAME="$sel"; fi
+    [ -z "$NET_NAME" ] && NET_NAME="$first"
+    $SUDO docker network inspect "$NET_NAME" >/dev/null 2>&1 || { warn "Rede '${NET_NAME}' não existe; usando '${first}'."; NET_NAME="$first"; }
     ok "Usando a rede existente '${NET_NAME}'."
     note "Rede: ${NET_NAME} (existente)"
-  elif confirm "A rede '${NET_NAME}' não existe. Criar (overlay, attachable)?"; then
+  else
+    NET_NAME="${STACK_NAME}-net"
+    info "Nenhuma rede overlay encontrada neste Swarm."
+    info "Vou criar uma rede overlay dedicada ao Wootrico: '${NET_NAME}'."
+    info "(Não altero o Traefik nem crio outras redes — apenas esta, por não existir nenhuma.)"
     $SUDO docker network create --driver overlay --attachable "$NET_NAME" >/dev/null \
       && ok "Rede '${NET_NAME}' criada." || { err "Falha ao criar a rede."; exit 1; }
-    note "Rede: ${NET_NAME} (criada)"
-  else
-    err "Uma rede é obrigatória. Abortando."; exit 1
+    note "Rede: ${NET_NAME} (criada — não havia nenhuma)"
   fi
+}
+
+# Decide, para Postgres/RabbitMQ/Redis: reusar um existente (conectar) OU subir
+# uma instância própria do Wootrico (na rede selecionada). Regra do usuário:
+#  - se o serviço existe e JÁ está na rede do Wootrico → pode reusar;
+#  - se existe mas está em OUTRA rede → sugere instância nova (com porta alterada)
+#    na rede do Wootrico (o instalador não move serviços entre redes);
+#  - se não existe → instância nova com portas padrão.
+# Senha em branco numa instância nova → gerada automaticamente.
+decide_infra() {
+  title "Banco / Fila / Cache (Postgres · RabbitMQ · Redis)"
+  local gw; gw="$(host_gw)"
+
+  _infra_one() { # $1 label  $2 img-regex  $3 porta-padrão
+    local label="$1" img="$2" defport="$3" exists=0 samenet=0 sugg_new=1
+    svc_detected "$img" "$defport" && exists=1
+    if [ "$exists" = 1 ]; then
+      if existing_on_selected_net "$img"; then samenet=1; sugg_new=0; fi
+      echo
+      if [ "$samenet" = 1 ]; then
+        warn "${label} detectado e JÁ na rede '${NET_NAME}'."
+        info "Você pode REUSAR esse ${label} (conectar a ele) ou subir uma instância nova do Wootrico."
+      else
+        warn "${label} detectado, mas NÃO está na rede '${NET_NAME}' (ou está em outra rede)."
+        info "Não dá para alcançá-lo a partir da rede do Wootrico sem alterá-lo. Sugiro subir uma instância NOVA (com porta alterada) na rede do Wootrico."
+      fi
+    fi
+    # Pergunta o modo. Default: reusar só quando existe e está na mesma rede.
+    local mode
+    if [ "$exists" = 1 ] && [ "$sugg_new" = 0 ]; then
+      confirm "Reusar o ${label} existente (responder 'n' = subir um novo)?" && mode=existing || mode=new
+    elif [ "$exists" = 1 ]; then
+      confirm "Subir uma instância NOVA do ${label} na rede do Wootrico (recomendado)? ('n' = reusar mesmo assim)" && mode=new || mode=existing
+    else
+      info "${label} não detectado — vou subir uma instância nova do Wootrico."
+      mode=new
+    fi
+    __MODE="$mode"
+  }
+
+  # ---- Postgres ----
+  PG_USER="$(genv POSTGRES_USER)"; PG_USER="${PG_USER:-wootrico}"
+  PG_DB="$(genv POSTGRES_DB)";     PG_DB="${PG_DB:-wootrico}"
+  PG_PASS="$(genv POSTGRES_PASSWORD)"
+  _infra_one Postgres 'postgres|postgis' 5432; PG_MODE="$__MODE"
+  if [ "$PG_MODE" = existing ]; then
+    PG_HOST="$(ask "Host do Postgres (acessível pela rede do Wootrico)" "${gw:-127.0.0.1}")"
+    PG_PORT="$(ask "Porta do Postgres" "5432")"
+    PG_USER="$(ask "Usuário do Postgres" "$PG_USER")"
+    local p; p="$(ask_pass "Senha do Postgres")"; [ -n "$p" ] && PG_PASS="$p"
+    PG_DB="$(ask "Banco (database) do Postgres" "$PG_DB")"
+  else
+    PG_HOST="postgres"
+    PG_PORT="$(ask "Porta do Postgres (nova instância)" "$(svc_detected 'postgres|postgis' 5432 && echo 5433 || echo 5432)")"
+    local p; p="$(ask_pass "Senha do Postgres (enter = manter/gerar)")"; [ -n "$p" ] && PG_PASS="$p"
+    [ -z "$PG_PASS" ] && { PG_PASS="$(openssl rand -hex 16)"; note "Postgres: senha gerada automaticamente"; }
+  fi
+  ok "Postgres: ${PG_MODE} → ${PG_HOST}:${PG_PORT}"; note "Postgres: ${PG_MODE} (${PG_HOST}:${PG_PORT})"
+
+  # ---- RabbitMQ ----
+  RB_USER="$(genv RABBITMQ_USER)"; RB_USER="${RB_USER:-wootrico}"
+  RB_PASS="$(genv RABBITMQ_PASSWORD)"
+  _infra_one RabbitMQ 'rabbitmq' 5672; RB_MODE="$__MODE"
+  if [ "$RB_MODE" = existing ]; then
+    RB_HOST="$(ask "Host do RabbitMQ" "${gw:-127.0.0.1}")"
+    RB_PORT="$(ask "Porta AMQP do RabbitMQ" "5672")"
+    RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
+    local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
+  else
+    RB_HOST="rabbitmq"
+    RB_PORT="$(ask "Porta AMQP do RabbitMQ (nova instância)" "$(svc_detected 'rabbitmq' 5672 && echo 5673 || echo 5672)")"
+    local p; p="$(ask_pass "Senha do RabbitMQ (enter = manter/gerar)")"; [ -n "$p" ] && RB_PASS="$p"
+    [ -z "$RB_PASS" ] && { RB_PASS="$(openssl rand -hex 16)"; note "RabbitMQ: senha gerada automaticamente"; }
+  fi
+  ok "RabbitMQ: ${RB_MODE} → ${RB_HOST}:${RB_PORT}"; note "RabbitMQ: ${RB_MODE} (${RB_HOST}:${RB_PORT})"
+
+  # ---- Redis ----
+  RD_PASS="$(genv REDIS_PASSWORD)"
+  _infra_one Redis 'redis' 6379; RD_MODE="$__MODE"
+  if [ "$RD_MODE" = existing ]; then
+    RD_HOST="$(ask "Host do Redis" "${gw:-127.0.0.1}")"
+    RD_PORT="$(ask "Porta do Redis" "6379")"
+    local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; RD_PASS="$p"
+  else
+    RD_HOST="redis"
+    RD_PORT="$(ask "Porta do Redis (nova instância)" "$(svc_detected 'redis' 6379 && echo 6380 || echo 6379)")"
+    local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; [ -n "$p" ] && RD_PASS="$p"
+  fi
+  ok "Redis: ${RD_MODE} → ${RD_HOST}:${RD_PORT}"; note "Redis: ${RD_MODE} (${RD_HOST}:${RD_PORT})"
 }
 
 # Gera o docker-compose.yml da stack (app+infra, e Traefik se aplicável) usando
 # a imagem do Docker Hub e a rede escolhida (externa). Sem clonar o repositório.
 write_compose() {
-  title "Gerando compose (rede: ${NET_NAME}, traefik: ${USE_TRAEFIK:-1})"
+  # Modos/portas: dos globais (install) ou do .env (update).
+  local pg_mode="${PG_MODE:-$(genv WOOTRICO_PG_MODE)}"; pg_mode="${pg_mode:-new}"
+  local rb_mode="${RB_MODE:-$(genv WOOTRICO_RB_MODE)}"; rb_mode="${rb_mode:-new}"
+  local rd_mode="${RD_MODE:-$(genv WOOTRICO_RD_MODE)}"; rd_mode="${rd_mode:-new}"
+  local pg_port="${PG_PORT:-$(genv WOOTRICO_PG_PORT)}"; pg_port="${pg_port:-5432}"
+  local rb_port="${RB_PORT:-$(genv WOOTRICO_RB_PORT)}"; rb_port="${rb_port:-5672}"
+  local rd_port="${RD_PORT:-$(genv WOOTRICO_RD_PORT)}"; rd_port="${rd_port:-6379}"
+  local rd_pass="${RD_PASS:-$(genv REDIS_PASSWORD)}"
+  local tf="${USE_TRAEFIK:-${WOOTRICO_TRAEFIK:-1}}"
+  local net="${NET_NAME:-$(genv WOOTRICO_NETWORK)}"; net="${net:-${STACK_NAME}-net}"
+  title "Gerando compose (rede: ${net}; traefik: ${tf}; pg/rb/rd: ${pg_mode}/${rb_mode}/${rd_mode})"
   local f="docker-compose.yml"
-  cat > "$f" <<'YAML'
-# GERADO pelo install.sh — não edite à mão (rode o instalador novamente).
-services:
+  local vols=()
+
+  printf '%s\n' "# GERADO pelo install.sh — não edite à mão (rode o instalador novamente)." > "$f"
+  printf '%s\n' "services:" >> "$f"
+
+  # ---- Postgres (só quando novo) ----
+  if [ "$pg_mode" = new ]; then
+    vols+=("pgdata")
+    cat >> "$f" <<'YAML'
   postgres:
     image: postgres:16-alpine
+    command: ["postgres", "-p", "__PGPORT__"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-wootrico}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wootrico}
@@ -244,7 +379,7 @@ services:
     volumes: [pgdata:/var/lib/postgresql/data]
     networks: [wtnet]
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-wootrico} -d ${POSTGRES_DB:-wootrico}']
+      test: ['CMD-SHELL', 'pg_isready -p __PGPORT__ -U ${POSTGRES_USER:-wootrico} -d ${POSTGRES_DB:-wootrico}']
       interval: 5s
       timeout: 5s
       retries: 12
@@ -253,11 +388,19 @@ services:
       restart_policy: { condition: any, delay: 5s }
       placement: { constraints: [node.role == manager] }
 
+YAML
+  fi
+
+  # ---- RabbitMQ (só quando novo) ----
+  if [ "$rb_mode" = new ]; then
+    vols+=("rabbitmq_data")
+    cat >> "$f" <<'YAML'
   rabbitmq:
     image: rabbitmq:3-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wootrico}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
+      RABBITMQ_NODE_PORT: "__RBPORT__"
     volumes: [rabbitmq_data:/var/lib/rabbitmq]
     networks: [wtnet]
     healthcheck:
@@ -270,13 +413,28 @@ services:
       restart_policy: { condition: any, delay: 5s }
       placement: { constraints: [node.role == manager] }
 
+YAML
+  fi
+
+  # ---- Redis (só quando novo) — porta/senha computadas em bash ----
+  if [ "$rd_mode" = new ]; then
+    vols+=("redis_data")
+    local rcmd rhc
+    if [ -n "$rd_pass" ]; then
+      rcmd="[\"redis-server\", \"--port\", \"${rd_port}\", \"--requirepass\", \"${rd_pass}\", \"--save\", \"60\", \"1\", \"--appendonly\", \"no\"]"
+      rhc="[\"CMD\", \"redis-cli\", \"-p\", \"${rd_port}\", \"-a\", \"${rd_pass}\", \"ping\"]"
+    else
+      rcmd="[\"redis-server\", \"--port\", \"${rd_port}\", \"--save\", \"60\", \"1\", \"--appendonly\", \"no\"]"
+      rhc="[\"CMD\", \"redis-cli\", \"-p\", \"${rd_port}\", \"ping\"]"
+    fi
+    cat >> "$f" <<EOF
   redis:
     image: redis:7-alpine
-    command: ['redis-server', '--save', '60', '1', '--appendonly', 'no']
+    command: ${rcmd}
     volumes: [redis_data:/data]
     networks: [wtnet]
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ${rhc}
       interval: 5s
       timeout: 5s
       retries: 12
@@ -285,6 +443,11 @@ services:
       restart_policy: { condition: any, delay: 5s }
       placement: { constraints: [node.role == manager] }
 
+EOF
+  fi
+
+  # ---- app + worker (sempre) ----
+  cat >> "$f" <<'YAML'
   app:
     image: __IMAGE__
     env_file: .env
@@ -312,7 +475,9 @@ services:
       restart_policy: { condition: any, delay: 5s }
 YAML
 
-  if [ "${USE_TRAEFIK:-1}" = 1 ]; then
+  # ---- Traefik próprio (só quando o Wootrico o instala) ----
+  if [ "$tf" = 1 ]; then
+    vols+=("traefik_letsencrypt")
     cat >> "$f" <<'YAML'
 
   traefik:
@@ -343,23 +508,23 @@ YAML
 YAML
   fi
 
+  # ---- networks (rede externa selecionada) + volumes (só os usados) ----
   cat >> "$f" <<'YAML'
 
 networks:
   wtnet:
     external: true
     name: __NET__
-
-volumes:
-  pgdata:
-  rabbitmq_data:
-  redis_data:
 YAML
-  [ "${USE_TRAEFIK:-1}" = 1 ] && printf '  traefik_letsencrypt:\n' >> "$f"
+  if [ "${#vols[@]}" -gt 0 ]; then
+    printf '\nvolumes:\n' >> "$f"
+    local v; for v in "${vols[@]}"; do printf '  %s:\n' "$v" >> "$f"; done
+  fi
 
-  # Substitui os placeholders estruturais (imagem do Hub + rede externa).
-  sed -i "s|__IMAGE__|${IMAGE}|g; s|__NET__|${NET_NAME}|g" "$f"
-  ok "Compose gerado em ${PWD}/${f} (imagem ${IMAGE}, rede externa ${NET_NAME})"
+  # Substitui placeholders estruturais (imagem do Hub, rede e portas).
+  sed -i "s|__IMAGE__|${IMAGE}|g; s|__NET__|${net}|g; s|__PGPORT__|${pg_port}|g; s|__RBPORT__|${rb_port}|g" "$f"
+  chmod 600 "$f"
+  ok "Compose gerado em ${PWD}/${f} (imagem ${IMAGE}; rede ${net}; serviços novos: ${vols[*]:-nenhum})"
 }
 
 pull_image() { title "Imagem"; $SUDO docker pull "$IMAGE"; ok "Imagem $IMAGE baixada"; note "Imagem: $IMAGE"; }
