@@ -442,7 +442,12 @@ export default function IntegrationForm() {
 
         {result ? (
           <>
-            <InboxResultCard inbox={result.inbox} urls={result.webhookUrls} />
+            <InboxResultCard
+              inbox={result.inbox}
+              urls={result.webhookUrls}
+              providerType={providerType}
+              inboxName={cwInbox}
+            />
             <div className="flex items-center gap-4">
               <Button type="button" onClick={() => navigate('/integrations')}>
                 Concluir
@@ -458,7 +463,13 @@ export default function IntegrationForm() {
           </>
         ) : (
           <>
-            {editing && loaded && <WebhookUrls urls={loaded.webhookUrls} />}
+            {editing && loaded && (
+              <WebhookGuide
+                urls={loaded.webhookUrls}
+                providerType={providerType}
+                inboxName={cwInbox}
+              />
+            )}
 
             <ErrorText>{error}</ErrorText>
 
@@ -615,45 +626,115 @@ function inboxMessage(action: InboxResult['action']): { tone: 'ok' | 'neutral' |
   }
 }
 
-function InboxResultCard({
-  inbox,
+type ProviderType = 'uazapi' | 'zapi' | 'evolution';
+
+/** Per-provider, where/how to paste the inbound (Provider) webhook URL. */
+const PROVIDER_HELP: Record<ProviderType, { name: string; steps: string[] }> = {
+  evolution: {
+    name: 'Evolution',
+    steps: [
+      'No Evolution, abra a configuração de Webhook da instância.',
+      'Cole a "URL do Provider" (abaixo) no campo de URL do webhook.',
+      'Habilite o evento MESSAGES_UPSERT (mensagens recebidas).',
+    ],
+  },
+  uazapi: {
+    name: 'uazapi',
+    steps: [
+      'No uazapi, abra o Webhook da instância.',
+      'Cole a "URL do Provider" (abaixo).',
+      'Mantenha ativos os eventos de mensagens.',
+    ],
+  },
+  zapi: {
+    name: 'Z-API',
+    steps: [
+      'No Z-API, vá em Webhooks → "Ao receber" (on-message-received).',
+      'Cole a "URL do Provider" (abaixo) e salve.',
+    ],
+  },
+};
+
+/** The two webhook URLs, explained: which goes where and who configures each. */
+function WebhookGuide({
   urls,
+  providerType,
+  inboxName,
 }: {
-  inbox: InboxResult;
   urls: { provider: string; chatwoot: string };
+  providerType: ProviderType;
+  inboxName?: string;
 }) {
-  const m = inboxMessage(inbox.action);
+  const help = PROVIDER_HELP[providerType];
   return (
     <Card>
-      <div className="flex items-center gap-3 mb-3">
-        <h3 className="text-sm font-medium text-white">Inbox & webhook</h3>
-        <Badge tone={m.tone}>{inbox.action}</Badge>
-      </div>
-      <p className="text-sm text-neutral-300 mb-4">
-        {m.text}
-        {inbox.error ? ` (${inbox.error})` : ''}
+      <h3 className="text-sm font-medium text-white mb-1">URLs de webhook</h3>
+      <p className="text-xs text-neutral-500 mb-5">
+        São <b>duas URLs diferentes</b> — uma para cada sentido do fluxo. Só a primeira é você quem
+        configura.
       </p>
-      <div className="space-y-3">
-        <CopyRow label="Provider" value={urls.provider} />
-        <CopyRow label="Chatwoot" value={urls.chatwoot} />
+
+      {/* 1. Provider → Wootrico (manual) */}
+      <div className="rounded-xl border border-blue-500/20 bg-blue-500/[0.04] p-4 mb-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Badge tone="neutral">você configura</Badge>
+          <h4 className="text-sm font-medium text-white">1. {help.name} → Wootrico (entrada)</h4>
+        </div>
+        <p className="text-xs text-neutral-400 mb-3">
+          Cole esta URL no painel do <b>{help.name}</b> para as mensagens do WhatsApp chegarem ao
+          Chatwoot.
+        </p>
+        <ol className="list-decimal list-inside text-xs text-neutral-400 space-y-1 mb-3">
+          {help.steps.map((s) => (
+            <li key={s}>{s}</li>
+          ))}
+        </ol>
+        <CopyRow label="URL do Provider" value={urls.provider} />
+      </div>
+
+      {/* 2. Chatwoot → Wootrico (automático) */}
+      <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Badge tone="ok">automático</Badge>
+          <h4 className="text-sm font-medium text-white">2. Chatwoot → Wootrico (resposta)</h4>
+        </div>
+        <p className="text-xs text-neutral-400 mb-3">
+          Já configurado automaticamente no inbox{inboxName ? ` "${inboxName}"` : ''} (canal API).
+          Você <b>não precisa fazer nada</b> — a URL abaixo é só para conferência ou configuração
+          manual.
+        </p>
+        <CopyRow label="URL do Chatwoot" value={urls.chatwoot} />
       </div>
     </Card>
   );
 }
 
-function WebhookUrls({ urls }: { urls: { provider: string; chatwoot: string } }) {
+function InboxResultCard({
+  inbox,
+  urls,
+  providerType,
+  inboxName,
+}: {
+  inbox: InboxResult;
+  urls: { provider: string; chatwoot: string };
+  providerType: ProviderType;
+  inboxName?: string;
+}) {
+  const m = inboxMessage(inbox.action);
   return (
-    <Card>
-      <h3 className="text-sm font-medium text-white mb-1">URLs de webhook</h3>
-      <p className="text-xs text-neutral-500 mb-5">
-        Cole a URL "provider" na sua API não-oficial. A URL do Chatwoot é configurada
-        automaticamente no inbox.
-      </p>
-      <div className="space-y-3">
-        <CopyRow label="Provider" value={urls.provider} />
-        <CopyRow label="Chatwoot" value={urls.chatwoot} />
-      </div>
-    </Card>
+    <>
+      <Card>
+        <div className="flex items-center gap-3 mb-3">
+          <h3 className="text-sm font-medium text-white">Inbox</h3>
+          <Badge tone={m.tone}>{inbox.action}</Badge>
+        </div>
+        <p className="text-sm text-neutral-300">
+          {m.text}
+          {inbox.error ? ` (${inbox.error})` : ''}
+        </p>
+      </Card>
+      <WebhookGuide urls={urls} providerType={providerType} inboxName={inboxName} />
+    </>
   );
 }
 
