@@ -322,6 +322,9 @@ decide_network() {
 decide_infra() {
   title "Banco / Fila / Cache (Postgres · RabbitMQ · Redis)"
   local gw; gw="$(host_gw)"
+  # Segurança: remove serviços de teste órfãos de uma execução interrompida.
+  $SUDO docker service ls --format '{{.Name}}' 2>/dev/null | grep -E '^wttest_' \
+    | while read -r s; do $SUDO docker service rm "$s" >/dev/null 2>&1 || true; done
 
   _infra_one() { # $1 label  $2 img-regex  $3 porta-padrão
     local label="$1" img="$2" defport="$3" exists=0 samenet=0 sugg_new=1
