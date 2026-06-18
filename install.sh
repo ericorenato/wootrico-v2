@@ -2,17 +2,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Wootrico v2 — instalador para VPS (Docker Swarm).
 #   sudo bash install.sh            # instalar (padrão)
-#   sudo bash install.sh update     # git pull + rebuild + redeploy (preserva .env)
+#   sudo bash install.sh update       git pull + pull da imagem + redeploy (preserva .env)
 #   sudo bash install.sh uninstall  # remover a stack (e opcionalmente volumes)
 #
 # Detecta o SO, instala o que faltar (git/Docker/Swarm), pergunta as chaves,
-# gera/preserva segredos, builda a imagem, sobe a stack e mostra um resumo.
+# gera/preserva segredos, baixa a imagem, sobe a stack e mostra um resumo.
 # Idempotente: re-executar NÃO sobrescreve valores já existentes no .env.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 STACK_NAME="wootrico"
-IMAGE="wootrico:latest"
+IMAGE="${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}"
 ENV_FILE=".env"
 REPO_URL_DEFAULT="https://github.com/ericorenato/wootrico-v2"
 
@@ -95,7 +95,7 @@ cmd_install() {
   fi
 
   configure_env
-  build_image
+  pull_image
   deploy_stack
   print_summary
 }
@@ -148,11 +148,12 @@ configure_env() {
   chmod 600 "$ENV_FILE"; ok ".env atualizado (preservando valores existentes)"
 }
 
-build_image() { title "Build da imagem"; $SUDO docker build -t "$IMAGE" .; ok "Imagem $IMAGE construída"; note "Imagem: $IMAGE"; }
+pull_image() { title "Imagem"; $SUDO docker pull "$IMAGE"; ok "Imagem $IMAGE baixada"; note "Imagem: $IMAGE"; }
 deploy_stack() {
   title "Deploy (Swarm)"
   set -a; . "./$ENV_FILE"; set +a
-  $SUDO docker stack deploy --resolve-image never -c docker-compose.yml "$STACK_NAME"
+  export WOOTRICO_IMAGE="$IMAGE"
+  $SUDO docker stack deploy --resolve-image always -c docker-compose.yml "$STACK_NAME"
   ok "Stack '$STACK_NAME' implantada"; note "Stack: $STACK_NAME (Swarm)"
 }
 print_summary() {
@@ -172,7 +173,7 @@ cmd_update() {
   [ -f "$ENV_FILE" ] || { err ".env não encontrado — rode a instalação primeiro."; exit 1; }
   title "Atualizar"
   [ -d .git ] && { info "git pull…"; git pull --ff-only || warn "git pull falhou (seguindo)"; }
-  build_image
+  pull_image
   deploy_stack
   ok "Atualizado."; $SUDO docker stack services "$STACK_NAME"
 }

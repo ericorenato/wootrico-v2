@@ -18,7 +18,7 @@ services:
       retries: 12
 
   license-server:
-    build: { context: ., dockerfile: Dockerfile }
+    image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
     restart: unless-stopped
     env_file: apps/license-server/.env
     command: >-

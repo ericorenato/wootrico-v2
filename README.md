@@ -66,9 +66,12 @@ Sem Swarm, com porta publicada — ótimo para testar:
 cp .env.example .env
 # ajuste: hosts internos (postgres/rabbitmq/redis), LICENSE_REQUIRED=false,
 # e gere JWT_SECRET / APP_ENCRYPTION_KEY
-docker compose -f docker-compose.local.yml up -d --build
+docker compose -f docker-compose.local.yml up -d   # puxa a imagem do Docker Hub
 # painel em http://localhost:3000
 ```
+
+> A imagem pública é `ericoautomacao/wootrico-v2:latest`. Para buildar a sua
+> própria, descomente o `build:` no `docker-compose.local.yml`.
 
 ## 🧩 Arquitetura
 

@@ -61,7 +61,7 @@ services:
       placement: { constraints: [node.role == manager] }
 
   app:
-    image: ${WOOTRICO_IMAGE:-wootrico:latest}
+    image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
     env_file: .env
     command: >-
       sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
@@ -78,7 +78,7 @@ services:
         - traefik.http.services.wootrico.loadbalancer.server.port=3000
 
   worker:
-    image: ${WOOTRICO_IMAGE:-wootrico:latest}
+    image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
     env_file: .env
     command: node apps/worker/dist/main.cjs
     networks: [wootrico]

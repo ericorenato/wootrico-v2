@@ -43,7 +43,9 @@ services:
       retries: 12
 
   app:
-    build: { context: ., dockerfile: Dockerfile }
+    image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
+    # Para buildar localmente em vez de puxar do Hub, comente a linha acima e descomente:
+    # build: { context: ., dockerfile: Dockerfile }
     restart: unless-stopped
     env_file: .env
     command: >-
@@ -57,7 +59,8 @@ services:
       redis: { condition: service_healthy }
 
   worker:
-    build: { context: ., dockerfile: Dockerfile }
+    image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
+    # build: { context: ., dockerfile: Dockerfile }
     restart: unless-stopped
     env_file: .env
     command: node apps/worker/dist/main.cjs
