@@ -54,7 +54,11 @@ function parseRb(url: string): RbFields {
   }
 }
 function buildRb(f: RbFields): string {
-  const path = `/${enc(f.vhost || '/')}`;
+  // Aceita o vhost só pelo nome (sem barra): 'padrao' ou '/padrao' → vhost
+  // 'padrao'. '/' (ou vazio) = vhost padrão, codificado como %2F.
+  let vh = (f.vhost || '/').trim();
+  if (vh !== '/') vh = vh.replace(/^\/+/, '') || '/';
+  const path = `/${enc(vh)}`;
   return `amqp://${enc(f.user)}:${enc(f.password)}@${f.host}:${f.port}${path}`;
 }
 
@@ -238,7 +242,7 @@ export default function ConnectionsEditor({ heading = true }: { heading?: boolea
             <Field label="Usuário"><Input value={rb.user} onChange={(e) => setRb({ ...rb, user: e.target.value })} /></Field>
             <Field label="Senha"><SecretInput value={rb.password} onChange={(v) => setRb({ ...rb, password: v })} /></Field>
           </div>
-          <Field label="VHost (padrão: /)">
+          <Field label="VHost (padrão: /; nomeado: só o nome, ex.: padrao)">
             <Input value={rb.vhost} onChange={(e) => setRb({ ...rb, vhost: e.target.value })} placeholder="/" />
           </Field>
         </div>

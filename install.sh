@@ -470,7 +470,9 @@ decide_infra() {
       RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
       local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
       # Muitos RabbitMQ gerenciados usam um vhost nomeado; o padrão é '/'.
-      RB_VHOST="$(ask "VHost do RabbitMQ (padrão: /)" "$RB_VHOST")"
+      RB_VHOST="$(ask "VHost do RabbitMQ (padrão: /; nomeado: digite só o nome, ex.: padrao)" "$RB_VHOST")"
+      # Aceita só o nome: '/padrao' ou 'padrao' viram o vhost 'padrao'. '/' = padrão.
+      [ "$RB_VHOST" != "/" ] && RB_VHOST="${RB_VHOST#/}"; RB_VHOST="${RB_VHOST:-/}"
       info "Testando alcance do RabbitMQ (${RB_HOST}:${RB_PORT})…"
       if test_rabbit_tcp "$RB_HOST" "$RB_PORT"; then ok "RabbitMQ: porta acessível (usuário/senha/vhost serão validados na conexão do worker)."; break; fi
       warn "Não consegui alcançar o RabbitMQ em ${RB_HOST}:${RB_PORT}."
