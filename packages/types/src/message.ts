@@ -55,6 +55,13 @@ export interface NormalizedInboundMessage {
 
   status?: string | null;
 
+  /**
+   * Extra PN↔LID pairs discovered in this event (e.g. the full participant
+   * roster of a group), to seed the global identity directory for number
+   * discovery. Not the message's own contact.
+   */
+  directoryHints?: Array<{ pn?: string | null; lid?: string | null; pushName?: string | null }>;
+
   /** original payload, for debugging / replay */
   raw?: unknown;
 }

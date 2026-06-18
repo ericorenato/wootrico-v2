@@ -4,7 +4,7 @@ import { withLock, cacheGet, cacheSet } from '@wootrico/cache';
 import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/chatwoot-client';
 import { addTicket, consumeTicket } from '../engine/dedup.js';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
-import { resolveIdentity } from '../engine/identity.js';
+import { resolveIdentity, ingestDirectoryHints } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 
@@ -39,17 +39,24 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   if (norm.kind === 'message_edited') return;
 
   const isGroup = norm.isGroup;
-  // Pair PN↔LID onto a GLOBAL canonical id (shared across all companies) so the
-  // same person always maps to the same Chatwoot contact and so a number known
-  // by one company is discoverable when another only sees the LID.
-  const identity = isGroup
-    ? null
-    : await resolveIdentity({
-        pn: norm.phone,
-        lid: norm.lid,
-        pushName: norm.name ?? norm.senderName,
-      });
+  // Pair the sender's PN↔LID onto a GLOBAL canonical id (shared across all
+  // companies) for number discovery. For a DM this is the contact; for a group
+  // it's just the participant who sent (the conversation is keyed by the group).
+  const identity = await resolveIdentity({
+    pn: norm.phone,
+    lid: norm.lid,
+    pushName: norm.name ?? norm.senderName,
+  });
+  // Seed the directory with the whole group roster (throttled, best-effort).
+  if (isGroup && norm.groupId && norm.directoryHints?.length) {
+    const hintKey = `idir:group:${hmac(norm.groupId)}`;
+    if ((await cacheGet(hintKey)) == null) {
+      await cacheSet(hintKey, 1, 6 * 3600);
+      await ingestDirectoryHints(norm.directoryHints);
+    }
+  }
   // Canonical key — drives Chatwoot identifier, dedup and per-conversation lock.
+  // Groups have no LID identity: they are keyed by the group id.
   const identifier = isGroup
     ? (norm.groupId ?? '')
     : (identity?.id ?? norm.phone ?? norm.jid ?? norm.lid ?? '');
@@ -61,15 +68,23 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     : (norm.phone ?? norm.jid ?? (identity?.lid ? `${identity.lid}@lid` : identifier));
   // Phone shown in Chatwoot: prefer what arrived, else the number discovered in
   // the global directory (e.g. another company already paired this LID↔number).
-  const discoveredPhone = norm.phone ?? identity?.pn ?? null;
+  const discoveredPhone = !isGroup ? (norm.phone ?? identity?.pn ?? null) : null;
+  // In groups, label each message with who sent it (Chatwoot has no groups, so
+  // the whole group is one contact/conversation).
+  const senderLabel = norm.senderName ?? norm.name ?? null;
   const messageType = norm.media?.type ?? 'text';
 
   const mirror = async (direction: ChatwootMessageType): Promise<void> => {
-    const contactName = norm.name ?? norm.senderName ?? (discoveredPhone ?? sendTarget);
+    const contactName = isGroup
+      ? (norm.groupName ?? norm.groupId ?? identifier)
+      : (norm.name ?? norm.senderName ?? (discoveredPhone ?? sendTarget));
     const phoneNumber =
       !isGroup && discoveredPhone
         ? normalizePhone(discoveredPhone, integration.defaultCountry).e164
         : undefined;
+    // Prefix the participant name on group messages so it's clear who spoke.
+    const body =
+      isGroup && senderLabel ? `*${senderLabel}:*\n${norm.text ?? ''}` : (norm.text ?? '');
 
     // contact id is stable → cache it (keyed by pseudonymized identifier)
     const contactKey = `cw:contact:${integrationId}:${hmac(identifier)}`;
@@ -113,7 +128,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       mime = mime ?? 'application/octet-stream';
       created = await chatwoot.createMessageWithAttachment({
         conversationId,
-        content: norm.text ?? '',
+        content: body,
         messageType: direction,
         attachment: {
           buffer: Buffer.from(base64, 'base64'),
@@ -125,7 +140,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     } else {
       created = await chatwoot.createMessage({
         conversationId,
-        content: norm.text ?? '',
+        content: body,
         messageType: direction,
         inReplyTo,
       });

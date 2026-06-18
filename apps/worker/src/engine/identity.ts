@@ -96,6 +96,21 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
   return null;
 }
 
+/**
+ * Best-effort bulk seed of the directory from a batch of PN↔LID pairs (e.g. a
+ * group's participant roster). One INSERT, skipping any that already exist — it
+ * fills brand-new entries cheaply; real DM events still do the precise merge.
+ */
+export async function ingestDirectoryHints(
+  hints: Array<{ pn?: string | null; lid?: string | null }>,
+): Promise<void> {
+  const rows = hints
+    .map((h) => ({ pn: clean(h.pn), lid: clean(h.lid) }))
+    .filter((h) => h.pn || h.lid);
+  if (!rows.length) return;
+  await prisma.contactIdentity.createMany({ data: rows, skipDuplicates: true }).catch(() => undefined);
+}
+
 /** Look up an identity by its canonical id (used on the outbound path). */
 export async function getIdentityById(id?: string | null): Promise<ResolvedIdentity | null> {
   if (!id) return null;

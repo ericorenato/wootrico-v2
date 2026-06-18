@@ -112,15 +112,21 @@ export function parseEvolutionInbound(
     effective.conversation ?? effective.extendedTextMessage?.text ?? caption ?? '';
 
   const chatJid: string = info.Chat ?? '';
-  // The sender may be addressed by phone (@s.whatsapp.net) or by LID (@lid), and
-  // it can be in either Sender or SenderAlt. Classify by suffix instead of
-  // assuming Sender is always the phone — otherwise a LID gets mis-read as a
-  // phone number once Meta switches a chat to LID addressing.
-  const candidates = [
-    (info.Sender ?? '').toString(),
-    (info.SenderAlt ?? '').toString(),
-    !isGroup ? chatJid : '',
-  ].filter(Boolean);
+  const fromMe = !!info.IsFromMe;
+  // The contact is always the OTHER party. For an outgoing (fromMe) DM the Sender
+  // is OUR own number, so the contact must come from Chat (the recipient).
+  // For an incoming DM the Sender IS the contact and SenderAlt gives its PN↔LID
+  // pair. Classify candidates by suffix (@s.whatsapp.net vs @lid) so a LID is
+  // never mis-read as a phone number once Meta switches a chat to LID addressing.
+  const senderJid = (info.Sender ?? '').toString();
+  const senderAlt = (info.SenderAlt ?? '').toString();
+  const candidates = (
+    isGroup
+      ? [senderJid, senderAlt] // the participant who sent
+      : fromMe
+        ? [chatJid] // outgoing DM → contact = recipient
+        : [senderJid, senderAlt, chatJid] // incoming DM → contact = sender
+  ).filter(Boolean);
   let pnJid = '';
   let lidJid = '';
   for (const j of candidates) {
@@ -134,6 +140,22 @@ export function parseEvolutionInbound(
 
   const replyTo = getContextInfo(effective)?.stanzaId ?? getContextInfo(effective)?.stanzaID ?? null;
 
+  // Group metadata: name + the full participant roster (a PN↔LID directory we
+  // can use to seed number discovery).
+  const groupData = (data.groupData ?? {}) as Record<string, any>;
+  const groupName = isGroup ? (groupData.Name ?? null) : null;
+  const directoryHints =
+    isGroup && Array.isArray(groupData.Participants)
+      ? (groupData.Participants as any[])
+          .map((p) => ({
+            pn: p?.PhoneNumber?.endsWith?.('@s.whatsapp.net')
+              ? normalizePhone(stripJid(p.PhoneNumber), ctx.defaultCountry).digits
+              : null,
+            lid: (p?.LID ?? p?.JID)?.endsWith?.('@lid') ? stripJid(p.LID ?? p.JID) : null,
+          }))
+          .filter((h) => h.pn || h.lid)
+      : undefined;
+
   const result: NormalizedInboundMessage = {
     ...base,
     phone: phoneDigits,
@@ -144,7 +166,8 @@ export function parseEvolutionInbound(
     senderName: info.PushName ?? null,
     isGroup,
     groupId: isGroup ? chatJid : null,
-    groupName: null,
+    groupName,
+    directoryHints,
     replyToProviderMessageId: replyTo,
     kind: isEdit ? 'message_edited' : 'message',
     editedProviderMessageId: isEdit
