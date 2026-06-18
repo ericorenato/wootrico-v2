@@ -236,10 +236,10 @@ configure_env() {
   else
     set_env REDIS_PASSWORD ""; set_env REDIS_URL "redis://${RD_HOST}:${RD_PORT}"
   fi
-  # modos/portas persistidos p/ o 'update' regenerar o compose sem perguntar.
-  set_env WOOTRICO_PG_MODE "$PG_MODE"; set_env WOOTRICO_PG_PORT "$PG_PORT"
-  set_env WOOTRICO_RB_MODE "$RB_MODE"; set_env WOOTRICO_RB_PORT "$RB_PORT"
-  set_env WOOTRICO_RD_MODE "$RD_MODE"; set_env WOOTRICO_RD_PORT "$RD_PORT"
+  # modos/host/portas persistidos p/ o 'update' regenerar e p/ o resumo.
+  set_env WOOTRICO_PG_MODE "$PG_MODE"; set_env WOOTRICO_PG_HOST "$PG_HOST"; set_env WOOTRICO_PG_PORT "$PG_PORT"
+  set_env WOOTRICO_RB_MODE "$RB_MODE"; set_env WOOTRICO_RB_HOST "$RB_HOST"; set_env WOOTRICO_RB_PORT "$RB_PORT"
+  set_env WOOTRICO_RD_MODE "$RD_MODE"; set_env WOOTRICO_RD_HOST "$RD_HOST"; set_env WOOTRICO_RD_PORT "$RD_PORT"
   set_env PUBLIC_BASE_URL "$(keep_or PUBLIC_BASE_URL "https://${DOMAIN}")"
   set_env LICENSE_SERVER_URL "$LICENSE_SERVER_URL"
   [ -n "$LICENSE_PUBLIC_KEY" ] && set_env LICENSE_PUBLIC_KEY "$LICENSE_PUBLIC_KEY"
@@ -631,6 +631,14 @@ print_summary() {
   title "Resumo"
   for line in "${SUMMARY[@]:-}"; do [ -n "$line" ] && echo "  • $line"; done
   echo; echo -e "${C_B}Serviços:${C_0}"; $SUDO docker stack services "$STACK_NAME" 2>/dev/null || true
+
+  echo; echo -e "${C_B}Configuração em uso:${C_0}"
+  echo "  Rede:     $(genv WOOTRICO_NETWORK)"
+  echo "  Traefik:  $([ "$(genv WOOTRICO_TRAEFIK)" = 1 ] && echo 'instalado pelo Wootrico' || echo 'externo/intocado')"
+  echo "  Postgres: $(genv WOOTRICO_PG_MODE) → $(genv WOOTRICO_PG_HOST):$(genv WOOTRICO_PG_PORT)/$(genv POSTGRES_DB)"
+  echo "  RabbitMQ: $(genv WOOTRICO_RB_MODE) → $(genv WOOTRICO_RB_HOST):$(genv WOOTRICO_RB_PORT)"
+  echo "  Redis:    $(genv WOOTRICO_RD_MODE) → $(genv WOOTRICO_RD_HOST):$(genv WOOTRICO_RD_PORT)"
+
   local DOM; DOM="${DOMAIN:-$(grep -E '^DOMAIN=' "$ENV_FILE"|cut -d= -f2-)}"
   echo; echo -e "${C_B}Acesso:${C_0} https://${DOM}  (o setup wizard cria o admin no 1º acesso)"
   echo -e "${C_Y}DNS:${C_0} confirme um registro A de '${DOM}' apontando para $(public_ip) (sem isso o domínio não abre e o TLS falha)."
