@@ -28,6 +28,17 @@ const MEDIA_KEYS: [string, MessageType][] = [
   ['stickerMessage', 'image'],
 ];
 
+/** Sniff the real image mime from the start of a base64 blob (Evolution GO
+ *  converts stickers to PNG but still reports image/webp, so trust the bytes). */
+function mimeFromBase64(b64?: string | null): string | null {
+  const s = (b64 ?? '').replace(/^data:[^;]+;base64,/, '');
+  if (s.startsWith('iVBORw0KGgo')) return 'image/png';
+  if (s.startsWith('/9j/')) return 'image/jpeg';
+  if (s.startsWith('R0lGOD')) return 'image/gif';
+  if (s.startsWith('UklGR')) return 'image/webp';
+  return null;
+}
+
 function extractMedia(message: Record<string, any>): { media: InboundMedia | null; caption: string } {
   // document-with-caption wraps the real documentMessage one level down
   const inner = message.documentWithCaptionMessage?.message ?? message;
@@ -35,13 +46,15 @@ function extractMedia(message: Record<string, any>): { media: InboundMedia | nul
     const m = inner[key];
     if (!m) continue;
     const caption: string = m.caption ?? '';
+    const base64 = message.base64 ?? inner.base64 ?? undefined;
     const media: InboundMedia = {
       type,
       // Evolution GO gives a plain decrypted URL (image/video/doc) ...
       url: message.mediaUrl ?? inner.mediaUrl ?? undefined,
-      // ... or inline base64 (audio/ptt).
-      base64: message.base64 ?? inner.base64 ?? undefined,
-      mimeType: m.mimetype ?? message.mimetype ?? inner.mimetype,
+      // ... or inline base64 (audio/ptt/sticker).
+      base64,
+      // Prefer the sniffed mime when we have the bytes (fixes sticker webp→png).
+      mimeType: (base64 ? mimeFromBase64(base64) : null) ?? m.mimetype ?? message.mimetype ?? inner.mimetype,
       fileName: m.fileName ?? m.title ?? undefined,
       caption,
     };
@@ -107,9 +120,19 @@ export function parseEvolutionInbound(
   // Edited content lives under protocolMessage.editedMessage
   const effective = isEdit && proto?.editedMessage ? { ...message, ...proto.editedMessage } : message;
 
-  const { media, caption } = extractMedia(effective);
-  const text =
-    effective.conversation ?? effective.extendedTextMessage?.text ?? caption ?? '';
+  // Reaction: an emoji reacting to a message. Chatwoot has no reaction type, so
+  // we mirror it as a short text threaded under the reacted message. An empty
+  // text means the reaction was removed → ignore.
+  const reaction = effective.reactionMessage as Record<string, any> | undefined;
+  const reactionText = (reaction?.text ?? '').toString().trim();
+  if (reaction && !reactionText) {
+    return { ...base, kind: 'ignored' };
+  }
+
+  const { media, caption } = reaction ? { media: null, caption: '' } : extractMedia(effective);
+  const text = reaction
+    ? `reagiu com ${reactionText}`
+    : (effective.conversation ?? effective.extendedTextMessage?.text ?? caption ?? '');
 
   const chatJid: string = info.Chat ?? '';
   const fromMe = !!info.IsFromMe;
@@ -138,7 +161,11 @@ export function parseEvolutionInbound(
     : null;
   const lid = lidJid ? stripJid(lidJid) : null;
 
-  const replyTo = getContextInfo(effective)?.stanzaId ?? getContextInfo(effective)?.stanzaID ?? null;
+  // A reaction threads under the message it reacted to; otherwise use the quoted
+  // message id from the context info.
+  const replyTo = reaction
+    ? (reaction.key?.ID ?? reaction.key?.id ?? null)
+    : (getContextInfo(effective)?.stanzaId ?? getContextInfo(effective)?.stanzaID ?? null);
 
   // Group metadata: name + the full participant roster (a PN↔LID directory we
   // can use to seed number discovery).
