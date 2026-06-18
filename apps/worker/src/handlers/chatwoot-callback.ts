@@ -8,6 +8,7 @@ import {
   removeByChatwootId,
   decryptRecipient,
 } from '../engine/mapping.js';
+import { resolveIdentity, getIdentityById } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { chatwootAttachmentType, getMessageTypeFromChatwoot } from '../lib/message-type.js';
 
@@ -53,20 +54,33 @@ export async function handleChatwootCallback(
   const sender = conversation.meta?.sender ?? {};
   const isGroup =
     typeof sender.identifier === 'string' && sender.identifier.endsWith('@g.us');
-  const recipient = isGroup
-    ? sender.identifier
-    : sender.phone_number
-      ? String(sender.phone_number).replace(/\D/g, '')
-      : sender.identifier;
-  if (!recipient) return;
+
+  // canonicalKey: stable id for dedup/lock (same domain as inbound).
+  // sendTarget: the actual phone/jid/group we send to on the provider.
+  let canonicalKey: string;
+  let sendTarget: string;
+  if (isGroup) {
+    canonicalKey = sender.identifier;
+    sendTarget = sender.identifier;
+  } else {
+    const pn = sender.phone_number ? String(sender.phone_number).replace(/\D/g, '') : null;
+    // Chatwoot's contact identifier is our canonical id (set on inbound); fall
+    // back to resolving by phone so both paths agree on the same canonical key.
+    const identity = pn
+      ? await resolveIdentity(integrationId, { pn })
+      : await getIdentityById(integrationId, sender.identifier);
+    canonicalKey = identity?.id ?? pn ?? sender.identifier;
+    sendTarget = pn ?? (identity?.lid ? `${identity.lid}@lid` : sender.identifier);
+  }
+  if (!canonicalKey || !sendTarget) return;
 
   const attachments: any[] = payload.attachments ?? [];
   const messageType = getMessageTypeFromChatwoot(attachments);
 
   // Serialize per conversation (ordering) — same lock domain as inbound.
-  await withLock(`lock:conv:${integrationId}:${hmac(recipient)}`, async () => {
+  await withLock(`lock:conv:${integrationId}:${hmac(canonicalKey)}`, async () => {
     // CASE 2 dedup — if it originated on the phone, it's already mirrored: skip.
-    const consumed = await consumeTicket(integrationId, recipient, messageType, 'phone_origin');
+    const consumed = await consumeTicket(integrationId, canonicalKey, messageType, 'phone_origin');
     if (consumed) return;
 
     // signature
@@ -87,7 +101,7 @@ export async function handleChatwootCallback(
       for (const att of attachments) {
         await throttle(`throttle:media:${integrationId}`, MEDIA_THROTTLE_MS);
         const r = await provider.sendMessage({
-          recipient,
+          recipient: sendTarget,
           type: chatwootAttachmentType(att.file_type),
           content: content || undefined,
           media: { url: att.data_url },
@@ -98,7 +112,7 @@ export async function handleChatwootCallback(
       }
     } else {
       const r = await provider.sendMessage({
-        recipient,
+        recipient: sendTarget,
         type: 'text',
         content,
         replyToProviderMessageId,
@@ -107,7 +121,7 @@ export async function handleChatwootCallback(
     }
 
     // Our send will echo back via the provider webhook → consume on inbound (case 4).
-    await addTicket(integrationId, recipient, messageType, 'api_origin');
+    await addTicket(integrationId, canonicalKey, messageType, 'api_origin');
 
     if (providerMessageIds[0]) {
       await storeMapping({
@@ -116,7 +130,7 @@ export async function handleChatwootCallback(
         providerMessageId: providerMessageIds[0],
         chatwootConversationId: String(conversation.id ?? ''),
         chatwootInboxId: inboxId,
-        recipient,
+        recipient: sendTarget,
         provider: providerType,
       });
     }

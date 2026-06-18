@@ -4,6 +4,7 @@ import { withLock, cacheGet, cacheSet } from '@wootrico/cache';
 import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/chatwoot-client';
 import { addTicket, consumeTicket } from '../engine/dedup.js';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
+import { resolveIdentity, cacheIdentityChatwoot } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 
@@ -38,13 +39,28 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   if (norm.kind === 'message_edited') return;
 
   const isGroup = norm.isGroup;
-  const identifier = isGroup ? (norm.groupId ?? '') : (norm.phone ?? norm.jid ?? norm.lid ?? '');
+  // Pair PN↔LID onto a stable canonical id so the same person always maps to the
+  // same Chatwoot contact/conversation regardless of which identifier arrived.
+  const identity = isGroup
+    ? null
+    : await resolveIdentity(integrationId, {
+        pn: norm.phone,
+        lid: norm.lid,
+        pushName: norm.name ?? norm.senderName,
+      });
+  // Canonical key — drives Chatwoot identifier, dedup and per-conversation lock.
+  const identifier = isGroup
+    ? (norm.groupId ?? '')
+    : (identity?.id ?? norm.phone ?? norm.jid ?? norm.lid ?? '');
   if (!identifier) return;
-  const recipient = isGroup ? (norm.groupId ?? identifier) : (norm.phone ?? identifier);
+  // Actual address used to send/delete on the provider (phone, jid or group id).
+  const sendTarget = isGroup
+    ? (norm.groupId ?? identifier)
+    : (norm.phone ?? norm.jid ?? (identity?.lid ? `${identity.lid}@lid` : identifier));
   const messageType = norm.media?.type ?? 'text';
 
   const mirror = async (direction: ChatwootMessageType): Promise<void> => {
-    const contactName = norm.name ?? norm.senderName ?? recipient;
+    const contactName = norm.name ?? norm.senderName ?? (norm.phone ?? sendTarget);
     const phoneNumber =
       !isGroup && norm.phone
         ? normalizePhone(norm.phone, integration.defaultCountry).e164
@@ -68,6 +84,10 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     });
     const conversationId = conversation?.id;
     if (!conversationId) return logger.warn({ integrationId }, 'inbound: missing conversation id');
+
+    // Remember the Chatwoot refs on the identity so automations can fetch this
+    // contact's history by any of its paired ids.
+    if (identity) await cacheIdentityChatwoot(identity.id, { contactId, conversationId });
 
     let inReplyTo: number | undefined;
     if (norm.replyToProviderMessageId) {
@@ -117,14 +137,14 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         providerMessageId: norm.providerMessageId,
         chatwootConversationId: String(conversationId),
         chatwootInboxId: inboxId,
-        recipient,
+        recipient: sendTarget,
         provider: providerType,
       });
     }
   };
 
   // Serialize per conversation so messages stay ordered (replaces the old delay).
-  const lockKey = `lock:conv:${integrationId}:${hmac(recipient)}`;
+  const lockKey = `lock:conv:${integrationId}:${hmac(identifier)}`;
   await withLock(lockKey, async () => {
     // CASE 1 — customer message in
     if (!norm.fromMe) {
@@ -136,9 +156,9 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       const existing = await getMappingByProviderId(integrationId, norm.providerMessageId);
       if (existing) return; // our own send, already mirrored
     }
-    const consumed = await consumeTicket(integrationId, recipient, messageType, 'api_origin');
+    const consumed = await consumeTicket(integrationId, identifier, messageType, 'api_origin');
     if (consumed) return;
-    await addTicket(integrationId, recipient, messageType, 'phone_origin');
+    await addTicket(integrationId, identifier, messageType, 'phone_origin');
     await mirror('outgoing');
   });
 }
