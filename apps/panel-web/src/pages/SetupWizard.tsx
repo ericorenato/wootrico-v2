@@ -5,6 +5,7 @@ import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../compon
 import { completeSetup, setBaseUrl } from '../lib/setup-api';
 import { activateLicense, getLicenseStatus, type LicenseStatus } from '../lib/license-api';
 import { runDiagnostics, type Diagnostics } from '../lib/system-api';
+import ConnectionsEditor from '../components/ConnectionsEditor';
 import { ApiError } from '../lib/api-client';
 
 const STEPS = ['Conexões', 'URL pública', 'Licença', 'Integração'] as const;
@@ -134,6 +135,13 @@ export default function SetupWizard() {
                 <DiagLine label="RabbitMQ" r={diag?.rabbitmq} busy={diagBusy} />
                 <DiagLine label="Redis" r={diag?.redis} busy={diagBusy} />
               </div>
+
+              <p className="text-xs text-neutral-500">
+                Alguma conexão falhou? Ajuste abaixo (ex.: o <b>VHost</b> do RabbitMQ — o padrão é{' '}
+                <code>/</code>), salve para testar e reinicie para aplicar.
+              </p>
+              <ConnectionsEditor heading={false} />
+
               <div className="flex items-center gap-4">
                 <Button onClick={() => setStep(1)} loading={diagBusy}>
                   Continuar

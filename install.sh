@@ -44,6 +44,18 @@ need_root() {
 }
 # Leitura global de um valor do .env (helpers get_env/set_env locais ficam em configure_env).
 genv() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+# Percent-encode para usar credenciais (com @ : / etc.) dentro de URLs.
+urlenc() {
+  local s="$1" out="" c i
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out+="$c" ;;
+      *) printf -v c '%%%02X' "'$c"; out+="$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
 # IP primário do host (sugestão para conectar a serviços já existentes).
 host_gw() { hostname -I 2>/dev/null | awk '{print $1}'; }
 # Porta TCP escutando em 127.0.0.1 (via /dev/tcp do bash).
@@ -238,12 +250,15 @@ configure_env() {
   set_env WOOTRICO_NETWORK "${NET_NAME:-${STACK_NAME}-net}"
 
   # Banco/fila/cache — modos/host/porta/credenciais decididos em decide_infra.
+  # Credenciais são percent-encoded ao montar as URLs (senhas com @ : / etc.).
   set_env POSTGRES_USER "$PG_USER"; set_env POSTGRES_PASSWORD "$PG_PASS"; set_env POSTGRES_DB "$PG_DB"
-  set_env DATABASE_URL "postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${PG_DB}?schema=public"
+  set_env DATABASE_URL "postgresql://$(urlenc "$PG_USER"):$(urlenc "$PG_PASS")@${PG_HOST}:${PG_PORT}/${PG_DB}?schema=public"
   set_env RABBITMQ_USER "$RB_USER"; set_env RABBITMQ_PASSWORD "$RB_PASS"
-  set_env RABBITMQ_URL "amqp://${RB_USER}:${RB_PASS}@${RB_HOST}:${RB_PORT}"
+  set_env RABBITMQ_VHOST "$RB_VHOST"
+  # vhost vai no caminho da URL (default '/' → %2F).
+  set_env RABBITMQ_URL "amqp://$(urlenc "$RB_USER"):$(urlenc "$RB_PASS")@${RB_HOST}:${RB_PORT}/$(urlenc "$RB_VHOST")"
   if [ -n "${RD_PASS:-}" ]; then
-    set_env REDIS_PASSWORD "$RD_PASS"; set_env REDIS_URL "redis://:${RD_PASS}@${RD_HOST}:${RD_PORT}"
+    set_env REDIS_PASSWORD "$RD_PASS"; set_env REDIS_URL "redis://:$(urlenc "$RD_PASS")@${RD_HOST}:${RD_PORT}"
   else
     set_env REDIS_PASSWORD ""; set_env REDIS_URL "redis://${RD_HOST}:${RD_PORT}"
   fi
@@ -413,6 +428,7 @@ decide_infra() {
   # ---- RabbitMQ ----
   RB_USER="$(genv RABBITMQ_USER)"; RB_USER="${RB_USER:-wootrico}"
   RB_PASS="$(genv RABBITMQ_PASSWORD)"
+  RB_VHOST="$(genv RABBITMQ_VHOST)"; RB_VHOST="${RB_VHOST:-/}"
   _infra_one RabbitMQ 'rabbitmq' 5672; RB_MODE="$__MODE"
   if [ "$RB_MODE" = existing ]; then
     local rb_def; rb_def="$(svc_alias_on_net 'rabbitmq')"; [ -z "$rb_def" ] && rb_def="${gw:-127.0.0.1}"
@@ -422,8 +438,10 @@ decide_infra() {
       RB_PORT="$(ask "Porta AMQP do RabbitMQ (interna na rede)" "5672")"
       RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
       local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
+      # Muitos RabbitMQ gerenciados usam um vhost nomeado; o padrão é '/'.
+      RB_VHOST="$(ask "VHost do RabbitMQ (padrão: /)" "$RB_VHOST")"
       info "Testando alcance do RabbitMQ (${RB_HOST}:${RB_PORT})…"
-      if test_rabbit_tcp "$RB_HOST" "$RB_PORT"; then ok "RabbitMQ: porta acessível (usuário/senha serão validados na conexão do worker)."; break; fi
+      if test_rabbit_tcp "$RB_HOST" "$RB_PORT"; then ok "RabbitMQ: porta acessível (usuário/senha/vhost serão validados na conexão do worker)."; break; fi
       warn "Não consegui alcançar o RabbitMQ em ${RB_HOST}:${RB_PORT}."
       confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
     done
@@ -432,8 +450,9 @@ decide_infra() {
     RB_PORT="$(ask "Porta AMQP do RabbitMQ (nova instância)" "$(svc_detected 'rabbitmq' 5672 && echo 5673 || echo 5672)")"
     local p; p="$(ask_pass "Senha do RabbitMQ (enter = manter/gerar)")"; [ -n "$p" ] && RB_PASS="$p"
     [ -z "$RB_PASS" ] && { RB_PASS="$(openssl rand -hex 16)"; note "RabbitMQ: senha gerada automaticamente"; }
+    RB_VHOST="$(ask "VHost do RabbitMQ (padrão: /)" "$RB_VHOST")"
   fi
-  ok "RabbitMQ: ${RB_MODE} → ${RB_HOST}:${RB_PORT}"; note "RabbitMQ: ${RB_MODE} (${RB_HOST}:${RB_PORT})"
+  ok "RabbitMQ: ${RB_MODE} → ${RB_HOST}:${RB_PORT} (vhost ${RB_VHOST})"; note "RabbitMQ: ${RB_MODE} (${RB_HOST}:${RB_PORT} vhost ${RB_VHOST})"
 
   # ---- Redis ----
   RD_PASS="$(genv REDIS_PASSWORD)"
@@ -513,6 +532,7 @@ YAML
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wootrico}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
       RABBITMQ_NODE_PORT: "__RBPORT__"
     volumes: [rabbitmq_data:/var/lib/rabbitmq]
     networks: [wtnet]
