@@ -74,9 +74,12 @@ services:
       labels:
         - traefik.enable=true
         - traefik.http.routers.wootrico.rule=Host(`${DOMAIN}`)
-        - traefik.http.routers.wootrico.entrypoints=websecure
-        - traefik.http.routers.wootrico.tls.certresolver=le
+        - traefik.http.routers.wootrico.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+        - traefik.http.routers.wootrico.tls=true
+        - traefik.http.routers.wootrico.tls.certresolver=${TRAEFIK_RESOLVER:-letsencryptresolver}
+        - traefik.http.routers.wootrico.service=wootrico
         - traefik.http.services.wootrico.loadbalancer.server.port=3000
+        - traefik.http.services.wootrico.loadbalancer.passHostHeader=true
 
   worker:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}

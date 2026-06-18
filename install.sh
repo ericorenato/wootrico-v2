@@ -311,8 +311,9 @@ decide_traefik() {
     info "Os nomes abaixo precisam ser EXATAMENTE os do seu Traefik (veja a config dele)."
     TRAEFIK_ENTRYPOINT="$(ask "Nome do entrypoint HTTPS do seu Traefik" "$(genv WOOTRICO_TRAEFIK_ENTRYPOINT || true)")"
     TRAEFIK_ENTRYPOINT="${TRAEFIK_ENTRYPOINT:-websecure}"
-    TRAEFIK_RESOLVER="$(ask "Nome do certresolver (ACME/Let's Encrypt) do seu Traefik" "$(genv WOOTRICO_TRAEFIK_RESOLVER || true)")"
-    TRAEFIK_RESOLVER="${TRAEFIK_RESOLVER:-le}"
+    local _rs_def; _rs_def="$(genv WOOTRICO_TRAEFIK_RESOLVER)"; _rs_def="${_rs_def:-letsencryptresolver}"
+    TRAEFIK_RESOLVER="$(ask "Nome do certresolver (ACME/Let's Encrypt) do seu Traefik" "$_rs_def")"
+    TRAEFIK_RESOLVER="${TRAEFIK_RESOLVER:-letsencryptresolver}"
     note "Traefik: existente (intocado); entrypoint=${TRAEFIK_ENTRYPOINT} resolver=${TRAEFIK_RESOLVER}"
   elif confirm "Traefik não detectado. Instalar o Traefik (com TLS Let's Encrypt)?"; then
     USE_TRAEFIK=1
@@ -610,7 +611,9 @@ EOF
         - traefik.http.routers.wootrico.entrypoints=__ENTRYPOINT__
         - traefik.http.routers.wootrico.tls=true
         - traefik.http.routers.wootrico.tls.certresolver=__RESOLVER__
+        - traefik.http.routers.wootrico.service=wootrico
         - traefik.http.services.wootrico.loadbalancer.server.port=3000
+        - traefik.http.services.wootrico.loadbalancer.passHostHeader=true
 
   worker:
     image: __IMAGE__
@@ -676,20 +679,11 @@ YAML
 
 pull_image() {
   title "Imagem"
-  # Puxa a TAG móvel e RESOLVE para o digest imutável, fixando a stack nesse
-  # digest (repo@sha256:…). Assim o deploy usa exatamente a imagem recém-baixada
-  # e o Swarm nunca reaproveita uma versão antiga em cache no host.
-  local ref repo digest
-  ref="${IMAGE%@*}"          # remove um @sha256 pré-existente, se houver
-  repo="${ref%%:*}"          # repo sem tag (p/ casar o RepoDigest certo)
-  $SUDO docker pull "$ref"
-  digest="$($SUDO docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null \
-            | grep -E "^${repo}@" | head -1)"
-  if [ -n "$digest" ]; then
-    IMAGE="$digest"; ok "Imagem fixada por digest: $IMAGE"
-  else
-    IMAGE="$ref"; warn "Não consegui resolver o digest; usando a tag: $IMAGE"
-  fi
+  # Sempre usa a tag :latest. O deploy é feito com --resolve-image always, então
+  # o Swarm baixa a versão mais recente publicada no Hub a cada deploy.
+  IMAGE="${IMAGE%@*}"   # descarta qualquer @sha256 herdado de .env antigo
+  $SUDO docker pull "$IMAGE"
+  ok "Imagem $IMAGE baixada"
   note "Imagem: $IMAGE"
 }
 deploy_stack() {
