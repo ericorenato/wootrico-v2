@@ -42,10 +42,10 @@ export default function IntegrationForm() {
   const [zInstance, setZInstance] = useState('');
   const [zToken, setZToken] = useState('');
   const [zClientToken, setZClientToken] = useState('');
-  // provider (evolution)
+  // provider (evolution) — Evolution GO identifies the instance by the API key,
+  // so no instance name is needed.
   const [eBaseUrl, setEBaseUrl] = useState('');
   const [eApiKey, setEApiKey] = useState('');
-  const [eInstance, setEInstance] = useState('');
 
   // chatwoot
   const [cwBaseUrl, setCwBaseUrl] = useState('');
@@ -87,13 +87,13 @@ export default function IntegrationForm() {
     if (providerType === 'zapi')
       return { provider: 'zapi', instance: zInstance, token: zToken, clientToken: zClientToken };
     if (providerType === 'evolution')
-      return { provider: 'evolution', baseUrl: eBaseUrl, apiKey: eApiKey, instance: eInstance };
+      return { provider: 'evolution', baseUrl: eBaseUrl, apiKey: eApiKey };
     return { provider: 'uazapi', baseUrl: uBaseUrl, token: uToken, whatsappNumber: uNumber };
   };
 
   const providerConfigComplete = () => {
     if (providerType === 'zapi') return !!(zInstance && zToken && zClientToken);
-    if (providerType === 'evolution') return !!(eBaseUrl && eApiKey && eInstance);
+    if (providerType === 'evolution') return !!(eBaseUrl && eApiKey);
     return !!(uBaseUrl && uToken && uNumber);
   };
 
@@ -249,9 +249,6 @@ export default function IntegrationForm() {
                 </Field>
                 <Field label="API Key">
                   <Input value={eApiKey} onChange={(e) => setEApiKey(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
-                </Field>
-                <Field label="Instância">
-                  <Input value={eInstance} onChange={(e) => setEInstance(e.target.value)} />
                 </Field>
               </>
             )}

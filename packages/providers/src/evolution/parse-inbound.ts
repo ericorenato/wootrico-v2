@@ -112,20 +112,32 @@ export function parseEvolutionInbound(
     effective.conversation ?? effective.extendedTextMessage?.text ?? caption ?? '';
 
   const chatJid: string = info.Chat ?? '';
-  const senderJid: string = info.Sender ?? (isGroup ? '' : chatJid);
-  const phoneDigits = senderJid
-    ? normalizePhone(stripJid(senderJid), ctx.defaultCountry).digits
+  // The sender may be addressed by phone (@s.whatsapp.net) or by LID (@lid), and
+  // it can be in either Sender or SenderAlt. Classify by suffix instead of
+  // assuming Sender is always the phone — otherwise a LID gets mis-read as a
+  // phone number once Meta switches a chat to LID addressing.
+  const candidates = [
+    (info.Sender ?? '').toString(),
+    (info.SenderAlt ?? '').toString(),
+    !isGroup ? chatJid : '',
+  ].filter(Boolean);
+  let pnJid = '';
+  let lidJid = '';
+  for (const j of candidates) {
+    if (j.endsWith('@lid')) lidJid ||= j;
+    else if (j.endsWith('@s.whatsapp.net') || j.endsWith('@c.us')) pnJid ||= j;
+  }
+  const phoneDigits = pnJid
+    ? normalizePhone(stripJid(pnJid), ctx.defaultCountry).digits
     : null;
-
-  const senderAlt: string = (info.SenderAlt ?? '').toString();
-  const lid = senderAlt.endsWith('@lid') ? stripJid(senderAlt) : null;
+  const lid = lidJid ? stripJid(lidJid) : null;
 
   const replyTo = getContextInfo(effective)?.stanzaId ?? getContextInfo(effective)?.stanzaID ?? null;
 
   const result: NormalizedInboundMessage = {
     ...base,
     phone: phoneDigits,
-    jid: stripJid(senderJid) || null,
+    jid: pnJid ? stripJid(pnJid) : null,
     lid,
     text,
     media,

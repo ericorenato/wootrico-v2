@@ -60,10 +60,10 @@ function extractSentId(data: unknown): string | null {
 export class EvolutionProvider implements WhatsAppProvider {
   readonly type = 'evolution' as const;
   private http: AxiosInstance;
-  private instance: string;
 
   constructor(private config: EvolutionConfig) {
-    this.instance = config.instance;
+    // Evolution GO identifies the instance by the apikey header — no instance
+    // name is used in any route.
     this.http = axios.create({
       baseURL: config.baseUrl.replace(/\/$/, ''),
       headers: { apikey: config.apiKey, 'Content-Type': 'application/json' },

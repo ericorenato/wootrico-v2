@@ -126,41 +126,33 @@ model Integration {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  providerConfig    ProviderConfig?
-  messageMappings   MessageMapping[]
-  dedupTickets      DedupTicket[]
-  webhookEvents     WebhookEvent[]
-  contactIdentities ContactIdentity[]
+  providerConfig  ProviderConfig?
+  messageMappings MessageMapping[]
+  dedupTickets    DedupTicket[]
+  webhookEvents   WebhookEvent[]
 
   @@map("integrations")
 }
 
-// Canonical contact identity. WhatsApp is migrating from phone numbers (PN,
-// `@s.whatsapp.net`) to a privacy-preserving LID (`@lid`). The same person may
-// arrive as a PN, a LID, or both across events. We pair them onto a single
-// internal UUID (`id`) so dedup/lock/conversation history stay consistent
-// regardless of which identifier the provider sends. Nulls are distinct in
-// Postgres, so the unique columns still allow many rows with a null lid/pn.
+// GLOBAL contact-identity directory (instance-wide, NOT per company/account).
+// WhatsApp is migrating from phone numbers (PN, `@s.whatsapp.net`) to a
+// privacy-preserving LID (`@lid`); the same person may arrive as a PN, a LID,
+// or both. We pair them onto one internal UUID shared across every integration,
+// so a number discovered by company A is also known to company B when only the
+// LID arrives there. Each company still replies using the JID it received and
+// keeps its own Chatwoot contacts/conversations — only this mapping is shared.
+// Nulls are distinct in Postgres, so the unique columns allow many null lid/pn.
 model ContactIdentity {
-  id            String      @id @default(uuid()) // canonical key used everywhere
-  integrationId String      @map("integration_id")
-  integration   Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
-
-  lid String? // LID number, without the @lid suffix
-  pn  String? // phone number digits, without the @s.whatsapp.net suffix
+  id  String  @id @default(uuid()) // canonical key, used as the Chatwoot identifier
+  lid String? @unique // LID number, without the @lid suffix
+  pn  String? @unique // phone number digits, without the @s.whatsapp.net suffix
 
   pushName String? @map("push_name")
-
-  chatwootContactId      String? @map("chatwoot_contact_id")
-  chatwootConversationId String? @map("chatwoot_conversation_id")
 
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   lastSeenAt DateTime? @map("last_seen_at")
 
-  @@unique([integrationId, lid])
-  @@unique([integrationId, pn])
-  @@index([integrationId])
   @@map("contact_identities")
 }
 

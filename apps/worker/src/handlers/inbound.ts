@@ -4,7 +4,7 @@ import { withLock, cacheGet, cacheSet } from '@wootrico/cache';
 import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/chatwoot-client';
 import { addTicket, consumeTicket } from '../engine/dedup.js';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
-import { resolveIdentity, cacheIdentityChatwoot } from '../engine/identity.js';
+import { resolveIdentity } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 
@@ -39,11 +39,12 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   if (norm.kind === 'message_edited') return;
 
   const isGroup = norm.isGroup;
-  // Pair PN↔LID onto a stable canonical id so the same person always maps to the
-  // same Chatwoot contact/conversation regardless of which identifier arrived.
+  // Pair PN↔LID onto a GLOBAL canonical id (shared across all companies) so the
+  // same person always maps to the same Chatwoot contact and so a number known
+  // by one company is discoverable when another only sees the LID.
   const identity = isGroup
     ? null
-    : await resolveIdentity(integrationId, {
+    : await resolveIdentity({
         pn: norm.phone,
         lid: norm.lid,
         pushName: norm.name ?? norm.senderName,
@@ -54,16 +55,20 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     : (identity?.id ?? norm.phone ?? norm.jid ?? norm.lid ?? '');
   if (!identifier) return;
   // Actual address used to send/delete on the provider (phone, jid or group id).
+  // We reply via what THIS company received, not the globally-discovered number.
   const sendTarget = isGroup
     ? (norm.groupId ?? identifier)
     : (norm.phone ?? norm.jid ?? (identity?.lid ? `${identity.lid}@lid` : identifier));
+  // Phone shown in Chatwoot: prefer what arrived, else the number discovered in
+  // the global directory (e.g. another company already paired this LID↔number).
+  const discoveredPhone = norm.phone ?? identity?.pn ?? null;
   const messageType = norm.media?.type ?? 'text';
 
   const mirror = async (direction: ChatwootMessageType): Promise<void> => {
-    const contactName = norm.name ?? norm.senderName ?? (norm.phone ?? sendTarget);
+    const contactName = norm.name ?? norm.senderName ?? (discoveredPhone ?? sendTarget);
     const phoneNumber =
-      !isGroup && norm.phone
-        ? normalizePhone(norm.phone, integration.defaultCountry).e164
+      !isGroup && discoveredPhone
+        ? normalizePhone(discoveredPhone, integration.defaultCountry).e164
         : undefined;
 
     // contact id is stable → cache it (keyed by pseudonymized identifier)
@@ -84,10 +89,6 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     });
     const conversationId = conversation?.id;
     if (!conversationId) return logger.warn({ integrationId }, 'inbound: missing conversation id');
-
-    // Remember the Chatwoot refs on the identity so automations can fetch this
-    // contact's history by any of its paired ids.
-    if (identity) await cacheIdentityChatwoot(identity.id, { contactId, conversationId });
 
     let inReplyTo: number | undefined;
     if (norm.replyToProviderMessageId) {

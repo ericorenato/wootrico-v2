@@ -67,8 +67,8 @@ export async function handleChatwootCallback(
     // Chatwoot's contact identifier is our canonical id (set on inbound); fall
     // back to resolving by phone so both paths agree on the same canonical key.
     const identity = pn
-      ? await resolveIdentity(integrationId, { pn })
-      : await getIdentityById(integrationId, sender.identifier);
+      ? await resolveIdentity({ pn })
+      : await getIdentityById(sender.identifier);
     canonicalKey = identity?.id ?? pn ?? sender.identifier;
     sendTarget = pn ?? (identity?.lid ? `${identity.lid}@lid` : sender.identifier);
   }

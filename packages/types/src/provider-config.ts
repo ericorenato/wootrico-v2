@@ -24,7 +24,9 @@ export const EvolutionConfigSchema = z.object({
   provider: z.literal('evolution'),
   baseUrl: z.string().url(),
   apiKey: z.string().min(1),
-  instance: z.string().min(1),
+  // Evolution GO identifies the instance by the API key, so the instance name is
+  // optional (kept only for backward compatibility / display).
+  instance: z.string().optional(),
 });
 export type EvolutionConfig = z.infer<typeof EvolutionConfigSchema>;
 
@@ -43,6 +45,7 @@ export function providerIdentifier(config: ProviderConfig): string {
     case 'zapi':
       return config.instance;
     case 'evolution':
-      return config.instance;
+      // The API key is the real instance identifier in Evolution GO.
+      return config.instance || config.apiKey;
   }
 }
