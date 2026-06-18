@@ -25,13 +25,35 @@ export default async function integrationRoutes(app: FastifyInstance) {
     return { integrations: rows.map((r) => serializeIntegration(r, base)) };
   });
 
-  // ── get one ──
+  // ── get one (includes decrypted secrets so the edit form can prefill) ──
   app.get('/api/integrations/:id', guard, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const row = await app.prisma.integration.findUnique({ where: { id } });
+    const row = await app.prisma.integration.findUnique({
+      where: { id },
+      include: { providerConfig: true },
+    });
     if (!row) return reply.code(404).send({ error: 'not_found' });
     const base = await getPublicBaseUrl(app.prisma);
-    return { integration: serializeIntegration(row, base) };
+
+    let providerConfig: ProviderConfig | null = null;
+    if (row.providerConfig) {
+      try {
+        providerConfig = JSON.parse(decrypt(row.providerConfig.config)) as ProviderConfig;
+      } catch {
+        providerConfig = null;
+      }
+    }
+    let chatwootApiToken = '';
+    try {
+      chatwootApiToken = decrypt(row.chatwootApiToken);
+    } catch {
+      chatwootApiToken = '';
+    }
+
+    return {
+      integration: serializeIntegration(row, base),
+      secrets: { chatwootApiToken, providerConfig },
+    };
   });
 
   // ── create ──

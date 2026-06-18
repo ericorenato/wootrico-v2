@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -85,7 +85,7 @@ export default function IntegrationForm() {
 
   useEffect(() => {
     if (!editing || !id) return;
-    getIntegration(id).then((it) => {
+    getIntegration(id).then(({ integration: it, secrets }) => {
       setLoaded(it);
       setName(it.name);
       setIsEnabled(it.isEnabled);
@@ -98,6 +98,22 @@ export default function IntegrationForm() {
       setDesconsiderar(it.flags.desconsiderarGrupo);
       setAssinar(it.flags.assinarMensagem);
       setCountry(it.flags.defaultCountry);
+      // Prefill secrets + provider credentials so the form is fully editable
+      // and connection tests work on edit (hidden by default, toggle to view).
+      if (secrets?.chatwootApiToken) setCwToken(secrets.chatwootApiToken);
+      const pc = secrets?.providerConfig;
+      if (pc?.provider === 'uazapi') {
+        setUBaseUrl(pc.baseUrl ?? '');
+        setUToken(pc.token ?? '');
+        setUNumber(pc.whatsappNumber ?? '');
+      } else if (pc?.provider === 'zapi') {
+        setZInstance(pc.instance ?? '');
+        setZToken(pc.token ?? '');
+        setZClientToken(pc.clientToken ?? '');
+      } else if (pc?.provider === 'evolution') {
+        setEBaseUrl(pc.baseUrl ?? '');
+        setEApiKey(pc.apiKey ?? '');
+      }
     });
   }, [editing, id]);
 
@@ -279,7 +295,7 @@ export default function IntegrationForm() {
                   <Input value={uBaseUrl} onChange={(e) => setUBaseUrl(e.target.value)} placeholder="https://sua.uazapi.com" />
                 </Field>
                 <Field label="Token">
-                  <Input value={uToken} onChange={(e) => setUToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                  <SecretInput value={uToken} onChange={setUToken} />
                 </Field>
                 <Field label="Número do WhatsApp" hint="Somente dígitos (com DDI).">
                   <Input value={uNumber} onChange={(e) => setUNumber(e.target.value)} placeholder="5541999999999" />
@@ -292,10 +308,10 @@ export default function IntegrationForm() {
                   <Input value={zInstance} onChange={(e) => setZInstance(e.target.value)} />
                 </Field>
                 <Field label="Token da instância">
-                  <Input value={zToken} onChange={(e) => setZToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                  <SecretInput value={zToken} onChange={setZToken} />
                 </Field>
                 <Field label="Client-Token">
-                  <Input value={zClientToken} onChange={(e) => setZClientToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                  <SecretInput value={zClientToken} onChange={setZClientToken} />
                 </Field>
               </>
             )}
@@ -305,7 +321,7 @@ export default function IntegrationForm() {
                   <Input value={eBaseUrl} onChange={(e) => setEBaseUrl(e.target.value)} placeholder="https://sua.evolution.com" />
                 </Field>
                 <Field label="API Key">
-                  <Input value={eApiKey} onChange={(e) => setEApiKey(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                  <SecretInput value={eApiKey} onChange={setEApiKey} />
                 </Field>
               </>
             )}
@@ -331,7 +347,7 @@ export default function IntegrationForm() {
               <Input value={cwBaseUrl} onChange={(e) => setCwBaseUrl(e.target.value)} placeholder="https://chat.seudominio.com" />
             </Field>
             <Field label="API Token">
-              <Input value={cwToken} onChange={(e) => setCwToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+              <SecretInput value={cwToken} onChange={setCwToken} />
             </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Account ID">
@@ -444,6 +460,40 @@ export default function IntegrationForm() {
           </>
         )}
       </form>
+    </div>
+  );
+}
+
+/** Secret field: hidden by default, with an eye toggle to reveal/edit. */
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="pr-12"
+        autoComplete="off"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white transition-colors"
+        title={show ? 'Ocultar' : 'Mostrar'}
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
     </div>
   );
 }

@@ -22,8 +22,21 @@ export interface IntegrationDTO {
 export const listIntegrations = () =>
   api<{ integrations: IntegrationDTO[] }>('/api/integrations').then((r) => r.integrations);
 
+export interface IntegrationSecrets {
+  chatwootApiToken?: string;
+  providerConfig?: {
+    provider: 'uazapi' | 'zapi' | 'evolution';
+    baseUrl?: string;
+    token?: string;
+    apiKey?: string;
+    instance?: string;
+    clientToken?: string;
+    whatsappNumber?: string;
+  } | null;
+}
+
 export const getIntegration = (id: string) =>
-  api<{ integration: IntegrationDTO }>(`/api/integrations/${id}`).then((r) => r.integration);
+  api<{ integration: IntegrationDTO; secrets?: IntegrationSecrets }>(`/api/integrations/${id}`);
 
 export interface InboxResult {
   action: 'created' | 'webhook_updated' | 'manual_required' | 'not_created' | 'unchanged' | 'error';
