@@ -247,6 +247,8 @@ configure_env() {
 
   set_env DOMAIN "$DOMAIN"; set_env ACME_EMAIL "$ACME_EMAIL"
   set_env WOOTRICO_TRAEFIK "${USE_TRAEFIK:-1}"
+  set_env WOOTRICO_TRAEFIK_ENTRYPOINT "${TRAEFIK_ENTRYPOINT:-websecure}"
+  set_env WOOTRICO_TRAEFIK_RESOLVER "${TRAEFIK_RESOLVER:-le}"
   set_env WOOTRICO_NETWORK "${NET_NAME:-${STACK_NAME}-net}"
 
   # Banco/fila/cache — modos/host/porta/credenciais decididos em decide_infra.
@@ -304,9 +306,17 @@ decide_traefik() {
     USE_TRAEFIK=0
     ok "Traefik já detectado — NÃO vou subir outro nem alterar a configuração dele."
     warn "Para rotear o painel/webhook, seu Traefik precisa usar o provider Swarm e observar a rede '${NET_NAME:-<rede selecionada>}' (o app já expõe as labels na porta 3000). O instalador não modifica o Traefik."
-    note "Traefik: existente (intocado pelo instalador)"
+    # As labels do app precisam casar com os NOMES do seu Traefik, senão o TLS
+    # cai no certificado padrão (autoassinado) e os webhooks são recusados.
+    info "Os nomes abaixo precisam ser EXATAMENTE os do seu Traefik (veja a config dele)."
+    TRAEFIK_ENTRYPOINT="$(ask "Nome do entrypoint HTTPS do seu Traefik" "$(genv WOOTRICO_TRAEFIK_ENTRYPOINT || true)")"
+    TRAEFIK_ENTRYPOINT="${TRAEFIK_ENTRYPOINT:-websecure}"
+    TRAEFIK_RESOLVER="$(ask "Nome do certresolver (ACME/Let's Encrypt) do seu Traefik" "$(genv WOOTRICO_TRAEFIK_RESOLVER || true)")"
+    TRAEFIK_RESOLVER="${TRAEFIK_RESOLVER:-le}"
+    note "Traefik: existente (intocado); entrypoint=${TRAEFIK_ENTRYPOINT} resolver=${TRAEFIK_RESOLVER}"
   elif confirm "Traefik não detectado. Instalar o Traefik (com TLS Let's Encrypt)?"; then
     USE_TRAEFIK=1
+    TRAEFIK_ENTRYPOINT="websecure"; TRAEFIK_RESOLVER="le"
     note "Traefik: será instalado pelo Wootrico"
   else
     USE_TRAEFIK=0
@@ -490,6 +500,9 @@ write_compose() {
   local rd_pass="${RD_PASS:-$(genv REDIS_PASSWORD)}"
   local tf="${USE_TRAEFIK:-${WOOTRICO_TRAEFIK:-1}}"
   local net="${NET_NAME:-$(genv WOOTRICO_NETWORK)}"; net="${net:-${STACK_NAME}-net}"
+  # Nomes do entrypoint HTTPS e do certresolver (ACME) — devem casar com o Traefik.
+  local ep="${TRAEFIK_ENTRYPOINT:-$(genv WOOTRICO_TRAEFIK_ENTRYPOINT)}"; ep="${ep:-websecure}"
+  local rs="${TRAEFIK_RESOLVER:-$(genv WOOTRICO_TRAEFIK_RESOLVER)}"; rs="${rs:-le}"
   title "Gerando compose (rede: ${net}; traefik: ${tf}; pg/rb/rd: ${pg_mode}/${rb_mode}/${rd_mode})"
   local f="docker-compose.yml"
   local vols=()
@@ -594,8 +607,9 @@ EOF
       labels:
         - traefik.enable=true
         - traefik.http.routers.wootrico.rule=Host(`${DOMAIN}`)
-        - traefik.http.routers.wootrico.entrypoints=websecure
-        - traefik.http.routers.wootrico.tls.certresolver=le
+        - traefik.http.routers.wootrico.entrypoints=__ENTRYPOINT__
+        - traefik.http.routers.wootrico.tls=true
+        - traefik.http.routers.wootrico.tls.certresolver=__RESOLVER__
         - traefik.http.services.wootrico.loadbalancer.server.port=3000
 
   worker:
@@ -655,7 +669,7 @@ YAML
   fi
 
   # Substitui placeholders estruturais (imagem do Hub, rede e portas).
-  sed -i "s|__IMAGE__|${IMAGE}|g; s|__NET__|${net}|g; s|__PGPORT__|${pg_port}|g; s|__RBPORT__|${rb_port}|g" "$f"
+  sed -i "s|__IMAGE__|${IMAGE}|g; s|__NET__|${net}|g; s|__PGPORT__|${pg_port}|g; s|__RBPORT__|${rb_port}|g; s|__ENTRYPOINT__|${ep}|g; s|__RESOLVER__|${rs}|g" "$f"
   chmod 600 "$f"
   ok "Compose gerado em ${PWD}/${f} (imagem ${IMAGE}; rede ${net}; serviços novos: ${vols[*]:-nenhum})"
 }
