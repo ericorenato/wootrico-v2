@@ -74,9 +74,29 @@ drun_net() {
   fi
   printf '%s' "$out"; return $rc
 }
+# Nome DNS de um serviço existente alcançável DENTRO da rede $NET_NAME (sem expor
+# portas): usa o nome do serviço Swarm; cai p/ o nome do container. Vazio se nenhum.
+svc_alias_on_net() { # $1 img-regex
+  local c nets svc
+  for c in $(containers_for "$1"); do
+    nets="$($SUDO docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c" 2>/dev/null)"
+    case " $nets " in *" ${NET_NAME} "*) ;; *) continue ;; esac
+    svc="$($SUDO docker inspect -f '{{ index .Config.Labels "com.docker.swarm.service.name" }}' "$c" 2>/dev/null)"
+    [ -n "$svc" ] && { printf '%s' "$svc"; return 0; }
+    printf '%s' "${c%%.*}"; return 0
+  done
+  return 1
+}
 # Testes de conexão (autenticando quando possível). 0 = sucesso.
-test_pg() { # host port user pass db
-  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d "$5" -tAc 'select 1' >/dev/null 2>&1
+# Autentica no servidor (db de manutenção 'postgres') — não exige o banco-alvo.
+test_pg_server() { # host port user pass
+  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc 'select 1' >/dev/null 2>&1
+}
+pg_db_exists() { # host port user pass db
+  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$5'" 2>/dev/null | grep -q 1
+}
+pg_create_db() { # host port user pass db
+  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -c "CREATE DATABASE \"$5\"" >/dev/null 2>&1
 }
 test_redis() { # host port pass
   local out
@@ -324,15 +344,29 @@ decide_infra() {
   PG_PASS="$(genv POSTGRES_PASSWORD)"
   _infra_one Postgres 'postgres|postgis' 5432; PG_MODE="$__MODE"
   if [ "$PG_MODE" = existing ]; then
+    local pg_def; pg_def="$(svc_alias_on_net 'postgres|postgis')"; [ -z "$pg_def" ] && pg_def="${gw:-127.0.0.1}"
+    info "Acesso interno pela rede '${NET_NAME}': use o NOME do serviço (não precisa expor portas)."
     while :; do
-      PG_HOST="$(ask "Host do Postgres (acessível pela rede do Wootrico)" "${gw:-127.0.0.1}")"
-      PG_PORT="$(ask "Porta do Postgres" "5432")"
+      PG_HOST="$(ask "Host do Postgres (nome do serviço na rede / IP)" "$pg_def")"
+      PG_PORT="$(ask "Porta do Postgres (interna na rede)" "5432")"
       PG_USER="$(ask "Usuário do Postgres" "$PG_USER")"
       local p; p="$(ask_pass "Senha do Postgres")"; [ -n "$p" ] && PG_PASS="$p"
-      PG_DB="$(ask "Banco (database) do Postgres" "$PG_DB")"
-      info "Testando conexão com o Postgres (${PG_HOST}:${PG_PORT})…"
-      if test_pg "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS" "$PG_DB"; then ok "Postgres: conexão OK."; break; fi
-      warn "Não consegui conectar/autenticar no Postgres."
+      PG_DB="$(ask "Banco do Wootrico (será criado se não existir)" "$PG_DB")"
+      info "Testando autenticação no servidor Postgres (${PG_HOST}:${PG_PORT})…"
+      if test_pg_server "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS"; then
+        ok "Postgres: autenticação OK."
+        if pg_db_exists "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS" "$PG_DB"; then
+          ok "Banco '${PG_DB}' já existe."
+        elif confirm "Banco '${PG_DB}' não existe. Criar agora?"; then
+          pg_create_db "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS" "$PG_DB" \
+            && ok "Banco '${PG_DB}' criado." \
+            || warn "Não consegui criar o banco (privilégios?). Crie manualmente: CREATE DATABASE \"${PG_DB}\";"
+        else
+          warn "Crie o banco '${PG_DB}' antes do 1º start (o app roda as migrations)."
+        fi
+        break
+      fi
+      warn "Não consegui autenticar no Postgres (host/porta/usuário/senha)."
       confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
     done
   else
@@ -348,9 +382,11 @@ decide_infra() {
   RB_PASS="$(genv RABBITMQ_PASSWORD)"
   _infra_one RabbitMQ 'rabbitmq' 5672; RB_MODE="$__MODE"
   if [ "$RB_MODE" = existing ]; then
+    local rb_def; rb_def="$(svc_alias_on_net 'rabbitmq')"; [ -z "$rb_def" ] && rb_def="${gw:-127.0.0.1}"
+    info "Acesso interno pela rede '${NET_NAME}': use o NOME do serviço (não precisa expor portas)."
     while :; do
-      RB_HOST="$(ask "Host do RabbitMQ" "${gw:-127.0.0.1}")"
-      RB_PORT="$(ask "Porta AMQP do RabbitMQ" "5672")"
+      RB_HOST="$(ask "Host do RabbitMQ (nome do serviço na rede / IP)" "$rb_def")"
+      RB_PORT="$(ask "Porta AMQP do RabbitMQ (interna na rede)" "5672")"
       RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
       local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
       info "Testando alcance do RabbitMQ (${RB_HOST}:${RB_PORT})…"
@@ -370,9 +406,11 @@ decide_infra() {
   RD_PASS="$(genv REDIS_PASSWORD)"
   _infra_one Redis 'redis' 6379; RD_MODE="$__MODE"
   if [ "$RD_MODE" = existing ]; then
+    local rd_def; rd_def="$(svc_alias_on_net 'redis')"; [ -z "$rd_def" ] && rd_def="${gw:-127.0.0.1}"
+    info "Acesso interno pela rede '${NET_NAME}': use o NOME do serviço (não precisa expor portas)."
     while :; do
-      RD_HOST="$(ask "Host do Redis" "${gw:-127.0.0.1}")"
-      RD_PORT="$(ask "Porta do Redis" "6379")"
+      RD_HOST="$(ask "Host do Redis (nome do serviço na rede / IP)" "$rd_def")"
+      RD_PORT="$(ask "Porta do Redis (interna na rede)" "6379")"
       local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; RD_PASS="$p"
       info "Testando conexão com o Redis (${RD_HOST}:${RD_PORT})…"
       if test_redis "$RD_HOST" "$RD_PORT" "$RD_PASS"; then ok "Redis: conexão OK."; break; fi
