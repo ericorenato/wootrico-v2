@@ -244,9 +244,9 @@ export default function IntegrationForm() {
   function validate(): string | null {
     const missing: string[] = [];
     if (!name.trim()) missing.push('Nome');
-    if (!cwBaseUrl.trim()) missing.push('Chatwoot Base URL');
-    if (!cwAccount.trim()) missing.push('Account ID');
-    if (!cwInbox.trim()) missing.push('Nome do Inbox');
+    if (!cwBaseUrl.trim()) missing.push('URL base do Chatwoot');
+    if (!cwAccount.trim()) missing.push('ID da conta');
+    if (!cwInbox.trim()) missing.push('Nome da caixa de entrada');
     // On create the Chatwoot token and provider credentials are required; on edit
     // blank fields mean "keep the stored value".
     if (!editing) {
@@ -317,7 +317,7 @@ export default function IntegrationForm() {
             <Field label="Nome">
               <Input value={name} onChange={(e) => setName(e.target.value)} required />
             </Field>
-            <Field label="Provider">
+            <Field label="Provedor">
               <Select
                 value={providerType}
                 onChange={(e) => setProviderType(e.target.value as 'uazapi' | 'zapi' | 'evolution')}
@@ -333,7 +333,7 @@ export default function IntegrationForm() {
 
         <Card>
           <div className="flex items-center justify-between mb-5">
-            <h3 className="text-sm font-medium text-white">Provider · {providerType}</h3>
+            <h3 className="text-sm font-medium text-white">Provedor · {providerType}</h3>
             <div className="flex items-center gap-3">
               {provTest.ok !== undefined && (
                 <Badge tone={provTest.ok ? 'ok' : 'error'}>
@@ -348,7 +348,7 @@ export default function IntegrationForm() {
           <div className="space-y-4">
             {providerType === 'uazapi' && (
               <>
-                <Field label="Base URL">
+                <Field label="URL base">
                   <Input value={uBaseUrl} onChange={(e) => setUBaseUrl(e.target.value)} placeholder="https://sua.uazapi.com" />
                 </Field>
                 <Field label="Token">
@@ -374,10 +374,10 @@ export default function IntegrationForm() {
             )}
             {providerType === 'evolution' && (
               <>
-                <Field label="Base URL">
+                <Field label="URL base">
                   <Input value={eBaseUrl} onChange={(e) => setEBaseUrl(e.target.value)} placeholder="https://sua.evolution.com" />
                 </Field>
-                <Field label="API Key">
+                <Field label="Chave de API">
                   <SecretInput value={eApiKey} onChange={setEApiKey} />
                 </Field>
               </>
@@ -400,17 +400,17 @@ export default function IntegrationForm() {
             </div>
           </div>
           <div className="space-y-4">
-            <Field label="Base URL">
+            <Field label="URL base">
               <Input value={cwBaseUrl} onChange={(e) => setCwBaseUrl(e.target.value)} placeholder="https://chat.seudominio.com" />
             </Field>
-            <Field label="API Token">
+            <Field label="Token de API">
               <SecretInput value={cwToken} onChange={setCwToken} />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Account ID">
+              <Field label="ID da conta">
                 <Input value={cwAccount} onChange={(e) => setCwAccount(e.target.value)} placeholder="1" />
               </Field>
-              <Field label="Nome do Inbox">
+              <Field label="Nome da caixa de entrada">
                 <Input value={cwInbox} onChange={(e) => setCwInbox(e.target.value)} placeholder="WhatsApp" />
               </Field>
             </div>
@@ -426,9 +426,9 @@ export default function IntegrationForm() {
           <div className="space-y-4">
             <Field label="Status inicial da conversa">
               <Select value={convStatus} onChange={(e) => setConvStatus(e.target.value as any)}>
-                <option value="open">open</option>
-                <option value="pending">pending</option>
-                <option value="resolved">resolved</option>
+                <option value="open">Aberta</option>
+                <option value="pending">Pendente</option>
+                <option value="resolved">Resolvida</option>
               </Select>
             </Field>
             <Field label="País padrão (ISO-2)">
@@ -634,7 +634,7 @@ const PROVIDER_HELP: Record<ProviderType, { name: string; steps: string[] }> = {
     name: 'Evolution',
     steps: [
       'No Evolution, abra a configuração de Webhook da instância.',
-      'Cole a "URL do Provider" (abaixo) no campo de URL do webhook.',
+      'Cole a "URL do Provedor" (abaixo) no campo de URL do webhook.',
       'Habilite o evento MESSAGES_UPSERT (mensagens recebidas).',
     ],
   },
@@ -642,7 +642,7 @@ const PROVIDER_HELP: Record<ProviderType, { name: string; steps: string[] }> = {
     name: 'uazapi',
     steps: [
       'No uazapi, abra o Webhook da instância.',
-      'Cole a "URL do Provider" (abaixo).',
+      'Cole a "URL do Provedor" (abaixo).',
       'Mantenha ativos os eventos de mensagens.',
     ],
   },
@@ -650,7 +650,7 @@ const PROVIDER_HELP: Record<ProviderType, { name: string; steps: string[] }> = {
     name: 'Z-API',
     steps: [
       'No Z-API, vá em Webhooks → "Ao receber" (on-message-received).',
-      'Cole a "URL do Provider" (abaixo) e salve.',
+      'Cole a "URL do Provedor" (abaixo) e salve.',
     ],
   },
 };
@@ -689,7 +689,7 @@ function WebhookGuide({
             <li key={s}>{s}</li>
           ))}
         </ol>
-        <CopyRow label="URL do Provider" value={urls.provider} />
+        <CopyRow label="URL do Provedor" value={urls.provider} />
       </div>
 
       {/* 2. Chatwoot → Wootrico (automático) */}

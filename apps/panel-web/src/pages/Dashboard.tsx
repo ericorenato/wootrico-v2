@@ -18,6 +18,15 @@ const LIC_TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
   unactivated: 'neutral',
 };
 
+const LIC_LABEL: Record<string, string> = {
+  active: 'Ativa',
+  warning: 'Atenção',
+  grace: 'Carência',
+  blocked: 'Bloqueada',
+  unactivated: 'Não ativada',
+  unknown: 'Desconhecida',
+};
+
 export default function Dashboard() {
   const [health, setHealth] = useState<Health | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationDTO[] | null>(null);
@@ -35,8 +44,8 @@ export default function Dashboard() {
   return (
     <div>
       <div className="mb-10">
-        <Eyebrow>Visão geral</Eyebrow>
-        <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Dashboard</h1>
+        <Eyebrow>Início</Eyebrow>
+        <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Visão geral</h1>
         <p className="mt-2 text-sm text-neutral-400">Estado da sua instância.</p>
       </div>
 
@@ -47,7 +56,7 @@ export default function Dashboard() {
             <span className="text-xs text-neutral-400">Banco de dados</span>
           </div>
           <p className="text-3xl font-semibold text-white tracking-tight">
-            {health ? (health.db ? 'OK' : 'Off') : '…'}
+            {health ? (health.db ? 'OK' : 'Falha') : '…'}
           </p>
           <p className="text-[10px] text-neutral-500 mt-1">Postgres</p>
         </Card>
@@ -75,10 +84,14 @@ export default function Dashboard() {
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
                 <span className="text-xs text-neutral-400">Licença</span>
               </div>
-              {license && <Badge tone={LIC_TONE[license.status] ?? 'neutral'}>{license.status}</Badge>}
+              {license && (
+                <Badge tone={LIC_TONE[license.status] ?? 'neutral'}>
+                  {LIC_LABEL[license.status] ?? license.status}
+                </Badge>
+              )}
             </div>
-            <p className="text-3xl font-semibold text-white tracking-tight capitalize">
-              {license ? license.status : '…'}
+            <p className="text-3xl font-semibold text-white tracking-tight">
+              {license ? (LIC_LABEL[license.status] ?? license.status) : '…'}
             </p>
             <p className="text-[10px] text-neutral-500 mt-1">
               {license?.tokenExpiresAt

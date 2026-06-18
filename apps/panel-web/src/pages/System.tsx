@@ -37,6 +37,19 @@ const STATUS_TONE: Record<string, 'ok' | 'neutral' | 'error'> = {
   blocked: 'error',
 };
 
+const STATUS_LABEL: Record<string, string> = {
+  ok: 'OK',
+  active: 'Ativa',
+  warning: 'Atenção',
+  grace: 'Carência',
+  unactivated: 'Não ativada',
+  unconfigured: 'Não configurada',
+  error: 'Erro',
+  blocked: 'Bloqueada',
+  unknown: 'Desconhecida',
+};
+const stLabel = (s: string) => STATUS_LABEL[s] ?? s;
+
 function ConnRow({ label, r }: { label: string; r?: { ok: boolean; detail?: string } }) {
   return (
     <div className="flex items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
@@ -104,7 +117,7 @@ export default function System() {
             <Stat label="Integrações" value={info.integrations.total} />
             <Stat label="Ativas" value={info.integrations.enabled} />
             <Stat label="Contatos (diretório)" value={info.directory.contactIdentities} />
-            <Stat label="Admins" value={info.app.admins} />
+            <Stat label="Administradores" value={info.app.admins} />
           </div>
 
           {/* Aplicação */}
@@ -113,7 +126,7 @@ export default function System() {
             <Row label="URL pública" value={info.app.publicBaseUrl} />
             <Row label="Base de webhook" value={info.app.webhookBase} />
             <Row
-              label="Setup"
+              label="Configuração inicial"
               value={
                 <Badge tone={info.app.setupCompleted ? 'ok' : 'neutral'}>
                   {info.app.setupCompleted ? 'concluído' : 'pendente'}
@@ -151,7 +164,7 @@ export default function System() {
               label="Status"
               value={
                 <Badge tone={STATUS_TONE[info.license.status] ?? 'neutral'}>
-                  {info.license.status}
+                  {stLabel(info.license.status)}
                 </Badge>
               }
             />
@@ -160,7 +173,7 @@ export default function System() {
             {info.license.serverUrl && <Row label="Servidor" value={info.license.serverUrl} />}
             {info.license.lastHeartbeatAt && (
               <Row
-                label="Último heartbeat"
+                label="Último sinal de atividade"
                 value={new Date(info.license.lastHeartbeatAt).toLocaleString()}
               />
             )}
@@ -198,7 +211,7 @@ export default function System() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {!i.isEnabled && <Badge tone="neutral">desativada</Badge>}
-                      <Badge tone={STATUS_TONE[i.status] ?? 'neutral'}>{i.status}</Badge>
+                      <Badge tone={STATUS_TONE[i.status] ?? 'neutral'}>{stLabel(i.status)}</Badge>
                     </div>
                   </div>
                 ))}

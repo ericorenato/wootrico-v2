@@ -84,7 +84,7 @@ export default function License() {
             <dd className="text-neutral-300">
               {info.tokenExpiresAt ? new Date(info.tokenExpiresAt).toLocaleString() : '—'}
             </dd>
-            <dt className="text-neutral-500">Último heartbeat</dt>
+            <dt className="text-neutral-500">Último sinal de atividade</dt>
             <dd className="text-neutral-300">
               {info.lastHeartbeatAt ? new Date(info.lastHeartbeatAt).toLocaleString() : '—'}
             </dd>

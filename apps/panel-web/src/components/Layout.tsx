@@ -11,7 +11,7 @@ import {
 import { useAuth } from '../lib/auth';
 
 const NAV = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  { to: '/', label: 'Início', icon: LayoutDashboard, end: true },
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/system', label: 'Sistema', icon: SlidersHorizontal },
   { to: '/license', label: 'Licença', icon: KeyRound },

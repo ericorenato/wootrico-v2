@@ -189,7 +189,7 @@ export default function ConnectionsEditor({ heading = true }: { heading?: boolea
           <p className="text-xs text-neutral-500 mt-1">
             Edite por serviço. Ao salvar, cada conexão é <b>testada antes de aplicar</b>; se falhar,
             nada é gravado. RabbitMQ e Redis entram em vigor ao <b>reiniciar</b>; o Postgres exige
-            redeploy pelo instalador.
+            reimplantação pelo instalador.
           </p>
         </div>
       )}

@@ -60,12 +60,12 @@ export default function Integrations() {
                       {it.name}
                     </Link>
                     <Badge tone={it.status === 'ok' ? 'ok' : it.status === 'error' ? 'error' : 'neutral'}>
-                      {it.status}
+                      {it.status === 'ok' ? 'OK' : it.status === 'error' ? 'Erro' : 'Não configurada'}
                     </Badge>
                     {!it.isEnabled && <Badge>desativada</Badge>}
                   </div>
                   <p className="text-xs text-neutral-500">
-                    {it.providerType} · inbox {it.chatwoot.inboxName}
+                    {it.providerType} · caixa {it.chatwoot.inboxName}
                     {it.chatwoot.inboxId ? ` (#${it.chatwoot.inboxId})` : ''}
                   </p>
                 </div>
