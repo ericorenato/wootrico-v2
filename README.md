@@ -31,6 +31,15 @@ uma **licença** e gerencia tudo por um **painel** com tema escuro.
 
 ## 🚀 Instalação (VPS · Docker Swarm)
 
+> **Pré-requisito — DNS:** aponte o domínio que você vai usar (ex:
+> `wootrico.suaempresa.com`) para o **IP público da VPS** com um registro **A**
+> no painel DNS do seu provedor (Cloudflare, Registro.br, etc.) **antes** de
+> instalar. O roteamento é por `Host`, e o **TLS (Let's Encrypt)** só é emitido
+> depois que o DNS propaga e as portas **80/443** estão acessíveis. O Wootrico
+> **não cria DNS** — e a **URL do webhook é derivada desse domínio**
+> (`https://SEU_DOMINIO/webhook/<token>/...`). Se você já tem um **Traefik** na
+> VPS, o instalador detecta e **não sobe outro**.
+
 Como o repositório é **privado**, o jeito recomendado é **clonar numa pasta e
 instalar** (na VPS Linux — Ubuntu/Debian/RHEL):
 

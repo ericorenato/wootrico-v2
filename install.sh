@@ -121,6 +121,19 @@ configure_env() {
   }
 
   DOMAIN="$(ask "Domínio do painel (a URL do webhook é derivada deste domínio)" "$(get_env DOMAIN)")"
+
+  # DNS: o domínio precisa apontar para este servidor (o roteamento é por Host).
+  local SRV_IP; SRV_IP="$(public_ip)"
+  echo
+  warn "DNS necessário: crie um registro A de '${DOMAIN}' apontando para ${SRV_IP:-<IP deste servidor>}."
+  info "Faça isso no painel DNS do seu provedor (Cloudflare, Registro.br, etc.). O Wootrico NÃO cria DNS."
+  if [ "${USE_TRAEFIK:-1}" = 1 ]; then
+    info "O certificado TLS (Let's Encrypt) só é emitido após o DNS propagar e as portas 80/443 ficarem acessíveis neste servidor."
+  fi
+  confirm "O DNS de '${DOMAIN}' já aponta para ${SRV_IP:-este servidor}?" || \
+    warn "Sem o DNS apontando, o painel não abrirá pelo domínio e o TLS falhará — ajuste o DNS e rode 'install.sh update' depois."
+  echo
+
   # Só precisamos do e-mail do Let's Encrypt quando o Wootrico instala o Traefik.
   if [ "${USE_TRAEFIK:-1}" = 1 ]; then
     ACME_EMAIL="$(ask "E-mail para o certificado TLS (Let's Encrypt)" "$(get_env ACME_EMAIL)")"
@@ -154,6 +167,15 @@ configure_env() {
   set_env NODE_ENV "$(keep_or NODE_ENV production)"; set_env PORT "$(keep_or PORT 3000)"
   set_env HOST "$(keep_or HOST 0.0.0.0)"; set_env LOG_LEVEL "$(keep_or LOG_LEVEL info)"
   chmod 600 "$ENV_FILE"; ok ".env atualizado (preservando valores existentes)"
+}
+
+# Descobre o IP público deste servidor (para a instrução de DNS).
+public_ip() {
+  local ip
+  ip="$(curl -s --max-time 4 https://api.ipify.org 2>/dev/null)"
+  [ -z "$ip" ] && ip="$(curl -s --max-time 4 https://ifconfig.me 2>/dev/null)"
+  [ -z "$ip" ] && ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo "$ip"
 }
 
 # Detecta um Traefik já em execução (Swarm ou container) para não duplicar o
@@ -195,7 +217,10 @@ print_summary() {
   title "Resumo"
   for line in "${SUMMARY[@]:-}"; do [ -n "$line" ] && echo "  • $line"; done
   echo; echo -e "${C_B}Serviços:${C_0}"; $SUDO docker stack services "$STACK_NAME" 2>/dev/null || true
-  echo; echo -e "${C_B}Acesso:${C_0} https://${DOMAIN:-$(grep -E '^DOMAIN=' "$ENV_FILE"|cut -d= -f2-)}  (o setup wizard cria o admin no 1º acesso)"
+  local DOM; DOM="${DOMAIN:-$(grep -E '^DOMAIN=' "$ENV_FILE"|cut -d= -f2-)}"
+  echo; echo -e "${C_B}Acesso:${C_0} https://${DOM}  (o setup wizard cria o admin no 1º acesso)"
+  echo -e "${C_Y}DNS:${C_0} confirme um registro A de '${DOM}' apontando para $(public_ip) (sem isso o domínio não abre e o TLS falha)."
+  echo -e "${C_C}Webhooks (gerados por integração no painel): https://${DOM}/webhook/<token>/provider e /chatwoot${C_0}"
   echo; echo -e "${C_B}${C_Y}Chaves/segredos (guarde em local seguro):${C_0}"
   grep -E '^(DOMAIN|POSTGRES_PASSWORD|RABBITMQ_PASSWORD|JWT_SECRET|APP_ENCRYPTION_KEY|LICENSE_SERVER_URL|LICENSE_PUBLIC_KEY|LICENSE_KEY)=' "$ENV_FILE" | sed 's/^/  /'
   echo; echo -e "${C_C}Salvo em ${PWD}/${ENV_FILE} (chmod 600). Logs: docker service logs -f ${STACK_NAME}_app${C_0}"
