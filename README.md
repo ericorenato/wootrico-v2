@@ -40,17 +40,23 @@ uma **licença** e gerencia tudo por um **painel** com tema escuro.
 > (`https://SEU_DOMINIO/webhook/<token>/...`). Se você já tem um **Traefik** na
 > VPS, o instalador detecta e **não sobe outro**.
 
-Como o repositório é **privado**, o jeito recomendado é **clonar numa pasta e
-instalar** (na VPS Linux — Ubuntu/Debian/RHEL):
+O instalador **não clona o repositório**: ele **gera o `docker-compose.yml`** e
+sobe a stack usando a **imagem do Docker Hub**. Basta baixar o `install.sh` e
+rodá-lo (na VPS Linux — Ubuntu/Debian/RHEL):
 
 ```bash
-# 1) baixar o projeto numa pasta
-git clone https://github.com/ericorenato/wootrico-v2.git
-cd wootrico-v2
+# baixar só o instalador (repo privado → use um Personal Access Token)
+curl -fsSL -H "Authorization: token SEU_PAT" \
+  https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh -o install.sh
 
-# 2) instalar (Swarm + Traefik/TLS) — pede domínio/e-mail/licença e gera as chaves
+# instalar (Swarm) — pergunta a rede overlay, domínio/e-mail/licença e gera as chaves
 sudo bash install.sh
 ```
+
+Durante a instalação ele: **pergunta a rede Docker (overlay)** em que a stack
+deve entrar (detecta as existentes ou cria uma nova), **detecta se já há um
+Traefik** (e só instala outro se você quiser), gera o Compose com a imagem do
+Hub e sobe tudo automaticamente.
 
 > Sem `git` na VPS? `sudo apt-get update && sudo apt-get install -y git` (Debian/Ubuntu)
 > — ou o próprio `install.sh` instala o que faltar.

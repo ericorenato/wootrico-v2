@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Wootrico v2 — instalador para VPS (Docker Swarm).
-#   sudo bash install.sh            # instalar em produção (Docker Swarm + Traefik/TLS)
-#   sudo bash install.sh update     # git pull + pull da imagem + redeploy (preserva .env)
+#   sudo bash install.sh            # instalar em produção (Swarm; Traefik/TLS opcional)
+#   sudo bash install.sh update     # pull da imagem + regenera compose + redeploy (preserva .env)
 #   sudo bash install.sh uninstall  # remover a stack (e opcionalmente volumes)
 #        bash install.sh local      # rodar LOCAL (Docker Desktop, Compose puro, sem Swarm)
 #
-# Detecta o SO, instala o que faltar (git/Docker/Swarm), pergunta as chaves,
-# gera/preserva segredos, baixa a imagem, sobe a stack e mostra um resumo.
+# NÃO clona o repositório: a stack sobe via Compose GERADO pelo instalador usando
+# a imagem publicada no Docker Hub. Detecta o SO/Docker/Swarm, pergunta a rede
+# overlay e as chaves, gera/preserva segredos, sobe a stack e mostra um resumo.
 # Idempotente: re-executar NÃO sobrescreve valores já existentes no .env.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -41,6 +42,8 @@ need_root() {
     if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else err "Rode como root ou instale sudo."; exit 1; fi
   fi
 }
+# Leitura global de um valor do .env (helpers get_env/set_env locais ficam em configure_env).
+genv() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
 
 # ───────────────────────────── INSTALL ─────────────────────────────
 cmd_install() {
@@ -87,16 +90,12 @@ cmd_install() {
     ok "Swarm inicializado"; note "Swarm: inicializado (${ip:-local})"
   else err "Swarm é obrigatório."; exit 1; fi
 
-  title "Código-fonte"
-  if [ ! -f docker-compose.yml ] || [ ! -f Dockerfile ]; then
-    local repo; repo="$(ask "URL do repositório git" "$REPO_URL_DEFAULT")"
-    git clone "$repo" wootrico && cd wootrico && ok "Repositório clonado em $(pwd)"
-  elif [ -d .git ] && confirm "Atualizar o repositório (git pull)?"; then
-    git pull --ff-only || warn "git pull falhou (seguindo)"
-  fi
-
+  # Sem clone do repositório: a stack sobe via Compose gerado aqui, usando a
+  # imagem publicada no Docker Hub.
+  decide_network
   decide_traefik
   configure_env
+  write_compose
   pull_image
   deploy_stack
   print_summary
@@ -153,6 +152,7 @@ configure_env() {
 
   set_env DOMAIN "$DOMAIN"; set_env ACME_EMAIL "$ACME_EMAIL"
   set_env WOOTRICO_TRAEFIK "${USE_TRAEFIK:-1}"
+  set_env WOOTRICO_NETWORK "${NET_NAME:-${STACK_NAME}-net}"
   set_env POSTGRES_USER "$PGU"; set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD"; set_env POSTGRES_DB "$PGDB"
   set_env DATABASE_URL "$(keep_or DATABASE_URL "postgresql://${PGU}:${POSTGRES_PASSWORD}@postgres:5432/${PGDB}?schema=public")"
   set_env RABBITMQ_USER "$RBU"; set_env RABBITMQ_PASSWORD "$RABBITMQ_PASSWORD"
@@ -188,7 +188,7 @@ decide_traefik() {
   if printf '%s\n' "$found" | grep -qi 'traefik'; then
     USE_TRAEFIK=0
     ok "Traefik já detectado neste host — não vou subir outro (evita conflito em 80/443)."
-    warn "Use seu Traefik com provider Swarm na rede '${STACK_NAME}_wootrico' para rotear o painel/webhook (porta 3000 do serviço app)."
+    warn "Use seu Traefik com provider Swarm na rede '${NET_NAME:-<rede informada>}' para rotear o painel/webhook (porta 3000 do serviço app)."
     note "Traefik: existente (não instalado pelo Wootrico)"
   elif confirm "Traefik não detectado. Instalar o Traefik (com TLS Let's Encrypt)?"; then
     USE_TRAEFIK=1
@@ -200,18 +200,175 @@ decide_traefik() {
   fi
 }
 
+# Detecta redes overlay existentes e pergunta em qual a stack deve entrar.
+# Se a rede não existir, oferece criá-la (overlay, attachable). Persistida no
+# .env (WOOTRICO_NETWORK) para o 'update' reutilizar.
+decide_network() {
+  title "Rede Docker (overlay/Swarm)"
+  local overlays
+  overlays="$($SUDO docker network ls --filter driver=overlay --format '{{.Name}}' 2>/dev/null | grep -vE '^(ingress|docker_gwbridge)$' || true)"
+  if [ -n "$overlays" ]; then
+    info "Redes overlay existentes neste Swarm:"; printf '   • %s\n' $overlays
+  else
+    info "Nenhuma rede overlay personalizada encontrada."
+  fi
+  local net_def; net_def="$(genv WOOTRICO_NETWORK)"; [ -z "$net_def" ] && net_def="${STACK_NAME}-net"
+  NET_NAME="$(ask "Nome da rede Docker (overlay) para a stack" "$net_def")"
+  [ -z "$NET_NAME" ] && NET_NAME="$net_def"
+  if $SUDO docker network inspect "$NET_NAME" >/dev/null 2>&1; then
+    ok "Usando a rede existente '${NET_NAME}'."
+    note "Rede: ${NET_NAME} (existente)"
+  elif confirm "A rede '${NET_NAME}' não existe. Criar (overlay, attachable)?"; then
+    $SUDO docker network create --driver overlay --attachable "$NET_NAME" >/dev/null \
+      && ok "Rede '${NET_NAME}' criada." || { err "Falha ao criar a rede."; exit 1; }
+    note "Rede: ${NET_NAME} (criada)"
+  else
+    err "Uma rede é obrigatória. Abortando."; exit 1
+  fi
+}
+
+# Gera o docker-compose.yml da stack (app+infra, e Traefik se aplicável) usando
+# a imagem do Docker Hub e a rede escolhida (externa). Sem clonar o repositório.
+write_compose() {
+  title "Gerando compose (rede: ${NET_NAME}, traefik: ${USE_TRAEFIK:-1})"
+  local f="docker-compose.yml"
+  cat > "$f" <<'YAML'
+# GERADO pelo install.sh — não edite à mão (rode o instalador novamente).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wootrico}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wootrico}
+      POSTGRES_DB: ${POSTGRES_DB:-wootrico}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [wtnet]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-wootrico} -d ${POSTGRES_DB:-wootrico}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wootrico}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
+    volumes: [rabbitmq_data:/var/lib/rabbitmq]
+    networks: [wtnet]
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--save', '60', '1', '--appendonly', 'no']
+    volumes: [redis_data:/data]
+    networks: [wtnet]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+  app:
+    image: __IMAGE__
+    env_file: .env
+    command: >-
+      sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
+             node apps/panel-api/dist/server.cjs"
+    networks: [wtnet]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.wootrico.rule=Host(`${DOMAIN}`)
+        - traefik.http.routers.wootrico.entrypoints=websecure
+        - traefik.http.routers.wootrico.tls.certresolver=le
+        - traefik.http.services.wootrico.loadbalancer.server.port=3000
+
+  worker:
+    image: __IMAGE__
+    env_file: .env
+    command: node apps/worker/dist/main.cjs
+    networks: [wtnet]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+YAML
+
+  if [ "${USE_TRAEFIK:-1}" = 1 ]; then
+    cat >> "$f" <<'YAML'
+
+  traefik:
+    image: traefik:v3
+    command:
+      - --providers.swarm=true
+      - --providers.swarm.exposedByDefault=false
+      - --providers.swarm.network=__NET__
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - { target: 80, published: 80, mode: host }
+      - { target: 443, published: 443, mode: host }
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks: [wtnet]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+YAML
+  fi
+
+  cat >> "$f" <<'YAML'
+
+networks:
+  wtnet:
+    external: true
+    name: __NET__
+
+volumes:
+  pgdata:
+  rabbitmq_data:
+  redis_data:
+YAML
+  [ "${USE_TRAEFIK:-1}" = 1 ] && printf '  traefik_letsencrypt:\n' >> "$f"
+
+  # Substitui os placeholders estruturais (imagem do Hub + rede externa).
+  sed -i "s|__IMAGE__|${IMAGE}|g; s|__NET__|${NET_NAME}|g" "$f"
+  ok "Compose gerado em ${PWD}/${f} (imagem ${IMAGE}, rede externa ${NET_NAME})"
+}
+
 pull_image() { title "Imagem"; $SUDO docker pull "$IMAGE"; ok "Imagem $IMAGE baixada"; note "Imagem: $IMAGE"; }
 deploy_stack() {
   title "Deploy (Swarm)"
   set -a; . "./$ENV_FILE"; set +a
-  export WOOTRICO_IMAGE="$IMAGE"
-  # USE_TRAEFIK vem do install; no update, lê WOOTRICO_TRAEFIK do .env (default 1).
-  local use="${USE_TRAEFIK:-${WOOTRICO_TRAEFIK:-1}}"
-  local files=(-c docker-compose.yml)
-  [ "$use" = 1 ] && files+=(-c docker-compose.traefik.yml)
-  $SUDO docker stack deploy --resolve-image always "${files[@]}" "$STACK_NAME"
-  ok "Stack '$STACK_NAME' implantada$([ "$use" = 1 ] && echo ' (com Traefik)' || echo ' (sem Traefik)')"
-  note "Stack: $STACK_NAME (Swarm)"
+  $SUDO docker stack deploy --resolve-image always -c docker-compose.yml "$STACK_NAME"
+  ok "Stack '$STACK_NAME' implantada"
+  note "Stack: $STACK_NAME (Swarm, rede ${NET_NAME:-$(genv WOOTRICO_NETWORK)})"
 }
 print_summary() {
   title "Resumo"
@@ -229,10 +386,13 @@ print_summary() {
 # ───────────────────────────── UPDATE ─────────────────────────────
 cmd_update() {
   need_root
-  [ -f docker-compose.yml ] || { err "Rode dentro do diretório do projeto."; exit 1; }
-  [ -f "$ENV_FILE" ] || { err ".env não encontrado — rode a instalação primeiro."; exit 1; }
+  [ -f "$ENV_FILE" ] || { err ".env não encontrado — rode a instalação primeiro." ; exit 1; }
   title "Atualizar"
-  [ -d .git ] && { info "git pull…"; git pull --ff-only || warn "git pull falhou (seguindo)"; }
+  # Reaproveita as escolhas da instalação (rede/Traefik) e regenera o compose
+  # apontando para a imagem mais recente do Docker Hub. Sem git.
+  USE_TRAEFIK="$(genv WOOTRICO_TRAEFIK)"; USE_TRAEFIK="${USE_TRAEFIK:-1}"
+  NET_NAME="$(genv WOOTRICO_NETWORK)"; NET_NAME="${NET_NAME:-${STACK_NAME}-net}"
+  write_compose
   pull_image
   deploy_stack
   ok "Atualizado."; $SUDO docker stack services "$STACK_NAME"
