@@ -95,6 +95,7 @@ cmd_install() {
     git pull --ff-only || warn "git pull falhou (seguindo)"
   fi
 
+  decide_traefik
   configure_env
   pull_image
   deploy_stack
@@ -119,8 +120,13 @@ configure_env() {
     echo "$val"
   }
 
-  DOMAIN="$(ask "Domínio do painel (ex: wootrico.suaempresa.com)" "$(get_env DOMAIN)")"
-  ACME_EMAIL="$(ask "E-mail para o certificado TLS (Let's Encrypt)" "$(get_env ACME_EMAIL)")"
+  DOMAIN="$(ask "Domínio do painel (a URL do webhook é derivada deste domínio)" "$(get_env DOMAIN)")"
+  # Só precisamos do e-mail do Let's Encrypt quando o Wootrico instala o Traefik.
+  if [ "${USE_TRAEFIK:-1}" = 1 ]; then
+    ACME_EMAIL="$(ask "E-mail para o certificado TLS (Let's Encrypt)" "$(get_env ACME_EMAIL)")"
+  else
+    ACME_EMAIL="$(get_env ACME_EMAIL)"
+  fi
   LICENSE_SERVER_URL="$(ask "URL do servidor de licença" "$(keep_or LICENSE_SERVER_URL 'https://license.example.com')")"
   LICENSE_PUBLIC_KEY="$(ask "Chave pública da licença (base64 PEM)" "$(get_env LICENSE_PUBLIC_KEY)")"
   LICENSE_KEY="$(ask "Chave de licença (opcional, ativável no painel)" "$(get_env LICENSE_KEY)")"
@@ -133,6 +139,7 @@ configure_env() {
   APP_ENCRYPTION_KEY="$(get_env APP_ENCRYPTION_KEY)"; [ -z "$APP_ENCRYPTION_KEY" ] && { APP_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"; note "APP_ENCRYPTION_KEY: gerado automaticamente"; }
 
   set_env DOMAIN "$DOMAIN"; set_env ACME_EMAIL "$ACME_EMAIL"
+  set_env WOOTRICO_TRAEFIK "${USE_TRAEFIK:-1}"
   set_env POSTGRES_USER "$PGU"; set_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD"; set_env POSTGRES_DB "$PGDB"
   set_env DATABASE_URL "$(keep_or DATABASE_URL "postgresql://${PGU}:${POSTGRES_PASSWORD}@postgres:5432/${PGDB}?schema=public")"
   set_env RABBITMQ_USER "$RBU"; set_env RABBITMQ_PASSWORD "$RABBITMQ_PASSWORD"
@@ -149,13 +156,40 @@ configure_env() {
   chmod 600 "$ENV_FILE"; ok ".env atualizado (preservando valores existentes)"
 }
 
+# Detecta um Traefik já em execução (Swarm ou container) para não duplicar o
+# proxy/portas 80/443. Se não detectar, pergunta se deve instalar. A escolha é
+# persistida no .env (WOOTRICO_TRAEFIK) para o 'update' reutilizá-la.
+decide_traefik() {
+  title "Traefik (proxy reverso + TLS)"
+  local found=""
+  found="$($SUDO docker service ls --format '{{.Image}}' 2>/dev/null; $SUDO docker ps --format '{{.Image}}' 2>/dev/null)"
+  if printf '%s\n' "$found" | grep -qi 'traefik'; then
+    USE_TRAEFIK=0
+    ok "Traefik já detectado neste host — não vou subir outro (evita conflito em 80/443)."
+    warn "Use seu Traefik com provider Swarm na rede '${STACK_NAME}_wootrico' para rotear o painel/webhook (porta 3000 do serviço app)."
+    note "Traefik: existente (não instalado pelo Wootrico)"
+  elif confirm "Traefik não detectado. Instalar o Traefik (com TLS Let's Encrypt)?"; then
+    USE_TRAEFIK=1
+    note "Traefik: será instalado pelo Wootrico"
+  else
+    USE_TRAEFIK=0
+    warn "Sem Traefik: configure seu próprio proxy publicando o serviço 'app' (porta 3000) no domínio informado."
+    note "Traefik: não instalado (proxy externo do usuário)"
+  fi
+}
+
 pull_image() { title "Imagem"; $SUDO docker pull "$IMAGE"; ok "Imagem $IMAGE baixada"; note "Imagem: $IMAGE"; }
 deploy_stack() {
   title "Deploy (Swarm)"
   set -a; . "./$ENV_FILE"; set +a
   export WOOTRICO_IMAGE="$IMAGE"
-  $SUDO docker stack deploy --resolve-image always -c docker-compose.yml "$STACK_NAME"
-  ok "Stack '$STACK_NAME' implantada"; note "Stack: $STACK_NAME (Swarm)"
+  # USE_TRAEFIK vem do install; no update, lê WOOTRICO_TRAEFIK do .env (default 1).
+  local use="${USE_TRAEFIK:-${WOOTRICO_TRAEFIK:-1}}"
+  local files=(-c docker-compose.yml)
+  [ "$use" = 1 ] && files+=(-c docker-compose.traefik.yml)
+  $SUDO docker stack deploy --resolve-image always "${files[@]}" "$STACK_NAME"
+  ok "Stack '$STACK_NAME' implantada$([ "$use" = 1 ] && echo ' (com Traefik)' || echo ' (sem Traefik)')"
+  note "Stack: $STACK_NAME (Swarm)"
 }
 print_summary() {
   title "Resumo"
