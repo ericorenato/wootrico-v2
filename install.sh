@@ -228,15 +228,8 @@ configure_env() {
   else
     ACME_EMAIL="$(get_env ACME_EMAIL)"
   fi
-  echo
-  info "Licenciamento (OPCIONAL): o Wootrico pode exigir uma CHAVE DE LICENÇA validada"
-  info "por um SERVIDOR DE LICENÇA — a aplicação que gera/ativa essas chaves. Se ela"
-  info "ainda não existe, deixe os 3 campos abaixo EM BRANCO; o Wootrico sobe sem exigir"
-  info "licença e você ativa depois (a chave pode ser inserida no painel)."
-  LICENSE_SERVER_URL="$(ask "URL do servidor de licença (em branco = sem licenciamento)" "$(get_env LICENSE_SERVER_URL)")"
-  LICENSE_PUBLIC_KEY="$(ask "Chave pública da licença (base64 PEM, opcional)" "$(get_env LICENSE_PUBLIC_KEY)")"
-  LICENSE_KEY="$(ask "Chave de licença (opcional, ativável no painel)" "$(get_env LICENSE_KEY)")"
-
+  # Licenciamento NÃO é configurado aqui: é validado pela aplicação e será
+  # provisionado automaticamente por uma ferramenta nossa (a ser implementada).
   JWT_SECRET="$(secret_for JWT_SECRET gen 48)"
   APP_ENCRYPTION_KEY="$(get_env APP_ENCRYPTION_KEY)"; [ -z "$APP_ENCRYPTION_KEY" ] && { APP_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"; note "APP_ENCRYPTION_KEY: gerado automaticamente"; }
 
@@ -259,16 +252,8 @@ configure_env() {
   set_env WOOTRICO_RB_MODE "$RB_MODE"; set_env WOOTRICO_RB_HOST "$RB_HOST"; set_env WOOTRICO_RB_PORT "$RB_PORT"
   set_env WOOTRICO_RD_MODE "$RD_MODE"; set_env WOOTRICO_RD_HOST "$RD_HOST"; set_env WOOTRICO_RD_PORT "$RD_PORT"
   set_env PUBLIC_BASE_URL "$(keep_or PUBLIC_BASE_URL "https://${DOMAIN}")"
-  set_env LICENSE_SERVER_URL "$LICENSE_SERVER_URL"
-  [ -n "$LICENSE_PUBLIC_KEY" ] && set_env LICENSE_PUBLIC_KEY "$LICENSE_PUBLIC_KEY"
-  [ -n "$LICENSE_KEY" ] && set_env LICENSE_KEY "$LICENSE_KEY"
-  # Sem servidor de licença informado → não exige licença (evita travar o 1º acesso).
-  if [ -n "$LICENSE_SERVER_URL" ]; then
-    set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED true)"
-  else
-    set_env LICENSE_REQUIRED false
-    note "Licença: desativada (sem servidor informado)"
-  fi
+  # Licenciamento provisionado pela aplicação depois; não exige no 1º acesso.
+  set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED false)"
   set_env JWT_SECRET "$JWT_SECRET"; set_env APP_ENCRYPTION_KEY "$APP_ENCRYPTION_KEY"
   set_env NODE_ENV "$(keep_or NODE_ENV production)"; set_env PORT "$(keep_or PORT 3000)"
   set_env HOST "$(keep_or HOST 0.0.0.0)"; set_env LOG_LEVEL "$(keep_or LOG_LEVEL info)"
@@ -680,7 +665,7 @@ print_summary() {
   echo -e "${C_Y}DNS:${C_0} confirme um registro A de '${DOM}' apontando para $(public_ip) (sem isso o domínio não abre e o TLS falha)."
   echo -e "${C_C}Webhooks (gerados por integração no painel): https://${DOM}/webhook/<token>/provider e /chatwoot${C_0}"
   echo; echo -e "${C_B}${C_Y}Chaves/segredos (guarde em local seguro):${C_0}"
-  grep -E '^(DOMAIN|POSTGRES_PASSWORD|RABBITMQ_PASSWORD|JWT_SECRET|APP_ENCRYPTION_KEY|LICENSE_SERVER_URL|LICENSE_PUBLIC_KEY|LICENSE_KEY)=' "$ENV_FILE" | sed 's/^/  /'
+  grep -E '^(DOMAIN|POSTGRES_PASSWORD|RABBITMQ_PASSWORD|JWT_SECRET|APP_ENCRYPTION_KEY)=' "$ENV_FILE" | sed 's/^/  /'
   echo; echo -e "${C_C}Salvo em ${PWD}/${ENV_FILE} (chmod 600). Logs: docker service logs -f ${STACK_NAME}_app${C_0}"
 }
 
@@ -740,7 +725,6 @@ configure_env_local() {
   set_env REDIS_URL "$(keep_or REDIS_URL 'redis://redis:6379')"
   set_env PUBLIC_BASE_URL "http://localhost:${PORT_HOST}"
   set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED false)"
-  set_env LICENSE_SERVER_URL "$(keep_or LICENSE_SERVER_URL 'https://license.example.com')"
   set_env JWT_SECRET "$JWT"; set_env APP_ENCRYPTION_KEY "$ENC"
   set_env NODE_ENV "$(keep_or NODE_ENV production)"; set_env PORT "$(keep_or PORT 3000)"
   set_env HOST "$(keep_or HOST 0.0.0.0)"; set_env LOG_LEVEL "$(keep_or LOG_LEVEL info)"

@@ -49,7 +49,7 @@ rodá-lo (na VPS Linux — Ubuntu/Debian/RHEL):
 curl -fsSL -H "Authorization: token SEU_PAT" \
   https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh -o install.sh
 
-# instalar (Swarm) — pergunta a rede overlay, domínio/e-mail/licença e gera as chaves
+# instalar (Swarm) — pergunta a rede overlay, o domínio e o banco/fila/cache; gera as chaves
 sudo bash install.sh
 ```
 
@@ -73,13 +73,15 @@ Durante a instalação ele:
 >   https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh | sudo bash
 > ```
 
-O instalador **detecta o SO**, instala o que faltar (git/Docker/Swarm), pergunta o
-domínio/e-mail/licença, **gera ou preserva** as chaves, builda a imagem, sobe a
-stack e mostra um **resumo com as chaves**. É **idempotente** (re-rodar não
-sobrescreve o `.env`).
+O instalador **detecta o SO**, instala o que faltar (Docker/Swarm), pergunta a
+**rede overlay**, o **domínio** (com teste de DNS) e o **banco/fila/cache**
+(reusar existente ou subir novos), **gera ou preserva** as chaves, sobe a stack
+e mostra um **resumo**. É **idempotente** (re-rodar não sobrescreve o `.env`).
+O **licenciamento não é configurado no instalador** — é provisionado pela
+aplicação (ferramenta nossa, a ser implementada).
 
-Depois acesse `https://SEU_DOMINIO` → o **setup wizard** cria o admin, ativa a
-licença e guia a 1ª integração (com teste de conexão e as URLs de webhook).
+Depois acesse `https://SEU_DOMINIO` → o **setup wizard** cria o admin e guia a
+1ª integração (com teste de conexão e as URLs de webhook).
 
 ### Manutenção
 ```bash
