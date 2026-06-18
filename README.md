@@ -31,18 +31,26 @@ uma **licença** e gerencia tudo por um **painel** com tema escuro.
 
 ## 🚀 Instalação (VPS · Docker Swarm)
 
-Em uma VPS Linux limpa (Ubuntu/Debian/RHEL), rode:
+Como o repositório é **privado**, o jeito recomendado é **clonar numa pasta e
+instalar** (na VPS Linux — Ubuntu/Debian/RHEL):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh | sudo bash
+# 1) baixar o projeto numa pasta
+git clone https://github.com/ericorenato/wootrico-v2.git
+cd wootrico-v2
+
+# 2) instalar (Swarm + Traefik/TLS) — pede domínio/e-mail/licença e gera as chaves
+sudo bash install.sh
 ```
 
-> Repositório **privado**: passe um token de acesso para o `curl` e para o `git`:
+> Sem `git` na VPS? `sudo apt-get update && sudo apt-get install -y git` (Debian/Ubuntu)
+> — ou o próprio `install.sh` instala o que faltar.
+>
+> Alternativa via `curl` (repo privado precisa de um Personal Access Token):
 > ```bash
 > curl -fsSL -H "Authorization: token SEU_PAT" \
 >   https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh | sudo bash
 > ```
-> Ou simplesmente: `git clone https://github.com/ericorenato/wootrico-v2 && cd wootrico-v2 && sudo bash install.sh`
 
 O instalador **detecta o SO**, instala o que faltar (git/Docker/Swarm), pergunta o
 domínio/e-mail/licença, **gera ou preserva** as chaves, builda a imagem, sobe a
@@ -68,7 +76,9 @@ sudo bash install.sh uninstall   # remove a stack (pergunta se apaga os volumes)
 a porta, gera os segredos e o `.env`, e sobe tudo:
 
 ```bash
-git clone https://github.com/ericorenato/wootrico-v2 && cd wootrico-v2
+# baixar o projeto numa pasta e instalar (local)
+git clone https://github.com/ericorenato/wootrico-v2.git
+cd wootrico-v2
 bash install.sh local
 # painel em http://localhost:8789 (ou a porta que você escolher)
 ```
