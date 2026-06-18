@@ -4,7 +4,7 @@ import {
   LayoutDashboard,
   Plug,
   KeyRound,
-  ScrollText,
+  Terminal,
   SlidersHorizontal,
   LogOut,
 } from 'lucide-react';
@@ -15,7 +15,7 @@ const NAV = [
   { to: '/integrations', label: 'Integrações', icon: Plug },
   { to: '/system', label: 'Sistema', icon: SlidersHorizontal },
   { to: '/license', label: 'Licença', icon: KeyRound },
-  { to: '/audit', label: 'Auditoria', icon: ScrollText },
+  { to: '/logs', label: 'Logs', icon: Terminal },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {

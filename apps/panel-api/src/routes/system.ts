@@ -225,6 +225,80 @@ export default async function systemRoutes(app: FastifyInstance) {
     return { ok: true, results };
   });
 
+  // ── system logs (console) ──
+  // A unified, CONTENT-FREE feed of admin actions (audit_logs) and webhook
+  // events (webhook_events). Never includes message bodies or media — only the
+  // control/event metadata (action, source, outcome, reason).
+  app.get('/api/system/logs', guard, async (req) => {
+    const q = req.query as { limit?: string; before?: string; kind?: string };
+    const limit = Math.min(Math.max(parseInt(q.limit ?? '120', 10) || 120, 1), 500);
+    const before = q.before ? new Date(q.before) : undefined;
+    const kind = q.kind === 'audit' || q.kind === 'webhook' ? q.kind : undefined;
+
+    const wantAudit = kind !== 'webhook';
+    const wantWebhook = kind !== 'audit';
+
+    const [audits, webhooks] = await Promise.all([
+      wantAudit
+        ? app.prisma.auditLog.findMany({
+            where: before ? { createdAt: { lt: before } } : undefined,
+            orderBy: { createdAt: 'desc' },
+            take: limit,
+            include: { adminUser: { select: { email: true } } },
+          })
+        : Promise.resolve([]),
+      wantWebhook
+        ? app.prisma.webhookEvent.findMany({
+            where: before ? { receivedAt: { lt: before } } : undefined,
+            orderBy: { receivedAt: 'desc' },
+            take: limit,
+            include: { integration: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    type Entry = {
+      id: string;
+      at: string;
+      kind: 'audit' | 'webhook';
+      level: 'info' | 'warn';
+      source: string;
+      actor: string | null;
+      summary: string;
+    };
+    const entries: Entry[] = [];
+    for (const a of audits) {
+      entries.push({
+        id: `a_${a.id}`,
+        at: a.createdAt.toISOString(),
+        kind: 'audit',
+        level: 'info',
+        source: 'admin',
+        actor: a.adminUser?.email ?? null,
+        summary: `${a.action}${a.entityType ? ` · ${a.entityType}` : ''}${a.entityId ? ` #${a.entityId}` : ''}`,
+      });
+    }
+    for (const w of webhooks) {
+      const parts = [w.source, w.originDetected, w.eventType].filter(Boolean).join(' ');
+      entries.push({
+        id: `w_${w.id}`,
+        at: w.receivedAt.toISOString(),
+        kind: 'webhook',
+        level: w.accepted ? 'info' : 'warn',
+        source: w.source,
+        actor: w.integration?.name ?? null,
+        summary: `${parts} → ${w.accepted ? 'aceito' : 'descartado'}${w.reason ? ` (${w.reason})` : ''}`,
+      });
+    }
+    entries.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));
+    const sliced = entries.slice(0, limit);
+    const last = sliced[sliced.length - 1];
+    return {
+      entries: sliced,
+      nextBefore: sliced.length === limit && last ? last.at : null,
+    };
+  });
+
   // ── restart: signal worker + self-exit so Swarm recreates with new settings ──
   app.post('/api/system/restart', guard, async (req) => {
     await app.prisma.appSettings.upsert({

@@ -10,7 +10,7 @@ import IntegrationForm from './pages/IntegrationForm';
 import License from './pages/License';
 import System from './pages/System';
 import SetupWizard from './pages/SetupWizard';
-import Placeholder from './pages/Placeholder';
+import Logs from './pages/Logs';
 
 function Spinner() {
   return (
@@ -57,7 +57,7 @@ export default function App() {
           <Route path="/integrations/:id" element={<Protected><IntegrationForm /></Protected>} />
           <Route path="/license" element={<Protected><License /></Protected>} />
           <Route path="/system" element={<Protected><System /></Protected>} />
-          <Route path="/audit" element={<Protected><Placeholder eyebrow="Auditoria" title="Auditoria" /></Protected>} />
+          <Route path="/logs" element={<Protected><Logs /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
