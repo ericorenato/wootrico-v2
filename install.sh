@@ -64,15 +64,26 @@ existing_on_selected_net() {
 # Lê uma senha sem ecoar; valor vai p/ stdout, prompt/linha p/ stderr.
 ask_pass() { local p="$1" a; read -rsp "$(echo -e "${C_C}?${C_0} ${p}: ")" a </dev/tty || true; printf '\n' >&2; printf '%s' "$a"; }
 
-# Roda um container efêmero, preferindo a rede selecionada; se a overlay não for
-# "attachable", repete na bridge padrão. Ecoa a saída e retorna o código real.
-drun_net() {
-  local out rc
-  out="$($SUDO docker run --rm --network "$NET_NAME" "$@" 2>&1)"; rc=$?
-  if [ $rc -ne 0 ] && printf '%s' "$out" | grep -qiE 'attachable|not found|network'; then
-    out="$($SUDO docker run --rm "$@" 2>&1)"; rc=$?
+# Executa uma verificação DENTRO da rede do Swarm. Redes overlay de stacks
+# normalmente NÃO são "attachable" (um 'docker run --network' não entra nelas e
+# não resolve nomes de serviço). Por isso usamos um SERVIÇO Swarm efêmero — ele
+# entra em qualquer overlay e enxerga nomes (ex.: postgres_postgres) e IPs reais.
+# Ecoa os logs do teste; o sucesso é avaliado por uma sentinela na saída.
+net_probe() { # imagem + comando…
+  local name="wttest_${RANDOM}${RANDOM}" i state
+  $SUDO docker service rm "$name" >/dev/null 2>&1 || true
+  if ! $SUDO docker service create --name "$name" --network "$NET_NAME" \
+        --restart-condition none --detach --quiet "$@" >/dev/null 2>&1; then
+    $SUDO docker service rm "$name" >/dev/null 2>&1 || true
+    return 1
   fi
-  printf '%s' "$out"; return $rc
+  for i in $(seq 1 40); do
+    state="$($SUDO docker service ps "$name" --format '{{.CurrentState}}' 2>/dev/null | head -1)"
+    case "$state" in Complete*|Failed*|Rejected*|Shutdown*) break ;; esac
+    sleep 1
+  done
+  $SUDO docker service logs --raw "$name" 2>/dev/null
+  $SUDO docker service rm "$name" >/dev/null 2>&1 || true
 }
 # Nome DNS de um serviço existente alcançável DENTRO da rede $NET_NAME (sem expor
 # portas): usa o nome do serviço Swarm; cai p/ o nome do container. Vazio se nenhum.
@@ -87,25 +98,23 @@ svc_alias_on_net() { # $1 img-regex
   done
   return 1
 }
-# Testes de conexão (autenticando quando possível). 0 = sucesso.
+# Testes na rede do Swarm (sentinela na saída). 0 = sucesso.
 # Autentica no servidor (db de manutenção 'postgres') — não exige o banco-alvo.
 test_pg_server() { # host port user pass
-  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc 'select 1' >/dev/null 2>&1
+  net_probe -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc "select 'PGOK'" 2>/dev/null | grep -q PGOK
 }
 pg_db_exists() { # host port user pass db
-  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$5'" 2>/dev/null | grep -q 1
+  net_probe -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc "select 'DBEXISTS' from pg_database where datname='$5'" 2>/dev/null | grep -q DBEXISTS
 }
 pg_create_db() { # host port user pass db
-  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -c "CREATE DATABASE \"$5\"" >/dev/null 2>&1
+  net_probe -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -c "create database \"$5\"" 2>/dev/null | grep -qi 'CREATE DATABASE'
 }
 test_redis() { # host port pass
-  local out
-  if [ -n "$3" ]; then out="$(drun_net redis:7-alpine redis-cli -h "$1" -p "$2" -a "$3" ping 2>/dev/null)"
-  else out="$(drun_net redis:7-alpine redis-cli -h "$1" -p "$2" ping 2>/dev/null)"; fi
-  printf '%s' "$out" | grep -q PONG
+  if [ -n "$3" ]; then net_probe redis:7-alpine redis-cli -h "$1" -p "$2" -a "$3" ping 2>/dev/null | grep -q PONG
+  else net_probe redis:7-alpine redis-cli -h "$1" -p "$2" ping 2>/dev/null | grep -q PONG; fi
 }
-test_rabbit_tcp() { # host port — só checa alcance TCP (credenciais validadas no runtime)
-  drun_net busybox sh -c "nc -z -w3 $1 $2" >/dev/null 2>&1
+test_rabbit_tcp() { # host port — alcance TCP (credenciais validadas no runtime)
+  net_probe busybox sh -c "nc -z -w3 $1 $2 && echo RBOK" 2>/dev/null | grep -q RBOK
 }
 
 # ───────────────────────────── INSTALL ─────────────────────────────
