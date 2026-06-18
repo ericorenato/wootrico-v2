@@ -36,4 +36,6 @@ export interface WhatsAppProvider {
   downloadMedia(ref: MediaRef): Promise<DownloadResult>;
   parseInbound(payload: unknown, ctx: ParseContext): NormalizedInboundMessage;
   testConnection(): Promise<TestResult>;
+  /** Fetch the contact's WhatsApp profile-picture URL, if the provider exposes it. */
+  fetchProfilePictureUrl?(recipient: string): Promise<string | null>;
 }

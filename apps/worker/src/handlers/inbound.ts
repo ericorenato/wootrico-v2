@@ -5,6 +5,7 @@ import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/
 import { addTicket, consumeTicket } from '../engine/dedup.js';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
 import { resolveIdentity, ingestDirectoryHints } from '../engine/identity.js';
+import { syncContactMeta } from '../engine/contact-sync.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 
@@ -95,6 +96,21 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       if (contactId) await cacheSet(contactKey, contactId, CONTACT_TTL);
     }
     if (!contactId) return logger.warn({ integrationId }, 'inbound: missing contact id');
+
+    // Complete the contact when data not present on the first (LID-only) message
+    // arrives later: phone, name and avatar — keeping it the same contact.
+    if (!isGroup) {
+      await syncContactMeta({
+        integrationId,
+        identifier,
+        contactId,
+        chatwoot,
+        provider,
+        name: norm.name ?? norm.senderName ?? null,
+        phoneE164: phoneNumber,
+        avatarTarget: sendTarget,
+      });
+    }
 
     const conversation = await chatwoot.findOrCreateConversation({
       contactId,

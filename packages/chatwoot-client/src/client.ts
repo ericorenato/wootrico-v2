@@ -186,6 +186,22 @@ export class ChatwootClient {
     return this.createContact(opts);
   }
 
+  /**
+   * Update a contact's data — used when info that wasn't available on the first
+   * (often LID-only) message arrives later: phone number, name and avatar.
+   */
+  async updateContact(
+    contactId: string | number,
+    data: { name?: string; phoneNumber?: string; avatarUrl?: string },
+  ): Promise<void> {
+    const body: Record<string, unknown> = {};
+    if (data.name) body.name = data.name;
+    if (data.phoneNumber && E164.test(data.phoneNumber)) body.phone_number = data.phoneNumber;
+    if (data.avatarUrl) body.avatar_url = data.avatarUrl;
+    if (!Object.keys(body).length) return;
+    await this.http.put(this.acc(`/contacts/${contactId}`), body);
+  }
+
   // ─────────────────────── conversations ───────────────────────
 
   async findConversation(opts: {

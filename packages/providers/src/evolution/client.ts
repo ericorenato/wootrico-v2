@@ -135,6 +135,21 @@ export class EvolutionProvider implements WhatsAppProvider {
     return parseEvolutionInbound(payload, ctx);
   }
 
+  async fetchProfilePictureUrl(recipient: string): Promise<string | null> {
+    try {
+      const res = await this.http.post(
+        '/user/avatar',
+        { number: recipient, preview: false },
+        { timeout: 10000 },
+      );
+      const out = (res.data?.data ?? res.data) as Record<string, any> | string | undefined;
+      if (typeof out === 'string') return out || null;
+      return out?.url ?? out?.URL ?? out?.imgUrl ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async testConnection(): Promise<TestResult> {
     try {
       const res = await this.http.get('/instance/status', { timeout: 10000 });
