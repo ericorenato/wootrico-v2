@@ -70,7 +70,10 @@ export async function handleChatwootCallback(
       ? await resolveIdentity({ pn })
       : await getIdentityById(sender.identifier);
     canonicalKey = identity?.id ?? pn ?? sender.identifier;
-    sendTarget = pn ?? (identity?.lid ? `${identity.lid}@lid` : sender.identifier);
+    // Prefer the contact's phone; else the number we discovered for it; else the
+    // LID; never fall back to the canonical UUID as a send target.
+    sendTarget =
+      pn ?? identity?.pn ?? (identity?.lid ? `${identity.lid}@lid` : sender.identifier);
   }
   if (!canonicalKey || !sendTarget) return;
 

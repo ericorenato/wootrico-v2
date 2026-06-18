@@ -80,7 +80,7 @@ export class ChatwootClient {
     if (found?.id) return String(found.id);
 
     const created = await this.createApiInbox(opts);
-    return String(created?.id);
+    return created?.id ? String(created.id) : '';
   }
 
   /** Find an inbox by its exact name. */
@@ -147,7 +147,8 @@ export class ChatwootClient {
         webhookUrl: opts.webhookUrl,
         allowMessagesAfterResolved: opts.allowMessagesAfterResolved ?? true,
       });
-      return { inboxId: String(created?.id), channelType: 'Channel::Api', action: 'created' };
+      const id = created?.id ? String(created.id) : null;
+      return { inboxId: id, channelType: 'Channel::Api', action: id ? 'created' : 'not_created' };
     }
     return { inboxId: null, channelType: null, action: 'not_created' };
   }

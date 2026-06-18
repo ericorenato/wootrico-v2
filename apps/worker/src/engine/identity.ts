@@ -1,4 +1,5 @@
 import { prisma } from '@wootrico/db';
+import { logger } from '@wootrico/config';
 
 /**
  * GLOBAL contact-identity directory (instance-wide, independent of company).
@@ -108,7 +109,9 @@ export async function ingestDirectoryHints(
     .map((h) => ({ pn: clean(h.pn), lid: clean(h.lid) }))
     .filter((h) => h.pn || h.lid);
   if (!rows.length) return;
-  await prisma.contactIdentity.createMany({ data: rows, skipDuplicates: true }).catch(() => undefined);
+  await prisma.contactIdentity
+    .createMany({ data: rows, skipDuplicates: true })
+    .catch((err) => logger.debug({ err }, 'ingestDirectoryHints failed'));
 }
 
 /** Look up an identity by its canonical id (used on the outbound path). */
