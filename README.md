@@ -60,18 +60,37 @@ sudo bash install.sh uninstall   # remove a stack (pergunta se apaga os volumes)
 
 ## 🖥️ Rodar localmente (Docker Desktop)
 
-Sem Swarm, com porta publicada — ótimo para testar:
+Sem Swarm, puxando a imagem pública do Hub. A porta do painel é **configurável**
+(padrão `8789`, pouco comum, para não conflitar com outras apps).
 
 ```bash
 cp .env.example .env
-# ajuste: hosts internos (postgres/rabbitmq/redis), LICENSE_REQUIRED=false,
-# e gere JWT_SECRET / APP_ENCRYPTION_KEY
-docker compose -f docker-compose.local.yml up -d   # puxa a imagem do Docker Hub
-# painel em http://localhost:3000
+# ajuste no .env: PANEL_PORT (ex: 8789), LICENSE_REQUIRED=false,
+# e gere JWT_SECRET / APP_ENCRYPTION_KEY:
+#   node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"  # JWT_SECRET
+#   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     # APP_ENCRYPTION_KEY
+docker compose -f docker-compose.local.yml up -d   # puxa ericoautomacao/wootrico-v2:latest
+# painel em http://localhost:8789   ·   RabbitMQ UI em http://localhost:15673
 ```
 
-> A imagem pública é `ericoautomacao/wootrico-v2:latest`. Para buildar a sua
-> própria, descomente o `build:` no `docker-compose.local.yml`.
+Trocar a porta sem editar arquivo: `PANEL_PORT=9123 docker compose -f docker-compose.local.yml up -d`.
+
+### Rodar em OUTRA máquina (só Docker, sem código)
+
+Como a imagem é pública, basta o Docker + 2 arquivos (compose + .env):
+
+```bash
+mkdir wootrico && cd wootrico
+# baixe os arquivos do repositório (ou copie-os via git clone):
+git clone https://github.com/ericorenato/wootrico-v2 .       # ou copie só os 2 arquivos abaixo
+cp .env.example .env                                          # edite PANEL_PORT, segredos, LICENSE_REQUIRED=false
+docker compose -f docker-compose.local.yml up -d
+# acesse http://IP-DA-MAQUINA:8789  (ou localhost:8789 na própria máquina)
+```
+
+> Acessível de outros dispositivos na rede: `http://IP-DA-MAQUINA:8789` (libere a
+> porta no firewall). Para buildar sua própria imagem em vez de puxar, descomente
+> o `build:` no `docker-compose.local.yml`.
 
 ## 🧩 Arquitetura
 

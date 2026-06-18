@@ -25,7 +25,7 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wootrico}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
     ports:
-      - '15672:15672' # management UI
+      - '${RABBITMQ_UI_PORT:-15673}:15672' # management UI (host configurável)
     healthcheck:
       test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
       interval: 10s
@@ -52,7 +52,7 @@ services:
       sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
              node apps/panel-api/dist/server.cjs"
     ports:
-      - '3000:3000' # painel + API direto (sem Traefik)
+      - '${PANEL_PORT:-8789}:3000' # porta do host configurável (padrão pouco comum)
     depends_on:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
