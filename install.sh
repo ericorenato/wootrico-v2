@@ -64,6 +64,30 @@ existing_on_selected_net() {
 # Lê uma senha sem ecoar; valor vai p/ stdout, prompt/linha p/ stderr.
 ask_pass() { local p="$1" a; read -rsp "$(echo -e "${C_C}?${C_0} ${p}: ")" a </dev/tty || true; printf '\n' >&2; printf '%s' "$a"; }
 
+# Roda um container efêmero, preferindo a rede selecionada; se a overlay não for
+# "attachable", repete na bridge padrão. Ecoa a saída e retorna o código real.
+drun_net() {
+  local out rc
+  out="$($SUDO docker run --rm --network "$NET_NAME" "$@" 2>&1)"; rc=$?
+  if [ $rc -ne 0 ] && printf '%s' "$out" | grep -qiE 'attachable|not found|network'; then
+    out="$($SUDO docker run --rm "$@" 2>&1)"; rc=$?
+  fi
+  printf '%s' "$out"; return $rc
+}
+# Testes de conexão (autenticando quando possível). 0 = sucesso.
+test_pg() { # host port user pass db
+  drun_net -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d "$5" -tAc 'select 1' >/dev/null 2>&1
+}
+test_redis() { # host port pass
+  local out
+  if [ -n "$3" ]; then out="$(drun_net redis:7-alpine redis-cli -h "$1" -p "$2" -a "$3" ping 2>/dev/null)"
+  else out="$(drun_net redis:7-alpine redis-cli -h "$1" -p "$2" ping 2>/dev/null)"; fi
+  printf '%s' "$out" | grep -q PONG
+}
+test_rabbit_tcp() { # host port — só checa alcance TCP (credenciais validadas no runtime)
+  drun_net busybox sh -c "nc -z -w3 $1 $2" >/dev/null 2>&1
+}
+
 # ───────────────────────────── INSTALL ─────────────────────────────
 cmd_install() {
   title "Sistema operacional"
@@ -300,11 +324,17 @@ decide_infra() {
   PG_PASS="$(genv POSTGRES_PASSWORD)"
   _infra_one Postgres 'postgres|postgis' 5432; PG_MODE="$__MODE"
   if [ "$PG_MODE" = existing ]; then
-    PG_HOST="$(ask "Host do Postgres (acessível pela rede do Wootrico)" "${gw:-127.0.0.1}")"
-    PG_PORT="$(ask "Porta do Postgres" "5432")"
-    PG_USER="$(ask "Usuário do Postgres" "$PG_USER")"
-    local p; p="$(ask_pass "Senha do Postgres")"; [ -n "$p" ] && PG_PASS="$p"
-    PG_DB="$(ask "Banco (database) do Postgres" "$PG_DB")"
+    while :; do
+      PG_HOST="$(ask "Host do Postgres (acessível pela rede do Wootrico)" "${gw:-127.0.0.1}")"
+      PG_PORT="$(ask "Porta do Postgres" "5432")"
+      PG_USER="$(ask "Usuário do Postgres" "$PG_USER")"
+      local p; p="$(ask_pass "Senha do Postgres")"; [ -n "$p" ] && PG_PASS="$p"
+      PG_DB="$(ask "Banco (database) do Postgres" "$PG_DB")"
+      info "Testando conexão com o Postgres (${PG_HOST}:${PG_PORT})…"
+      if test_pg "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS" "$PG_DB"; then ok "Postgres: conexão OK."; break; fi
+      warn "Não consegui conectar/autenticar no Postgres."
+      confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
+    done
   else
     PG_HOST="postgres"
     PG_PORT="$(ask "Porta do Postgres (nova instância)" "$(svc_detected 'postgres|postgis' 5432 && echo 5433 || echo 5432)")"
@@ -318,10 +348,16 @@ decide_infra() {
   RB_PASS="$(genv RABBITMQ_PASSWORD)"
   _infra_one RabbitMQ 'rabbitmq' 5672; RB_MODE="$__MODE"
   if [ "$RB_MODE" = existing ]; then
-    RB_HOST="$(ask "Host do RabbitMQ" "${gw:-127.0.0.1}")"
-    RB_PORT="$(ask "Porta AMQP do RabbitMQ" "5672")"
-    RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
-    local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
+    while :; do
+      RB_HOST="$(ask "Host do RabbitMQ" "${gw:-127.0.0.1}")"
+      RB_PORT="$(ask "Porta AMQP do RabbitMQ" "5672")"
+      RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
+      local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
+      info "Testando alcance do RabbitMQ (${RB_HOST}:${RB_PORT})…"
+      if test_rabbit_tcp "$RB_HOST" "$RB_PORT"; then ok "RabbitMQ: porta acessível (usuário/senha serão validados na conexão do worker)."; break; fi
+      warn "Não consegui alcançar o RabbitMQ em ${RB_HOST}:${RB_PORT}."
+      confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
+    done
   else
     RB_HOST="rabbitmq"
     RB_PORT="$(ask "Porta AMQP do RabbitMQ (nova instância)" "$(svc_detected 'rabbitmq' 5672 && echo 5673 || echo 5672)")"
@@ -334,9 +370,15 @@ decide_infra() {
   RD_PASS="$(genv REDIS_PASSWORD)"
   _infra_one Redis 'redis' 6379; RD_MODE="$__MODE"
   if [ "$RD_MODE" = existing ]; then
-    RD_HOST="$(ask "Host do Redis" "${gw:-127.0.0.1}")"
-    RD_PORT="$(ask "Porta do Redis" "6379")"
-    local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; RD_PASS="$p"
+    while :; do
+      RD_HOST="$(ask "Host do Redis" "${gw:-127.0.0.1}")"
+      RD_PORT="$(ask "Porta do Redis" "6379")"
+      local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; RD_PASS="$p"
+      info "Testando conexão com o Redis (${RD_HOST}:${RD_PORT})…"
+      if test_redis "$RD_HOST" "$RD_PORT" "$RD_PASS"; then ok "Redis: conexão OK."; break; fi
+      warn "Não consegui conectar/autenticar no Redis."
+      confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
+    done
   else
     RD_HOST="redis"
     RD_PORT="$(ask "Porta do Redis (nova instância)" "$(svc_detected 'redis' 6379 && echo 6380 || echo 6379)")"
