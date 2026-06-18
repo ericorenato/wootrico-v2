@@ -85,16 +85,19 @@ net_probe() { # imagem + comando…
   $SUDO docker service logs --raw "$name" 2>/dev/null
   $SUDO docker service rm "$name" >/dev/null 2>&1 || true
 }
-# Nome DNS de um serviço existente alcançável DENTRO da rede $NET_NAME (sem expor
-# portas): usa o nome do serviço Swarm; cai p/ o nome do container. Vazio se nenhum.
+# Nome DNS curto de um serviço existente na rede $NET_NAME (sem expor portas).
+# Convenção comum (Swarm/stack): o nome CURTO do serviço (ex.: 'postgres') é
+# registrado como alias de rede e resolve para qualquer container da mesma
+# overlay — então preferimos ele em vez do nome completo 'stack_servico'.
 svc_alias_on_net() { # $1 img-regex
-  local c nets svc
+  local c nets raw
   for c in $(containers_for "$1"); do
     nets="$($SUDO docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c" 2>/dev/null)"
     case " $nets " in *" ${NET_NAME} "*) ;; *) continue ;; esac
-    svc="$($SUDO docker inspect -f '{{ index .Config.Labels "com.docker.swarm.service.name" }}' "$c" 2>/dev/null)"
-    [ -n "$svc" ] && { printf '%s' "$svc"; return 0; }
-    printf '%s' "${c%%.*}"; return 0
+    raw="$($SUDO docker inspect -f '{{ index .Config.Labels "com.docker.swarm.service.name" }}' "$c" 2>/dev/null)"
+    [ -z "$raw" ] && raw="${c%%.*}"      # fallback: nome do container (sem .N.id)
+    printf '%s' "${raw#*_}"              # remove o prefixo da stack → nome curto
+    return 0
   done
   return 1
 }
