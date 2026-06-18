@@ -195,18 +195,31 @@ configure_env() {
     echo "$val"
   }
 
-  DOMAIN="$(ask "Domínio do painel (a URL do webhook é derivada deste domínio)" "$(get_env DOMAIN)")"
-
-  # DNS: o domínio precisa apontar para este servidor (o roteamento é por Host).
-  local SRV_IP; SRV_IP="$(public_ip)"
   echo
-  warn "DNS necessário: crie um registro A de '${DOMAIN}' apontando para ${SRV_IP:-<IP deste servidor>}."
-  info "Faça isso no painel DNS do seu provedor (Cloudflare, Registro.br, etc.). O Wootrico NÃO cria DNS."
-  if [ "${USE_TRAEFIK:-1}" = 1 ]; then
-    info "O certificado TLS (Let's Encrypt) só é emitido após o DNS propagar e as portas 80/443 ficarem acessíveis neste servidor."
-  fi
-  confirm "O DNS de '${DOMAIN}' já aponta para ${SRV_IP:-este servidor}?" || \
-    warn "Sem o DNS apontando, o painel não abrirá pelo domínio e o TLS falhará — ajuste o DNS e rode 'install.sh update' depois."
+  info "Informe o DOMÍNIO onde o Wootrico vai responder — é o endereço do PAINEL de"
+  info "configuração e dos WEBHOOKS (a URL do webhook é derivada dele)."
+  info "Use um domínio/subdomínio que você controla. Exemplo: wootrico.suaempresa.com.br"
+  local SRV_IP; SRV_IP="$(public_ip)"
+  while :; do
+    DOMAIN="$(ask "Domínio do Wootrico (painel + webhooks)" "$(get_env DOMAIN)")"
+    [ -z "$DOMAIN" ] && { warn "Informe um domínio."; continue; }
+    info "Testando o domínio '${DOMAIN}' (resolução DNS/ping)…"
+    local DOM_IP; DOM_IP="$(resolve_domain_ip "$DOMAIN")"
+    if [ -n "$DOM_IP" ]; then
+      ok "Domínio responde: '${DOMAIN}' → ${DOM_IP}."
+      if [ -n "$SRV_IP" ] && [ "$DOM_IP" != "$SRV_IP" ]; then
+        warn "Porém o IP do domínio (${DOM_IP}) é DIFERENTE do IP deste servidor (${SRV_IP})."
+        warn "Para o Traefik emitir o certificado digital, o domínio deve apontar para ${SRV_IP}."
+        confirm "Continuar mesmo assim?" || continue
+      fi
+      break
+    fi
+    warn "O domínio '${DOMAIN}' NÃO respondeu (sem registro/propagação de DNS)."
+    warn "Registre um registro A de '${DOMAIN}' → ${SRV_IP:-IP deste servidor} no seu painel DNS"
+    warn "ANTES de continuar. Sem isso o Traefik NÃO gera o certificado digital (Let's Encrypt)"
+    warn "e o painel não abre pelo domínio."
+    confirm "Já registrei / quero tentar de novo? ('n' = continuar assim mesmo, não recomendado)" || break
+  done
   echo
 
   # Só precisamos do e-mail do Let's Encrypt quando o Wootrico instala o Traefik.
@@ -215,8 +228,13 @@ configure_env() {
   else
     ACME_EMAIL="$(get_env ACME_EMAIL)"
   fi
-  LICENSE_SERVER_URL="$(ask "URL do servidor de licença" "$(keep_or LICENSE_SERVER_URL 'https://license.example.com')")"
-  LICENSE_PUBLIC_KEY="$(ask "Chave pública da licença (base64 PEM)" "$(get_env LICENSE_PUBLIC_KEY)")"
+  echo
+  info "Licenciamento (OPCIONAL): o Wootrico pode exigir uma CHAVE DE LICENÇA validada"
+  info "por um SERVIDOR DE LICENÇA — a aplicação que gera/ativa essas chaves. Se ela"
+  info "ainda não existe, deixe os 3 campos abaixo EM BRANCO; o Wootrico sobe sem exigir"
+  info "licença e você ativa depois (a chave pode ser inserida no painel)."
+  LICENSE_SERVER_URL="$(ask "URL do servidor de licença (em branco = sem licenciamento)" "$(get_env LICENSE_SERVER_URL)")"
+  LICENSE_PUBLIC_KEY="$(ask "Chave pública da licença (base64 PEM, opcional)" "$(get_env LICENSE_PUBLIC_KEY)")"
   LICENSE_KEY="$(ask "Chave de licença (opcional, ativável no painel)" "$(get_env LICENSE_KEY)")"
 
   JWT_SECRET="$(secret_for JWT_SECRET gen 48)"
@@ -244,7 +262,13 @@ configure_env() {
   set_env LICENSE_SERVER_URL "$LICENSE_SERVER_URL"
   [ -n "$LICENSE_PUBLIC_KEY" ] && set_env LICENSE_PUBLIC_KEY "$LICENSE_PUBLIC_KEY"
   [ -n "$LICENSE_KEY" ] && set_env LICENSE_KEY "$LICENSE_KEY"
-  set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED true)"
+  # Sem servidor de licença informado → não exige licença (evita travar o 1º acesso).
+  if [ -n "$LICENSE_SERVER_URL" ]; then
+    set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED true)"
+  else
+    set_env LICENSE_REQUIRED false
+    note "Licença: desativada (sem servidor informado)"
+  fi
   set_env JWT_SECRET "$JWT_SECRET"; set_env APP_ENCRYPTION_KEY "$APP_ENCRYPTION_KEY"
   set_env NODE_ENV "$(keep_or NODE_ENV production)"; set_env PORT "$(keep_or PORT 3000)"
   set_env HOST "$(keep_or HOST 0.0.0.0)"; set_env LOG_LEVEL "$(keep_or LOG_LEVEL info)"
@@ -258,6 +282,15 @@ public_ip() {
   [ -z "$ip" ] && ip="$(curl -s --max-time 4 https://ifconfig.me 2>/dev/null)"
   [ -z "$ip" ] && ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo "$ip"
+}
+# Resolve o IP de um domínio (getent → dig → host → ping). Vazio se não resolver.
+resolve_domain_ip() {
+  local d="$1" ip=""
+  ip="$(getent hosts "$d" 2>/dev/null | awk '{print $1; exit}')"
+  [ -z "$ip" ] && command -v dig  >/dev/null 2>&1 && ip="$(dig +short A "$d" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)"
+  [ -z "$ip" ] && command -v host >/dev/null 2>&1 && ip="$(host "$d" 2>/dev/null | awk '/has address/{print $4; exit}')"
+  [ -z "$ip" ] && ip="$(ping -c1 -W2 "$d" 2>/dev/null | sed -n 's/.*(\([0-9.]*\)).*/\1/p' | head -1)"
+  printf '%s' "$ip"
 }
 
 # Detecta um Traefik já em execução (Swarm ou container) para não duplicar o
