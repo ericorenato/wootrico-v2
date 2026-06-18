@@ -1,0 +1,34 @@
+# VENDOR-ONLY: the central license server (you host this, not your customers).
+#   cp apps/license-server/.env.example apps/license-server/.env   # fill secrets
+#   docker compose -f docker-compose.license-server.yml up -d
+services:
+  license-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-license}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-license}
+      POSTGRES_DB: ${POSTGRES_DB:-license}
+    volumes:
+      - license_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-license} -d ${POSTGRES_DB:-license}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  license-server:
+    build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    env_file: apps/license-server/.env
+    command: >-
+      sh -c "pnpm --filter @wootrico/license-server exec prisma migrate deploy &&
+             node apps/license-server/dist/server.cjs"
+    depends_on:
+      license-postgres:
+        condition: service_healthy
+    ports:
+      - '4000:4000'
+
+volumes:
+  license_pgdata:

@@ -1,0 +1,128 @@
+# Wootrico v2 — Docker Swarm stack.
+#   docker build -t wootrico:latest .                 # (feito pelo install.sh)
+#   set -a; . ./.env; set +a
+#   docker stack deploy -c docker-compose.yml --resolve-image never wootrico
+#
+# A topologia do RabbitMQ e as migrações do banco são criadas automaticamente
+# no boot do app. Sem depends_on por condição em Swarm — os serviços reiniciam
+# (restart_policy) até as dependências ficarem prontas.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wootrico}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wootrico}
+      POSTGRES_DB: ${POSTGRES_DB:-wootrico}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [wootrico]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-wootrico} -d ${POSTGRES_DB:-wootrico}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wootrico}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks: [wootrico]
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+  redis:
+    image: redis:7-alpine
+    command: ['redis-server', '--save', '60', '1', '--appendonly', 'no']
+    volumes:
+      - redis_data:/data
+    networks: [wootrico]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+  app:
+    image: ${WOOTRICO_IMAGE:-wootrico:latest}
+    env_file: .env
+    command: >-
+      sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
+             node apps/panel-api/dist/server.cjs"
+    networks: [wootrico]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.wootrico.rule=Host(`${DOMAIN}`)
+        - traefik.http.routers.wootrico.entrypoints=websecure
+        - traefik.http.routers.wootrico.tls.certresolver=le
+        - traefik.http.services.wootrico.loadbalancer.server.port=3000
+
+  worker:
+    image: ${WOOTRICO_IMAGE:-wootrico:latest}
+    env_file: .env
+    command: node apps/worker/dist/main.cjs
+    networks: [wootrico]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+
+  traefik:
+    image: traefik:v3
+    command:
+      - --providers.swarm=true
+      - --providers.swarm.exposedByDefault=false
+      - --providers.swarm.network=wootrico
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge=true
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks: [wootrico]
+    deploy:
+      replicas: 1
+      restart_policy: { condition: any, delay: 5s }
+      placement: { constraints: [node.role == manager] }
+
+networks:
+  wootrico:
+    driver: overlay
+    attachable: true
+
+volumes:
+  pgdata:
+  rabbitmq_data:
+  redis_data:
+  traefik_letsencrypt:

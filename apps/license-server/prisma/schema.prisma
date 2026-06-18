@@ -1,0 +1,52 @@
+// license-server — vendor-hosted, separate database.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("LICENSE_DATABASE_URL")
+}
+
+model LicenseKey {
+  id             String       @id @default(uuid())
+  keyHash        String       @unique @map("key_hash")
+  plan           String       @default("pro")
+  email          String?
+  features       Json?
+  maxActivations Int          @default(1) @map("max_activations")
+  revokedAt      DateTime?    @map("revoked_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  activations    Activation[]
+
+  @@map("license_keys")
+}
+
+model Activation {
+  id              String     @id @default(uuid())
+  licenseKeyId    String     @map("license_key_id")
+  licenseKey      LicenseKey @relation(fields: [licenseKeyId], references: [id], onDelete: Cascade)
+  instanceId      String     @map("instance_id")
+  appVersion      String?    @map("app_version")
+  publicBaseUrl   String?    @map("public_base_url")
+  boundAt         DateTime   @default(now()) @map("bound_at")
+  lastHeartbeatAt DateTime?  @map("last_heartbeat_at")
+  lastTelemetry   Json?      @map("last_telemetry")
+  revokedAt       DateTime?  @map("revoked_at")
+
+  @@unique([licenseKeyId, instanceId])
+  @@map("activations")
+}
+
+model HeartbeatLog {
+  id           String   @id @default(uuid())
+  licenseKeyId String   @map("license_key_id")
+  instanceId   String   @map("instance_id")
+  telemetry    Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([licenseKeyId, createdAt])
+  @@map("heartbeat_log")
+}

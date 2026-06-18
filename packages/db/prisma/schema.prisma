@@ -1,0 +1,259 @@
+// Wootrico v2 — data model
+// See plan: packages/db/prisma/schema.prisma is the core data model.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── enums ───────────────────────────
+
+enum AdminRole {
+  owner
+  admin
+}
+
+enum ProviderType {
+  evolution
+  uazapi
+  zapi
+}
+
+enum ConversationStatus {
+  open
+  resolved
+  pending
+}
+
+enum IntegrationStatus {
+  unconfigured
+  ok
+  error
+}
+
+enum LicenseStatus {
+  unactivated
+  active
+  warning
+  grace
+  blocked
+}
+
+enum MessageType {
+  text
+  image
+  audio
+  video
+  document
+}
+
+enum DedupDirection {
+  phone_origin
+  api_origin
+}
+
+enum WebhookSource {
+  provider
+  chatwoot
+}
+
+// ─────────────────────────── auth ───────────────────────────
+
+model AdminUser {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  role         AdminRole  @default(owner)
+  isActive     Boolean    @default(true) @map("is_active")
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  sessions     Session[]
+  auditLogs    AuditLog[]
+
+  @@map("admin_users")
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  adminUserId      String    @map("admin_user_id")
+  adminUser        AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @map("refresh_token_hash")
+  userAgent        String?   @map("user_agent")
+  ip               String?
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  @@index([adminUserId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ─────────────────────── integrations ───────────────────────
+
+model Integration {
+  id           String       @id @default(uuid())
+  name         String
+  isEnabled    Boolean      @default(true) @map("is_enabled")
+  webhookToken String       @unique @map("webhook_token")
+
+  // Chatwoot side
+  chatwootBaseUrl    String             @map("chatwoot_base_url")
+  chatwootApiToken   String             @map("chatwoot_api_token") // encrypted
+  chatwootAccountId  String             @map("chatwoot_account_id")
+  chatwootInboxName  String             @map("chatwoot_inbox_name")
+  chatwootInboxId    String?            @map("chatwoot_inbox_id")
+  conversationStatus ConversationStatus @default(open) @map("conversation_status")
+
+  // Behavioral flags
+  reabrirConversa    Boolean @default(true) @map("reabrir_conversa")
+  desconsiderarGrupo Boolean @default(true) @map("desconsiderar_grupo")
+  assinarMensagem    Boolean @default(true) @map("assinar_mensagem")
+  defaultCountry     String  @default("BR") @map("default_country")
+
+  // Provider
+  providerType ProviderType @map("provider_type")
+
+  status              IntegrationStatus @default(unconfigured)
+  lastTestChatwootAt  DateTime?         @map("last_test_chatwoot_at")
+  lastTestProviderAt  DateTime?         @map("last_test_provider_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  providerConfig  ProviderConfig?
+  messageMappings MessageMapping[]
+  dedupTickets    DedupTicket[]
+  webhookEvents   WebhookEvent[]
+
+  @@map("integrations")
+}
+
+model ProviderConfig {
+  id            String       @id @default(uuid())
+  integrationId String       @unique @map("integration_id")
+  integration   Integration  @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  providerType  ProviderType @map("provider_type")
+
+  // Encrypted JSON blob with provider-specific credentials.
+  config String
+
+  // Plaintext, indexed value used as a secondary routing safety-net
+  // (uazapi: phone number, zapi: instance, evolution: instance/base).
+  providerIdentifier String? @map("provider_identifier")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([providerType, providerIdentifier])
+  @@map("provider_configs")
+}
+
+// ─────────────────── durable engine state ───────────────────
+
+model MessageMapping {
+  id                    String      @id @default(uuid())
+  integrationId         String      @map("integration_id")
+  integration           Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  chatwootMessageId     String      @map("chatwoot_message_id")
+  providerMessageId     String      @map("provider_message_id")
+  chatwootConversationId String?    @map("chatwoot_conversation_id")
+  chatwootInboxId       String?     @map("chatwoot_inbox_id")
+  recipient             String?
+  provider              ProviderType
+  createdAt             DateTime    @default(now()) @map("created_at")
+  expiresAt             DateTime    @map("expires_at")
+
+  @@unique([integrationId, chatwootMessageId])
+  @@unique([integrationId, providerMessageId])
+  @@index([expiresAt])
+  @@map("message_mappings")
+}
+
+model DedupTicket {
+  id            String         @id @default(uuid())
+  integrationId String         @map("integration_id")
+  integration   Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  recipient     String
+  messageType   MessageType    @map("message_type")
+  direction     DedupDirection
+  consumedAt    DateTime?      @map("consumed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  expiresAt     DateTime       @map("expires_at")
+
+  @@index([integrationId, recipient, messageType, direction, consumedAt])
+  @@index([expiresAt])
+  @@map("dedup_tickets")
+}
+
+// Content-free audit row. The raw payload NEVER lands here (LGPD): it travels
+// only inside the broker message and is dropped after processing. Only
+// non-PII metadata is kept, with a short TTL.
+model WebhookEvent {
+  id             String        @id @default(uuid())
+  integrationId  String?       @map("integration_id")
+  integration    Integration?  @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  source         WebhookSource
+  webhookToken   String?       @map("webhook_token")
+  originDetected String?       @map("origin_detected")
+  eventType      String?       @map("event_type")
+  accepted       Boolean       @default(true)
+  reason         String?
+  receivedAt     DateTime      @default(now()) @map("received_at")
+  expiresAt      DateTime      @map("expires_at")
+
+  @@index([integrationId, receivedAt])
+  @@index([expiresAt])
+  @@map("webhook_events")
+}
+
+model AuditLog {
+  id          String     @id @default(uuid())
+  adminUserId String?    @map("admin_user_id")
+  adminUser   AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+  action      String
+  entityType  String?    @map("entity_type")
+  entityId    String?    @map("entity_id")
+  metadata    Json?
+  ip          String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─────────────────────── single-row state ───────────────────────
+
+model LicenseState {
+  id              String        @id @default("singleton")
+  licenseKey      String?       @map("license_key") // encrypted
+  instanceId      String?       @map("instance_id")
+  signedToken     String?       @map("signed_token")
+  tokenExpiresAt  DateTime?     @map("token_expires_at")
+  status          LicenseStatus @default(unactivated)
+  lastHeartbeatAt DateTime?     @map("last_heartbeat_at")
+  nextHeartbeatAt DateTime?     @map("next_heartbeat_at")
+  graceUntil      DateTime?     @map("grace_until")
+  features        Json?
+  lastError       String?       @map("last_error")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@map("license_state")
+}
+
+model AppSettings {
+  id               String   @id @default("singleton")
+  publicBaseUrl    String?  @map("public_base_url")
+  licenseServerUrl String?  @map("license_server_url")
+  setupCompleted   Boolean  @default(false) @map("setup_completed")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("app_settings")
+}

@@ -1,0 +1,372 @@
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Copy, Check } from 'lucide-react';
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  ErrorText,
+  Eyebrow,
+  Field,
+  Input,
+  Select,
+} from '../components/ui';
+import {
+  createIntegration,
+  getIntegration,
+  testChatwoot,
+  testProvider,
+  updateIntegration,
+  type IntegrationDTO,
+} from '../lib/integrations-api';
+import { ApiError } from '../lib/api-client';
+
+type TestState = { ok?: boolean; detail?: string; busy?: boolean };
+
+export default function IntegrationForm() {
+  const { id } = useParams();
+  const editing = !!id;
+  const navigate = useNavigate();
+
+  // identity / flags
+  const [name, setName] = useState('');
+  const [isEnabled, setIsEnabled] = useState(true);
+  const [providerType, setProviderType] = useState<'uazapi' | 'zapi' | 'evolution'>('uazapi');
+
+  // provider (uazapi)
+  const [uBaseUrl, setUBaseUrl] = useState('');
+  const [uToken, setUToken] = useState('');
+  const [uNumber, setUNumber] = useState('');
+  // provider (zapi)
+  const [zInstance, setZInstance] = useState('');
+  const [zToken, setZToken] = useState('');
+  const [zClientToken, setZClientToken] = useState('');
+  // provider (evolution)
+  const [eBaseUrl, setEBaseUrl] = useState('');
+  const [eApiKey, setEApiKey] = useState('');
+  const [eInstance, setEInstance] = useState('');
+
+  // chatwoot
+  const [cwBaseUrl, setCwBaseUrl] = useState('');
+  const [cwToken, setCwToken] = useState('');
+  const [cwAccount, setCwAccount] = useState('');
+  const [cwInbox, setCwInbox] = useState('');
+
+  // flags
+  const [convStatus, setConvStatus] = useState<'open' | 'resolved' | 'pending'>('open');
+  const [reabrir, setReabrir] = useState(true);
+  const [desconsiderar, setDesconsiderar] = useState(true);
+  const [assinar, setAssinar] = useState(true);
+  const [country, setCountry] = useState('BR');
+
+  const [loaded, setLoaded] = useState<IntegrationDTO | null>(null);
+  const [cwTest, setCwTest] = useState<TestState>({});
+  const [provTest, setProvTest] = useState<TestState>({});
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing || !id) return;
+    getIntegration(id).then((it) => {
+      setLoaded(it);
+      setName(it.name);
+      setIsEnabled(it.isEnabled);
+      setCwBaseUrl(it.chatwoot.baseUrl);
+      setCwAccount(it.chatwoot.accountId);
+      setCwInbox(it.chatwoot.inboxName);
+      setConvStatus(it.flags.conversationStatus);
+      setReabrir(it.flags.reabrirConversa);
+      setDesconsiderar(it.flags.desconsiderarGrupo);
+      setAssinar(it.flags.assinarMensagem);
+      setCountry(it.flags.defaultCountry);
+    });
+  }, [editing, id]);
+
+  const providerConfig = () => {
+    if (providerType === 'zapi')
+      return { provider: 'zapi', instance: zInstance, token: zToken, clientToken: zClientToken };
+    if (providerType === 'evolution')
+      return { provider: 'evolution', baseUrl: eBaseUrl, apiKey: eApiKey, instance: eInstance };
+    return { provider: 'uazapi', baseUrl: uBaseUrl, token: uToken, whatsappNumber: uNumber };
+  };
+
+  const providerConfigComplete = () => {
+    if (providerType === 'zapi') return !!(zInstance && zToken && zClientToken);
+    if (providerType === 'evolution') return !!(eBaseUrl && eApiKey && eInstance);
+    return !!(uBaseUrl && uToken && uNumber);
+  };
+
+  async function runCwTest() {
+    setCwTest({ busy: true });
+    try {
+      const r = await testChatwoot({
+        chatwootBaseUrl: cwBaseUrl,
+        chatwootApiToken: cwToken,
+        chatwootAccountId: cwAccount,
+      });
+      setCwTest(r);
+    } catch (e) {
+      setCwTest({ ok: false, detail: (e as Error).message });
+    }
+  }
+
+  async function runProvTest() {
+    setProvTest({ busy: true });
+    try {
+      const r = await testProvider(providerConfig());
+      setProvTest(r);
+    } catch (e) {
+      setProvTest({ ok: false, detail: (e as Error).message });
+    }
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      if (editing && id) {
+        const body: Record<string, unknown> = {
+          name,
+          isEnabled,
+          chatwootBaseUrl: cwBaseUrl,
+          chatwootAccountId: cwAccount,
+          chatwootInboxName: cwInbox,
+          conversationStatus: convStatus,
+          reabrirConversa: reabrir,
+          desconsiderarGrupo: desconsiderar,
+          assinarMensagem: assinar,
+          defaultCountry: country,
+        };
+        if (cwToken) body.chatwootApiToken = cwToken;
+        if (providerConfigComplete()) {
+          body.providerType = providerType;
+          body.providerConfig = providerConfig();
+        }
+        await updateIntegration(id, body);
+      } else {
+        await createIntegration({
+          name,
+          isEnabled,
+          providerType,
+          providerConfig: providerConfig(),
+          chatwootBaseUrl: cwBaseUrl,
+          chatwootApiToken: cwToken,
+          chatwootAccountId: cwAccount,
+          chatwootInboxName: cwInbox,
+          conversationStatus: convStatus,
+          reabrirConversa: reabrir,
+          desconsiderarGrupo: desconsiderar,
+          assinarMensagem: assinar,
+          defaultCountry: country,
+        });
+      }
+      navigate('/integrations');
+    } catch (err) {
+      if (err instanceof ApiError) setError(`Erro: ${err.code}`);
+      else setError('Falha ao salvar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="max-w-3xl">
+      <div className="mb-10">
+        <Eyebrow>Integrações</Eyebrow>
+        <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">
+          {editing ? 'Editar integração' : 'Nova integração'}
+        </h1>
+      </div>
+
+      <form onSubmit={save} className="space-y-6">
+        <Card>
+          <h3 className="text-sm font-medium text-white mb-5">Geral</h3>
+          <div className="space-y-4">
+            <Field label="Nome">
+              <Input value={name} onChange={(e) => setName(e.target.value)} required />
+            </Field>
+            <Field label="Provider">
+              <Select
+                value={providerType}
+                onChange={(e) => setProviderType(e.target.value as 'uazapi' | 'zapi' | 'evolution')}
+              >
+                <option value="uazapi">uazapi</option>
+                <option value="zapi">zapi</option>
+                <option value="evolution">evolution-go</option>
+              </Select>
+            </Field>
+            <Checkbox label="Ativada" checked={isEnabled} onChange={setIsEnabled} />
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-sm font-medium text-white">Provider · {providerType}</h3>
+            <div className="flex items-center gap-3">
+              {provTest.ok !== undefined && (
+                <Badge tone={provTest.ok ? 'ok' : 'error'}>
+                  {provTest.ok ? 'conectado' : provTest.detail ?? 'falhou'}
+                </Badge>
+              )}
+              <Button type="button" variant="ghost" onClick={runProvTest} loading={provTest.busy}>
+                Testar
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {providerType === 'uazapi' && (
+              <>
+                <Field label="Base URL">
+                  <Input value={uBaseUrl} onChange={(e) => setUBaseUrl(e.target.value)} placeholder="https://sua.uazapi.com" />
+                </Field>
+                <Field label="Token">
+                  <Input value={uToken} onChange={(e) => setUToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                </Field>
+                <Field label="Número do WhatsApp" hint="Somente dígitos (com DDI).">
+                  <Input value={uNumber} onChange={(e) => setUNumber(e.target.value)} placeholder="5541999999999" />
+                </Field>
+              </>
+            )}
+            {providerType === 'zapi' && (
+              <>
+                <Field label="Instância">
+                  <Input value={zInstance} onChange={(e) => setZInstance(e.target.value)} />
+                </Field>
+                <Field label="Token da instância">
+                  <Input value={zToken} onChange={(e) => setZToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                </Field>
+                <Field label="Client-Token">
+                  <Input value={zClientToken} onChange={(e) => setZClientToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                </Field>
+              </>
+            )}
+            {providerType === 'evolution' && (
+              <>
+                <Field label="Base URL">
+                  <Input value={eBaseUrl} onChange={(e) => setEBaseUrl(e.target.value)} placeholder="https://sua.evolution.com" />
+                </Field>
+                <Field label="API Key">
+                  <Input value={eApiKey} onChange={(e) => setEApiKey(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+                </Field>
+                <Field label="Instância">
+                  <Input value={eInstance} onChange={(e) => setEInstance(e.target.value)} />
+                </Field>
+              </>
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center justify-between mb-5">
+            <h3 className="text-sm font-medium text-white">Chatwoot</h3>
+            <div className="flex items-center gap-3">
+              {cwTest.ok !== undefined && (
+                <Badge tone={cwTest.ok ? 'ok' : 'error'}>
+                  {cwTest.ok ? 'conectado' : cwTest.detail ?? 'falhou'}
+                </Badge>
+              )}
+              <Button type="button" variant="ghost" onClick={runCwTest} loading={cwTest.busy}>
+                Testar
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <Field label="Base URL">
+              <Input value={cwBaseUrl} onChange={(e) => setCwBaseUrl(e.target.value)} placeholder="https://chat.seudominio.com" />
+            </Field>
+            <Field label="API Token">
+              <Input value={cwToken} onChange={(e) => setCwToken(e.target.value)} placeholder={editing ? '•••• (em branco = inalterado)' : ''} />
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Account ID">
+                <Input value={cwAccount} onChange={(e) => setCwAccount(e.target.value)} placeholder="1" />
+              </Field>
+              <Field label="Nome do Inbox">
+                <Input value={cwInbox} onChange={(e) => setCwInbox(e.target.value)} placeholder="WhatsApp" />
+              </Field>
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <h3 className="text-sm font-medium text-white mb-5">Comportamento</h3>
+          <div className="space-y-4">
+            <Field label="Status inicial da conversa">
+              <Select value={convStatus} onChange={(e) => setConvStatus(e.target.value as any)}>
+                <option value="open">open</option>
+                <option value="pending">pending</option>
+                <option value="resolved">resolved</option>
+              </Select>
+            </Field>
+            <Field label="País padrão (ISO-2)">
+              <Input value={country} onChange={(e) => setCountry(e.target.value.toUpperCase())} maxLength={2} />
+            </Field>
+            <Checkbox label="Reabrir conversas resolvidas" checked={reabrir} onChange={setReabrir} />
+            <Checkbox label="Desconsiderar grupos" checked={desconsiderar} onChange={setDesconsiderar} />
+            <Checkbox label="Assinar mensagens com nome do agente" checked={assinar} onChange={setAssinar} />
+          </div>
+        </Card>
+
+        {editing && loaded && <WebhookUrls urls={loaded.webhookUrls} />}
+
+        <ErrorText>{error}</ErrorText>
+
+        <div className="flex items-center gap-4">
+          <Button type="submit" loading={saving}>
+            {editing ? 'Salvar' : 'Criar integração'}
+          </Button>
+          <button
+            type="button"
+            onClick={() => navigate('/integrations')}
+            className="text-sm text-neutral-400 hover:text-white"
+          >
+            Cancelar
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function WebhookUrls({ urls }: { urls: { provider: string; chatwoot: string } }) {
+  return (
+    <Card>
+      <h3 className="text-sm font-medium text-white mb-1">URLs de webhook</h3>
+      <p className="text-xs text-neutral-500 mb-5">
+        Cole a URL "provider" na sua API não-oficial. A URL do Chatwoot é configurada
+        automaticamente no inbox.
+      </p>
+      <div className="space-y-3">
+        <CopyRow label="Provider" value={urls.provider} />
+        <CopyRow label="Chatwoot" value={urls.chatwoot} />
+      </div>
+    </Card>
+  );
+}
+
+function CopyRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div>
+      <p className="text-[11px] uppercase tracking-[0.2em] text-neutral-500 mb-2">{label}</p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 bg-[#121212] border border-white/5 rounded-xl px-4 py-2.5 text-xs text-neutral-300 overflow-x-auto">
+          {value}
+        </code>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(value);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="w-10 h-10 rounded-xl bg-[#1A1A1D] border border-white/5 flex items-center justify-center text-neutral-400 hover:text-white transition-colors"
+        >
+          {copied ? <Check size={16} className="text-blue-400" /> : <Copy size={16} />}
+        </button>
+      </div>
+    </div>
+  );
+}
