@@ -60,8 +60,21 @@ sudo bash install.sh uninstall   # remove a stack (pergunta se apaga os volumes)
 
 ## 🖥️ Rodar localmente (Docker Desktop)
 
-Sem Swarm, puxando a imagem pública do Hub. A porta do painel é **configurável**
-(padrão `8789`, pouco comum, para não conflitar com outras apps).
+> **Importante:** o instalador padrão (`curl … | sudo bash`) é para **produção
+> com Docker Swarm + Traefik/TLS** (precisa de domínio público) e **não** serve
+> para uso local. Para local, use **`install.sh local`** ou o compose abaixo.
+
+**Opção A — um comando (`install.sh local`):** Compose puro, sem Swarm. Pergunta
+a porta, gera os segredos e o `.env`, e sobe tudo:
+
+```bash
+git clone https://github.com/ericorenato/wootrico-v2 && cd wootrico-v2
+bash install.sh local
+# painel em http://localhost:8789 (ou a porta que você escolher)
+```
+
+**Opção B — compose manual:** puxando a imagem pública do Hub. A porta do painel
+é **configurável** (padrão `8789`, pouco comum, para não conflitar com outras apps).
 
 ```bash
 cp .env.example .env
@@ -75,22 +88,21 @@ docker compose -f docker-compose.local.yml up -d   # puxa ericoautomacao/wootric
 
 Trocar a porta sem editar arquivo: `PANEL_PORT=9123 docker compose -f docker-compose.local.yml up -d`.
 
-### Rodar em OUTRA máquina (só Docker, sem código)
+### Rodar em OUTRA máquina
 
-Como a imagem é pública, basta o Docker + 2 arquivos (compose + .env):
+Em qualquer máquina com Docker Desktop, repita a **Opção A** (`bash install.sh
+local`). A imagem é pública, então não precisa de código nem build.
 
+- Na própria máquina: `http://localhost:8789`
+- De outros dispositivos na rede: `http://IP-DA-MAQUINA:8789` (libere a porta no firewall).
+
+Comandos úteis (local):
 ```bash
-mkdir wootrico && cd wootrico
-# baixe os arquivos do repositório (ou copie-os via git clone):
-git clone https://github.com/ericorenato/wootrico-v2 .       # ou copie só os 2 arquivos abaixo
-cp .env.example .env                                          # edite PANEL_PORT, segredos, LICENSE_REQUIRED=false
-docker compose -f docker-compose.local.yml up -d
-# acesse http://IP-DA-MAQUINA:8789  (ou localhost:8789 na própria máquina)
+docker compose -f docker-compose.local.yml logs -f app   # logs
+docker compose -f docker-compose.local.yml down          # parar
+docker compose -f docker-compose.local.yml pull && \
+  docker compose -f docker-compose.local.yml up -d        # atualizar para a última imagem
 ```
-
-> Acessível de outros dispositivos na rede: `http://IP-DA-MAQUINA:8789` (libere a
-> porta no firewall). Para buildar sua própria imagem em vez de puxar, descomente
-> o `build:` no `docker-compose.local.yml`.
 
 ## 🧩 Arquitetura
 
