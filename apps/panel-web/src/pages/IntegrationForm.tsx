@@ -53,7 +53,7 @@ export default function IntegrationForm() {
   const [cwBaseUrl, setCwBaseUrl] = useState('');
   const [cwToken, setCwToken] = useState('');
   const [cwAccount, setCwAccount] = useState('');
-  const [cwInbox, setCwInbox] = useState('');
+  const [cwInbox, setCwInbox] = useState('wootrico');
 
   // flags
   const [convStatus, setConvStatus] = useState<'open' | 'resolved' | 'pending'>('open');
@@ -89,6 +89,7 @@ export default function IntegrationForm() {
       setLoaded(it);
       setName(it.name);
       setIsEnabled(it.isEnabled);
+      setProviderType(it.providerType);
       setCwBaseUrl(it.chatwoot.baseUrl);
       setCwAccount(it.chatwoot.accountId);
       setCwInbox(it.chatwoot.inboxName);
@@ -153,9 +154,29 @@ export default function IntegrationForm() {
     }
   }
 
+  function validate(): string | null {
+    const missing: string[] = [];
+    if (!name.trim()) missing.push('Nome');
+    if (!cwBaseUrl.trim()) missing.push('Chatwoot Base URL');
+    if (!cwAccount.trim()) missing.push('Account ID');
+    if (!cwInbox.trim()) missing.push('Nome do Inbox');
+    // On create the Chatwoot token and provider credentials are required; on edit
+    // blank fields mean "keep the stored value".
+    if (!editing) {
+      if (!cwToken.trim()) missing.push('Chatwoot API Token');
+      if (!providerConfigComplete()) missing.push(`Credenciais do provider (${providerType})`);
+    }
+    return missing.length ? `Preencha os campos obrigatórios: ${missing.join(', ')}.` : null;
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setError('');
+    const invalid = validate();
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
     setSaving(true);
     try {
       let saved;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Plug } from 'lucide-react';
+import { Plus, Trash2, Plug, Pencil } from 'lucide-react';
 import { Badge, Button, Card, Eyebrow } from '../components/ui';
 import { deleteIntegration, listIntegrations, type IntegrationDTO } from '../lib/integrations-api';
 
@@ -69,13 +69,22 @@ export default function Integrations() {
                     {it.chatwoot.inboxId ? ` (#${it.chatwoot.inboxId})` : ''}
                   </p>
                 </div>
-                <button
-                  onClick={() => remove(it.id)}
-                  className="text-neutral-500 hover:text-red-400 transition-colors"
-                  title="Remover"
-                >
-                  <Trash2 size={16} />
-                </button>
+                <div className="flex items-center gap-3">
+                  <Link
+                    to={`/integrations/${it.id}`}
+                    className="text-neutral-500 hover:text-white transition-colors"
+                    title="Editar"
+                  >
+                    <Pencil size={16} />
+                  </Link>
+                  <button
+                    onClick={() => remove(it.id)}
+                    className="text-neutral-500 hover:text-red-400 transition-colors"
+                    title="Remover"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
             </Card>
           ))}
