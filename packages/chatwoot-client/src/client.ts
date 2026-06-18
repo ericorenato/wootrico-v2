@@ -176,14 +176,49 @@ export class ChatwootClient {
     identifier: string;
     phoneNumber?: string;
   }): Promise<any> {
-    const matches = await this.searchContact(opts.identifier);
-    const existing = matches.find(
-      (c) =>
-        c?.identifier === opts.identifier ||
-        (opts.phoneNumber && c?.phone_number === opts.phoneNumber),
-    );
+    const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
+    const wantPhone = opts.phoneNumber && E164.test(opts.phoneNumber) ? digits(opts.phoneNumber) : '';
+
+    // 1) Try by identifier (canonical UUID).
+    const byId = await this.searchContact(opts.identifier);
+    let existing = byId.find((c) => c?.identifier === opts.identifier);
+
+    // 2) Fall back to phone — the contact may already exist in Chatwoot with a
+    //    different (or no) identifier. Chatwoot enforces phone uniqueness, so
+    //    creating with a taken phone returns 422; we must REUSE it instead.
+    if (!existing && wantPhone) {
+      const byPhone = await this.searchContact(opts.phoneNumber!);
+      existing = byPhone.find((c) => digits(c?.phone_number) === wantPhone);
+      if (existing) await this.adoptIdentifier(existing, opts.identifier);
+    }
     if (existing) return existing;
-    return this.createContact(opts);
+
+    // 3) Create — but if the phone was taken (race / unsearchable), re-find it.
+    try {
+      return await this.createContact(opts);
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 422 && wantPhone) {
+        const byPhone = await this.searchContact(opts.phoneNumber!);
+        const found = byPhone.find((c) => digits(c?.phone_number) === wantPhone);
+        if (found) {
+          await this.adoptIdentifier(found, opts.identifier);
+          return found;
+        }
+      }
+      throw err;
+    }
+  }
+
+  /** Set the canonical identifier on an existing contact so future lookups by
+   *  identifier succeed. Non-fatal: the flow can proceed using the contact id. */
+  private async adoptIdentifier(contact: any, identifier: string): Promise<void> {
+    if (!contact?.id || contact.identifier === identifier) return;
+    try {
+      await this.http.put(this.acc(`/contacts/${contact.id}`), { identifier });
+      contact.identifier = identifier;
+    } catch {
+      /* identifier may be taken by another contact — ignore, use the id */
+    }
   }
 
   /**
