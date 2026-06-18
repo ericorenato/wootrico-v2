@@ -8,8 +8,9 @@ const SYNC_TTL = 7 * 24 * 3600; // a week
 interface SyncedMeta {
   name?: string;
   phone?: string;
-  avatar?: boolean;
-  avatarTried?: string;
+  avatar?: boolean; // an avatar has been applied at least once
+  avatarUrl?: string; // last avatar URL applied (to detect changes)
+  avatarTried?: string; // last target we fetched the avatar for
 }
 
 /**
@@ -30,7 +31,8 @@ export async function syncContactMeta(opts: {
   provider: WhatsAppProvider;
   name: string | null;
   phoneE164?: string;
-  avatarTarget?: string | null; // phone/jid used to fetch the avatar
+  avatarUrl?: string | null; // avatar already present in the payload (e.g. uazapi)
+  avatarTarget?: string | null; // phone/jid used to fetch the avatar (e.g. evolution)
 }): Promise<void> {
   const key = `cw:meta:${opts.integrationId}:${hmac(opts.identifier)}`;
   const prev = (await cacheGet<SyncedMeta>(key)) ?? {};
@@ -39,20 +41,28 @@ export async function syncContactMeta(opts: {
   if (opts.name && opts.name !== prev.name) update.name = opts.name;
   if (opts.phoneE164 && opts.phoneE164 !== prev.phone) update.phoneNumber = opts.phoneE164;
 
-  // Fetch the avatar at most once per addressing target (so we retry once the
-  // number becomes known, but never hammer the provider every message).
+  // Avatar: prefer one already in the payload (uazapi sends senderPhoto). When
+  // it isn't there (Evolution), fetch it from the provider — at most once per
+  // addressing target so we retry when the number becomes known.
   let avatarDone = prev.avatar === true;
-  const shouldTryAvatar =
+  let avatarUrl: string | undefined;
+  let avatarTried = prev.avatarTried;
+  if (opts.avatarUrl && opts.avatarUrl !== prev.avatarUrl) {
+    avatarUrl = opts.avatarUrl;
+  } else if (
+    !opts.avatarUrl &&
     !avatarDone &&
-    !!opts.avatarTarget &&
+    opts.avatarTarget &&
     opts.avatarTarget !== prev.avatarTried &&
-    typeof opts.provider.fetchProfilePictureUrl === 'function';
-  if (shouldTryAvatar) {
-    const url = await opts.provider.fetchProfilePictureUrl!(opts.avatarTarget!).catch(() => null);
-    if (url) {
-      update.avatarUrl = url;
-      avatarDone = true;
-    }
+    typeof opts.provider.fetchProfilePictureUrl === 'function'
+  ) {
+    avatarTried = opts.avatarTarget;
+    const url = await opts.provider.fetchProfilePictureUrl(opts.avatarTarget).catch(() => null);
+    if (url) avatarUrl = url;
+  }
+  if (avatarUrl) {
+    update.avatarUrl = avatarUrl;
+    avatarDone = true;
   }
 
   if (Object.keys(update).length) {
@@ -67,7 +77,8 @@ export async function syncContactMeta(opts: {
       name: opts.name ?? prev.name,
       phone: opts.phoneE164 ?? prev.phone,
       avatar: avatarDone,
-      avatarTried: opts.avatarTarget ?? prev.avatarTried,
+      avatarUrl: avatarUrl ?? prev.avatarUrl,
+      avatarTried,
     } satisfies SyncedMeta,
     SYNC_TTL,
   );

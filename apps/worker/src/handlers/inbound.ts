@@ -108,6 +108,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         provider,
         name: norm.name ?? norm.senderName ?? null,
         phoneE164: phoneNumber,
+        avatarUrl: norm.senderPhoto ?? null,
         avatarTarget: sendTarget,
       });
     }
