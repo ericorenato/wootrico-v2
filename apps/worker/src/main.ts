@@ -1,5 +1,6 @@
 import { logger, AMQP } from '@wootrico/config';
 import { prisma } from '@wootrico/db';
+import { applyConnectionOverrides } from '@wootrico/db/conn';
 import { consume, closeQueue } from '@wootrico/queue';
 import { closeRedis } from '@wootrico/cache';
 import { assertLicenseActive, runHeartbeat } from '@wootrico/license-client';
@@ -9,8 +10,15 @@ import { runCleanup } from './jobs/cleanup.js';
 
 const HEARTBEAT_MS = 6 * 60 * 60 * 1000; // 6h
 const CLEANUP_MS = 60 * 60 * 1000; // 1h
+const RESTART_POLL_MS = 15 * 1000; // 15s — watch for a panel-triggered restart
 
 async function main() {
+  // Apply stored RabbitMQ/Redis overrides before opening any connection.
+  await applyConnectionOverrides().catch((err) =>
+    logger.warn({ err }, 'failed to apply connection overrides; using env'),
+  );
+  const bootAt = Date.now();
+
   await consume(
     AMQP.queues.inbound,
     async (job) => {
@@ -47,12 +55,28 @@ async function main() {
   await runHeartbeat().catch((err) => logger.warn({ err }, 'initial heartbeat failed'));
   await runCleanup().catch((err) => logger.warn({ err }, 'initial cleanup failed'));
 
+  // Restart watcher: when the panel requests a restart (to apply new connection
+  // settings), self-exit so Swarm's restart_policy recreates us with the
+  // overrides re-read at boot. We only act on requests made AFTER our own boot.
+  const restartTimer = setInterval(() => {
+    void prisma.appSettings
+      .findUnique({ where: { id: 'singleton' }, select: { restartRequestedAt: true } })
+      .then((s) => {
+        if (s?.restartRequestedAt && s.restartRequestedAt.getTime() > bootAt) {
+          logger.info('restart requested via panel — exiting for Swarm to recreate');
+          process.exit(0);
+        }
+      })
+      .catch((err) => logger.warn({ err }, 'restart poll failed'));
+  }, RESTART_POLL_MS);
+
   logger.info('worker started; consuming inbound + callback (RabbitMQ) + heartbeat/cleanup timers');
 
   const close = async (signal: string) => {
     logger.info({ signal }, 'worker shutting down');
     clearInterval(heartbeatTimer);
     clearInterval(cleanupTimer);
+    clearInterval(restartTimer);
     await closeQueue();
     await closeRedis();
     await prisma.$disconnect();

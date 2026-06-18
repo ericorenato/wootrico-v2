@@ -50,3 +50,39 @@ export interface Diagnostics {
 
 export const runDiagnostics = () =>
   api<Diagnostics>('/api/system/diagnostics', { method: 'POST' });
+
+export interface ConnService {
+  value: string;
+  running: string;
+  changed: boolean;
+  hotApply: boolean;
+}
+
+export interface ConnectionsState {
+  restartRequestedAt: string | null;
+  services: {
+    postgres: ConnService;
+    rabbitmq: ConnService;
+    redis: ConnService;
+  };
+}
+
+export interface SaveConnectionsResult {
+  ok: boolean;
+  results: Record<string, { ok: boolean; detail?: string }>;
+}
+
+export const getConnections = () => api<ConnectionsState>('/api/system/connections');
+
+export const saveConnections = (body: {
+  rabbitmqUrl?: string;
+  redisUrl?: string;
+  databaseUrl?: string;
+}) =>
+  api<SaveConnectionsResult>('/api/system/connections', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+
+export const restartSystem = () =>
+  api<{ ok: boolean }>('/api/system/restart', { method: 'POST' });

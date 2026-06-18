@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Card, Eyebrow } from '../components/ui';
+import { Eye, EyeOff } from 'lucide-react';
+import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import {
+  getConnections,
   getSystemInfo,
+  restartSystem,
   runDiagnostics,
+  saveConnections,
+  type ConnectionsState,
   type Diagnostics,
+  type SaveConnectionsResult,
   type SystemInfo,
 } from '../lib/system-api';
 
@@ -140,6 +146,9 @@ export default function System() {
             <ConnRow label="Redis" r={diag?.redis} />
           </Card>
 
+          {/* Configuração de conexões (editável) */}
+          <ConnectionsCard />
+
           {/* Licença */}
           <Card>
             <h3 className="text-sm font-medium text-white mb-4">Licença</h3>
@@ -204,5 +213,185 @@ export default function System() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Secret field: hidden by default, with an eye toggle to reveal/edit. */
+function SecretInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="pr-12"
+        autoComplete="off"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white transition-colors"
+        title={show ? 'Ocultar' : 'Mostrar'}
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
+
+function ConnectionsCard() {
+  const [conn, setConn] = useState<ConnectionsState | null>(null);
+  const [pg, setPg] = useState('');
+  const [rb, setRb] = useState('');
+  const [rd, setRd] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState<SaveConnectionsResult | null>(null);
+  const [error, setError] = useState('');
+  const [restarting, setRestarting] = useState(false);
+
+  async function load() {
+    const c = await getConnections();
+    setConn(c);
+    setPg(c.services.postgres.value);
+    setRb(c.services.rabbitmq.value);
+    setRd(c.services.redis.value);
+  }
+
+  useEffect(() => {
+    load().catch(() => setError('Falha ao carregar as conexões.'));
+  }, []);
+
+  const pending = !!conn && Object.values(conn.services).some((s) => s.changed);
+
+  async function save() {
+    if (!conn) return;
+    setError('');
+    setRes(null);
+    const body: { rabbitmqUrl?: string; redisUrl?: string; databaseUrl?: string } = {};
+    if (pg !== conn.services.postgres.value) body.databaseUrl = pg;
+    if (rb !== conn.services.rabbitmq.value) body.rabbitmqUrl = rb;
+    if (rd !== conn.services.redis.value) body.redisUrl = rd;
+    if (Object.keys(body).length === 0) {
+      setError('Nenhuma alteração para salvar.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await saveConnections(body);
+      setRes(r);
+      if (r.ok) await load(); // refresh "changed/pending" flags
+    } catch {
+      setError('Falha ao salvar/testar as conexões.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restart() {
+    setRestarting(true);
+    try {
+      await restartSystem();
+    } catch {
+      /* the server is going down — expected */
+    }
+    // App restarts via Swarm; reload the panel after it should be back up.
+    setTimeout(() => window.location.reload(), 8000);
+  }
+
+  if (!conn) {
+    return (
+      <Card>
+        <h3 className="text-sm font-medium text-white mb-2">Conexões (configuração)</h3>
+        <p className="text-sm text-neutral-500">{error || 'Carregando…'}</p>
+      </Card>
+    );
+  }
+
+  const field = (
+    label: string,
+    svc: keyof ConnectionsState['services'],
+    value: string,
+    setValue: (v: string) => void,
+  ) => {
+    const s = conn.services[svc];
+    const r = res?.results?.[svc === 'postgres' ? 'databaseUrl' : svc === 'rabbitmq' ? 'rabbitmqUrl' : 'redisUrl'];
+    return (
+      <div className="space-y-2">
+        <Field label={label}>
+          <SecretInput value={value} onChange={setValue} placeholder="connection string" />
+        </Field>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+          <span>em uso: <code className="text-neutral-400">{s.running || '—'}</code></span>
+          {s.changed && <Badge tone="neutral">alterado — pendente de reinício</Badge>}
+          {!s.hotApply && <Badge tone="neutral">requer redeploy (instalador)</Badge>}
+          {r && <Badge tone={r.ok ? 'ok' : 'error'}>{r.ok ? 'testado: ok' : `falhou: ${r.detail ?? ''}`}</Badge>}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <Card>
+      <div className="mb-4">
+        <h3 className="text-sm font-medium text-white">Conexões (configuração)</h3>
+        <p className="text-xs text-neutral-500 mt-1">
+          Edite as strings de conexão. Ao salvar, cada valor é <b>testado antes de aplicar</b>; se
+          o teste falhar, nada é gravado. RabbitMQ e Redis são aplicados ao <b>reiniciar</b>; o
+          Postgres exige redeploy pelo instalador.
+        </p>
+      </div>
+
+      <div className="space-y-5">
+        {field('Postgres (DATABASE_URL)', 'postgres', pg, setPg)}
+        {field('RabbitMQ (RABBITMQ_URL)', 'rabbitmq', rb, setRb)}
+        {field('Redis (REDIS_URL)', 'redis', rd, setRd)}
+      </div>
+
+      <ErrorText>{error}</ErrorText>
+
+      {pending && (
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <p className="text-sm text-amber-200">
+            Há alterações testadas que <b>ainda não foram aplicadas</b>. Elas entram em vigor ao
+            reiniciar a aplicação.
+          </p>
+          <div className="flex items-center gap-4 mt-3">
+            <Button type="button" onClick={restart} loading={restarting}>
+              Reiniciar agora
+            </Button>
+            <span className="text-xs text-neutral-400">
+              Ou reinicie depois — esta marcação permanece até aplicar.
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-4 mt-5">
+        <Button type="button" onClick={save} loading={busy}>
+          Salvar e testar
+        </Button>
+        {!pending && (
+          <button
+            type="button"
+            onClick={restart}
+            disabled={restarting}
+            className="text-sm text-neutral-400 hover:text-white disabled:opacity-50"
+          >
+            {restarting ? 'reiniciando…' : 'Reiniciar aplicação'}
+          </button>
+        )}
+      </div>
+    </Card>
   );
 }

@@ -4,9 +4,19 @@ import { env } from '@wootrico/config';
 
 let redis: Redis | undefined;
 
+// Optional runtime override of the Redis URL (set at boot from DB settings,
+// taking precedence over the env var). Empty/undefined falls back to env.
+let urlOverride: string | undefined;
+export function setRedisUrl(url?: string): void {
+  urlOverride = url && url.trim() ? url.trim() : undefined;
+}
+export function effectiveRedisUrl(): string {
+  return urlOverride ?? env.REDIS_URL;
+}
+
 export function getRedis(): Redis {
   if (redis) return redis;
-  redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null, lazyConnect: false });
+  redis = new Redis(effectiveRedisUrl(), { maxRetriesPerRequest: null, lazyConnect: false });
   return redis;
 }
 

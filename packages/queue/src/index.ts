@@ -15,9 +15,19 @@ export interface WebhookJob {
 let connection: ChannelModel | undefined;
 let pubChannel: Channel | undefined;
 
+// Optional runtime override of the broker URL (set at boot from DB settings,
+// taking precedence over the env var). Empty/undefined falls back to env.
+let urlOverride: string | undefined;
+export function setRabbitUrl(url?: string): void {
+  urlOverride = url && url.trim() ? url.trim() : undefined;
+}
+export function effectiveRabbitUrl(): string {
+  return urlOverride ?? env.RABBITMQ_URL;
+}
+
 export async function getConnection(): Promise<ChannelModel> {
   if (connection) return connection;
-  connection = await amqplib.connect(env.RABBITMQ_URL);
+  connection = await amqplib.connect(effectiveRabbitUrl());
   connection.on('error', (err) => logger.error({ err }, 'amqp connection error'));
   connection.on('close', () => {
     logger.warn('amqp connection closed');

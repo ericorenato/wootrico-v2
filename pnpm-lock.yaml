@@ -269,6 +269,15 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
+      '@wootrico/cache':
+        specifier: workspace:*
+        version: link:../cache
+      '@wootrico/config':
+        specifier: workspace:*
+        version: link:../config
+      '@wootrico/queue':
+        specifier: workspace:*
+        version: link:../queue
       prisma:
         specifier: ^5.22.0
         version: 5.22.0

@@ -274,6 +274,14 @@ model AppSettings {
   publicBaseUrl    String?  @map("public_base_url")
   licenseServerUrl String?  @map("license_server_url")
   setupCompleted   Boolean  @default(false) @map("setup_completed")
+  // Optional connection-string overrides (encrypted). When set, they take
+  // precedence over the env vars at boot. Applied on app/worker restart.
+  rabbitmqUrl        String?   @map("rabbitmq_url")
+  redisUrl           String?   @map("redis_url")
+  databaseUrl        String?   @map("database_url")
+  // Bumped by the panel's "restart" action; the worker polls this to self-exit
+  // (Swarm restart_policy brings both back, re-reading the overrides above).
+  restartRequestedAt DateTime? @map("restart_requested_at")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

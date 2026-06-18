@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./conn": "./src/conn.ts"
   },
   "scripts": {
     "generate": "prisma generate",
@@ -17,6 +18,9 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "@wootrico/cache": "workspace:*",
+    "@wootrico/config": "workspace:*",
+    "@wootrico/queue": "workspace:*",
     "prisma": "^5.22.0"
   },
   "devDependencies": {
