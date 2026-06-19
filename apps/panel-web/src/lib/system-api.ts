@@ -118,8 +118,17 @@ export interface StatsBucket {
   sent: number;
 }
 
+export type ProviderType = 'evolution' | 'uazapi' | 'zapi';
+
+export interface ProviderSplit {
+  provider: string;
+  received: number;
+  sent: number;
+}
+
 export interface SystemStats {
   range: '24h' | '7d';
+  provider: ProviderType | null;
   since: string;
   buckets: StatsBucket[];
   totals: {
@@ -130,10 +139,17 @@ export interface SystemStats {
     discarded: number;
   };
   byEventType: Array<{ source: string; eventType: string | null; n: number }>;
+  byProvider: ProviderSplit[];
 }
 
-export const getSystemStats = (range: '24h' | '7d' = '24h') =>
-  api<SystemStats>(`/api/system/stats?range=${range}`);
+export const getSystemStats = (
+  range: '24h' | '7d' = '24h',
+  provider?: ProviderType,
+) => {
+  const p = new URLSearchParams({ range });
+  if (provider) p.set('provider', provider);
+  return api<SystemStats>(`/api/system/stats?${p.toString()}`);
+};
 
 export const getLogs = (opts: { limit?: number; before?: string; kind?: 'audit' | 'webhook' } = {}) => {
   const p = new URLSearchParams();

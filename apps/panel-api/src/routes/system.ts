@@ -375,25 +375,34 @@ export default async function systemRoutes(app: FastifyInstance) {
   // (source=chatwoot, message_created), plus accepted/discarded totals and a
   // breakdown by event type. Powers the "Visão geral" charts.
   app.get('/api/system/stats', guard, async (req) => {
-    const q = req.query as { range?: string };
+    const q = req.query as { range?: string; provider?: string };
     const range = q.range === '7d' ? '7d' : '24h';
     const unit = range === '7d' ? 'day' : 'hour';
     const stepMs = range === '7d' ? 86_400_000 : 3_600_000;
     const spanMs = range === '7d' ? 7 * 86_400_000 : 24 * 3_600_000;
     const since = new Date(Date.now() - spanMs);
 
+    // Optional provider filter (evolution/uazapi/zapi) — joins webhook events
+    // to their integration's provider type.
+    const provider = ['evolution', 'uazapi', 'zapi'].includes(q.provider ?? '')
+      ? q.provider
+      : undefined;
+    const provFilter = provider ? `AND i.provider_type::text = $2` : '';
+    const params: unknown[] = provider ? [since, provider] : [since];
+
     // Truncate to UTC so DB buckets line up with the ones we generate in JS.
     const truncBuckets = await app.prisma.$queryRawUnsafe<
       Array<{ bucket: Date; received: number; sent: number }>
     >(
-      `SELECT date_trunc('${unit}', received_at AT TIME ZONE 'UTC') AS bucket,
-          count(*) FILTER (WHERE source = 'provider')::int AS received,
-          count(*) FILTER (WHERE source = 'chatwoot' AND event_type = 'message_created')::int AS sent
-       FROM webhook_events
-       WHERE received_at >= $1
+      `SELECT date_trunc('${unit}', we.received_at AT TIME ZONE 'UTC') AS bucket,
+          count(*) FILTER (WHERE we.source = 'provider')::int AS received,
+          count(*) FILTER (WHERE we.source = 'chatwoot' AND we.event_type = 'message_created')::int AS sent
+       FROM webhook_events we
+       LEFT JOIN integrations i ON i.id = we.integration_id
+       WHERE we.received_at >= $1 ${provFilter}
        GROUP BY 1
        ORDER BY 1`,
-      since,
+      ...params,
     );
 
     const [totals] = await app.prisma.$queryRawUnsafe<
@@ -406,24 +415,42 @@ export default async function systemRoutes(app: FastifyInstance) {
       }>
     >(
       `SELECT count(*)::int AS events,
-          count(*) FILTER (WHERE source = 'provider')::int AS received,
-          count(*) FILTER (WHERE source = 'chatwoot' AND event_type = 'message_created')::int AS sent,
-          count(*) FILTER (WHERE accepted)::int AS accepted,
-          count(*) FILTER (WHERE NOT accepted)::int AS discarded
-       FROM webhook_events
-       WHERE received_at >= $1`,
-      since,
+          count(*) FILTER (WHERE we.source = 'provider')::int AS received,
+          count(*) FILTER (WHERE we.source = 'chatwoot' AND we.event_type = 'message_created')::int AS sent,
+          count(*) FILTER (WHERE we.accepted)::int AS accepted,
+          count(*) FILTER (WHERE NOT we.accepted)::int AS discarded
+       FROM webhook_events we
+       LEFT JOIN integrations i ON i.id = we.integration_id
+       WHERE we.received_at >= $1 ${provFilter}`,
+      ...params,
     );
 
     const byEventType = await app.prisma.$queryRawUnsafe<
       Array<{ source: string; eventType: string | null; n: number }>
     >(
-      `SELECT source, event_type AS "eventType", count(*)::int AS n
-       FROM webhook_events
-       WHERE received_at >= $1
+      `SELECT we.source, we.event_type AS "eventType", count(*)::int AS n
+       FROM webhook_events we
+       LEFT JOIN integrations i ON i.id = we.integration_id
+       WHERE we.received_at >= $1 ${provFilter}
        GROUP BY 1, 2
        ORDER BY n DESC
        LIMIT 8`,
+      ...params,
+    );
+
+    // Always computed over the full window (ignores the provider filter) so the
+    // UI can show the per-provider split: evolution / zapi / uazapi.
+    const byProvider = await app.prisma.$queryRawUnsafe<
+      Array<{ provider: string; received: number; sent: number }>
+    >(
+      `SELECT i.provider_type::text AS provider,
+          count(*) FILTER (WHERE we.source = 'provider')::int AS received,
+          count(*) FILTER (WHERE we.source = 'chatwoot' AND we.event_type = 'message_created')::int AS sent
+       FROM webhook_events we
+       JOIN integrations i ON i.id = we.integration_id
+       WHERE we.received_at >= $1
+       GROUP BY 1
+       ORDER BY 2 DESC, 3 DESC`,
       since,
     );
 
@@ -442,10 +469,12 @@ export default async function systemRoutes(app: FastifyInstance) {
 
     return {
       range,
+      provider: provider ?? null,
       since: since.toISOString(),
       buckets,
       totals: totals ?? { events: 0, received: 0, sent: 0, accepted: 0, discarded: 0 },
       byEventType,
+      byProvider,
     };
   });
 

@@ -20,11 +20,27 @@ import {
   type Diagnostics,
   type LogEntry,
   type PingResult,
+  type ProviderType,
   type SystemInfo,
   type SystemStats,
 } from '../lib/system-api';
 
 const REFRESH_MS = 20000;
+
+type ProviderFilter = 'all' | ProviderType;
+
+const PROVIDERS: { key: ProviderFilter; label: string }[] = [
+  { key: 'all', label: 'Todos' },
+  { key: 'evolution', label: 'Evolution' },
+  { key: 'zapi', label: 'Z-API' },
+  { key: 'uazapi', label: 'Uazapi' },
+];
+
+const PROVIDER_LABEL: Record<string, string> = {
+  evolution: 'Evolution',
+  zapi: 'Z-API',
+  uazapi: 'Uazapi',
+};
 
 const LIC_TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
   active: 'ok',
@@ -58,15 +74,18 @@ export default function Dashboard() {
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [range, setRange] = useState<'24h' | '7d'>('24h');
+  const [provider, setProvider] = useState<ProviderFilter>('all');
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(
-    async (r: '24h' | '7d') => {
+    async (r: '24h' | '7d', prov: ProviderFilter) => {
       setRefreshing(true);
       await Promise.all([
         getSystemInfo().then(setInfo).catch(() => {}),
         runDiagnostics().then(setDiag).catch(() => {}),
-        getSystemStats(r).then(setStats).catch(() => {}),
+        getSystemStats(r, prov === 'all' ? undefined : prov)
+          .then(setStats)
+          .catch(() => {}),
         getLogs({ limit: 7 }).then((p) => setLogs(p.entries)).catch(() => {}),
       ]);
       setRefreshing(false);
@@ -75,16 +94,16 @@ export default function Dashboard() {
   );
 
   useEffect(() => {
-    void load(range);
-  }, [load, range]);
+    void load(range, provider);
+  }, [load, range, provider]);
 
   // Auto-refresh keeps the overview "live" without manual reloads.
   const loadRef = useRef(load);
   loadRef.current = load;
   useEffect(() => {
-    const t = setInterval(() => void loadRef.current(range), REFRESH_MS);
+    const t = setInterval(() => void loadRef.current(range, provider), REFRESH_MS);
     return () => clearInterval(t);
-  }, [range]);
+  }, [range, provider]);
 
   const enabled = info?.integrations.enabled ?? 0;
   const totalInt = info?.integrations.total ?? 0;
@@ -103,7 +122,7 @@ export default function Dashboard() {
           </p>
         </div>
         <button
-          onClick={() => void load(range)}
+          onClick={() => void load(range, provider)}
           className="mt-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-neutral-300 transition-colors hover:text-white hover:border-white/20"
         >
           <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
@@ -176,25 +195,41 @@ export default function Dashboard() {
 
       {/* ── message flow chart ── */}
       <Card className="mb-4">
-        <div className="mb-5 flex items-center justify-between gap-3">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-sm font-medium text-white">Fluxo de mensagens</h2>
             <p className="mt-0.5 text-xs text-neutral-500">
-              Eventos trocados com WhatsApp e Chatwoot (sem conteúdo).
+              Eventos trocados com WhatsApp e Chatwoot (sem conteúdo)
+              {provider !== 'all' ? ` · ${PROVIDER_LABEL[provider]}` : ''}.
             </p>
           </div>
-          <div className="flex items-center gap-1 rounded-xl border border-white/5 bg-[#121212] p-1">
-            {(['24h', '7d'] as const).map((r) => (
-              <button
-                key={r}
-                onClick={() => setRange(r)}
-                className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${
-                  range === r ? 'bg-[#1A1A1D] text-white' : 'text-neutral-400 hover:text-white'
-                }`}
-              >
-                {r === '24h' ? '24 horas' : '7 dias'}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 rounded-xl border border-white/5 bg-[#121212] p-1">
+              {PROVIDERS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setProvider(p.key)}
+                  className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                    provider === p.key ? 'bg-[#1A1A1D] text-white' : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 rounded-xl border border-white/5 bg-[#121212] p-1">
+              {(['24h', '7d'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setRange(r)}
+                  className={`rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                    range === r ? 'bg-[#1A1A1D] text-white' : 'text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  {r === '24h' ? '24 horas' : '7 dias'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -215,9 +250,40 @@ export default function Dashboard() {
                 <span className="font-medium text-amber-400">{stats.totals.discarded}</span>
               </span>
             </div>
+
+            {/* per-provider split */}
+            {stats.byProvider.length > 0 && (
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {stats.byProvider.map((p) => (
+                  <button
+                    key={p.provider}
+                    onClick={() => setProvider(p.provider as ProviderFilter)}
+                    className={`rounded-xl border bg-[#121212] px-4 py-3 text-left transition-colors ${
+                      provider === p.provider
+                        ? 'border-blue-500/30'
+                        : 'border-white/5 hover:border-white/15'
+                    }`}
+                  >
+                    <p className="text-xs text-neutral-300">
+                      {PROVIDER_LABEL[p.provider] ?? p.provider}
+                    </p>
+                    <div className="mt-2 flex items-center gap-4 text-sm">
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 rounded-sm bg-emerald-400" />
+                        <span className="font-medium text-neutral-100">{p.received}</span>
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="inline-block h-2 w-2 rounded-sm bg-violet-400" />
+                        <span className="font-medium text-neutral-100">{p.sent}</span>
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </>
         ) : (
-          <div className="h-[220px] animate-pulse rounded-xl bg-white/[0.02]" />
+          <div className="h-[240px] animate-pulse rounded-xl bg-white/[0.02]" />
         )}
       </Card>
 

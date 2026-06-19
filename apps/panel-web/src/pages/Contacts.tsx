@@ -3,7 +3,7 @@ import { Download, Search, User, Users } from 'lucide-react';
 import { Button, CopyButton, Eyebrow } from '../components/ui';
 import { exportContacts, listContacts, type ContactDTO } from '../lib/contacts-api';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return '—';
@@ -65,6 +65,7 @@ export default function Contacts() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState(''); // debounced value sent to the API
+  const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
@@ -75,26 +76,29 @@ export default function Contacts() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const load = useCallback(async (p: number, q: string, append: boolean) => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await listContacts({ search: q || undefined, page: p, pageSize: PAGE_SIZE });
-      setTotal(res.total);
-      setPage(res.page);
-      setContacts((prev) => (append ? [...prev, ...res.contacts] : res.contacts));
-    } catch {
-      setError('Falha ao carregar os contatos.');
-      if (!append) setContacts([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (p: number, q: string, size: number, append: boolean) => {
+      setLoading(true);
+      setError('');
+      try {
+        const res = await listContacts({ search: q || undefined, page: p, pageSize: size });
+        setTotal(res.total);
+        setPage(res.page);
+        setContacts((prev) => (append ? [...prev, ...res.contacts] : res.contacts));
+      } catch {
+        setError('Falha ao carregar os contatos.');
+        if (!append) setContacts([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
-  // Reload from the first page whenever the (debounced) query changes.
+  // Reload from the first page whenever the (debounced) query or page size changes.
   useEffect(() => {
-    void load(1, query, false);
-  }, [query, load]);
+    void load(1, query, pageSize, false);
+  }, [query, pageSize, load]);
 
   const hasMore = contacts.length < total;
 
@@ -148,6 +152,21 @@ export default function Contacts() {
             className="w-full bg-[#121212] border border-white/5 rounded-xl pl-9 pr-4 py-2.5 text-sm text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500/30 focus:bg-white/5 transition-all"
           />
         </div>
+        <label className="flex items-center gap-2 text-xs text-neutral-500">
+          <span className="whitespace-nowrap">Exibir</span>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="bg-[#121212] border border-white/5 rounded-lg px-2 py-1.5 text-xs text-neutral-200 focus:outline-none focus:border-blue-500/30 transition-colors"
+          >
+            {PAGE_SIZE_OPTIONS.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <span className="whitespace-nowrap">por página</span>
+        </label>
         <span className="text-xs text-neutral-500 tabular-nums">
           {total} {total === 1 ? 'contato' : 'contatos'}
         </span>
@@ -225,7 +244,7 @@ export default function Contacts() {
         {hasMore && (
           <div className="px-4 py-3 border-t border-white/5 text-center">
             <button
-              onClick={() => void load(page + 1, query, true)}
+              onClick={() => void load(page + 1, query, pageSize, true)}
               disabled={loading}
               className="text-sm text-neutral-400 hover:text-white disabled:opacity-50"
             >

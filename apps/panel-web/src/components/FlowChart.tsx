@@ -1,8 +1,11 @@
+import { useEffect, useRef, useState } from 'react';
 import type { StatsBucket } from '../lib/system-api';
 
 /**
  * Lightweight grouped-bar chart (pure SVG, no chart lib) showing the flow of
- * messages received from WhatsApp vs sent via Chatwoot over time.
+ * messages received from WhatsApp vs sent via Chatwoot over time. Measures its
+ * container so the SVG fills the full width (viewBox == pixel size → no
+ * letterboxing / off-center scaling).
  */
 export function FlowChart({
   buckets,
@@ -11,26 +14,36 @@ export function FlowChart({
   buckets: StatsBucket[];
   range: '24h' | '7d';
 }) {
-  // Viewbox geometry (responsive via preserveAspectRatio="none" on width).
-  const W = 720;
-  const H = 220;
-  const padL = 34;
-  const padR = 12;
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(720);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) setW(Math.max(320, Math.round(w)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const H = 240;
+  const padL = 36;
+  const padR = 14;
   const padT = 12;
-  const padB = 26;
+  const padB = 28;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
   const max = Math.max(1, ...buckets.map((b) => Math.max(b.received, b.sent)));
-  // "Nice" rounded ceiling for the top gridline.
   const niceMax = niceCeil(max);
   const n = Math.max(1, buckets.length);
   const slot = plotW / n;
-  const barW = Math.max(2, Math.min(14, slot / 2 - 1.5));
+  const barW = Math.max(2, Math.min(16, slot / 2 - 1.5));
 
   const y = (v: number) => padT + plotH - (v / niceMax) * plotH;
 
-  // Show ~6 x labels evenly spaced to avoid clutter.
   const labelEvery = Math.max(1, Math.ceil(n / 6));
 
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => ({
@@ -52,8 +65,8 @@ export function FlowChart({
   }
 
   return (
-    <div className="w-full">
-      <div className="mb-3 flex items-center gap-5 text-xs text-neutral-400">
+    <div ref={wrapRef} className="w-full">
+      <div className="mb-3 flex flex-wrap items-center gap-5 text-xs text-neutral-400">
         <span className="flex items-center gap-2">
           <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-400" /> Recebidas (WhatsApp)
         </span>
@@ -61,7 +74,7 @@ export function FlowChart({
           <span className="inline-block w-2.5 h-2.5 rounded-sm bg-violet-400" /> Enviadas (Chatwoot)
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 220 }} role="img">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" className="block">
         {/* gridlines + y labels */}
         {gridLines.map((g, i) => (
           <g key={i}>
@@ -73,7 +86,7 @@ export function FlowChart({
               stroke="rgba(255,255,255,0.06)"
               strokeWidth={1}
             />
-            <text x={padL - 6} y={g.yy + 3} textAnchor="end" className="fill-neutral-600" fontSize={9}>
+            <text x={padL - 8} y={g.yy + 3} textAnchor="end" className="fill-neutral-600" fontSize={10}>
               {g.val}
             </text>
           </g>
@@ -109,7 +122,7 @@ export function FlowChart({
                 <title>{`${fmtFull(b.at)} · enviadas: ${b.sent}`}</title>
               </rect>
               {i % labelEvery === 0 && (
-                <text x={cx} y={H - 8} textAnchor="middle" className="fill-neutral-600" fontSize={9}>
+                <text x={cx} y={H - 9} textAnchor="middle" className="fill-neutral-600" fontSize={10}>
                   {fmtX(b.at)}
                 </text>
               )}
