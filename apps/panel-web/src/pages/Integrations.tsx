@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Plug, Pencil } from 'lucide-react';
 import { Badge, Button, Card, CopyButton, Eyebrow } from '../components/ui';
-import { deleteIntegration, listIntegrations, type IntegrationDTO } from '../lib/integrations-api';
+import {
+  deleteIntegration,
+  listIntegrations,
+  updateIntegration,
+  type IntegrationDTO,
+} from '../lib/integrations-api';
 
 const PROVIDER_LABEL: Record<string, string> = {
   evolution: 'Evolution',
@@ -25,6 +30,7 @@ function UrlRow({ label, value }: { label: string; value: string }) {
 
 export default function Integrations() {
   const [items, setItems] = useState<IntegrationDTO[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const load = () => listIntegrations().then(setItems).catch(() => setItems([]));
   useEffect(() => {
@@ -35,6 +41,23 @@ export default function Integrations() {
     if (!confirm('Remover esta integração?')) return;
     await deleteIntegration(id);
     load();
+  }
+
+  async function toggleEnabled(it: IntegrationDTO) {
+    const next = !it.isEnabled;
+    setBusy(it.id);
+    // optimistic update; revert on failure.
+    setItems((prev) => prev?.map((x) => (x.id === it.id ? { ...x, isEnabled: next } : x)) ?? prev);
+    try {
+      await updateIntegration(it.id, { isEnabled: next });
+    } catch {
+      setItems((prev) =>
+        prev?.map((x) => (x.id === it.id ? { ...x, isEnabled: it.isEnabled } : x)) ?? prev,
+      );
+      alert('Não foi possível alterar o status da integração.');
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -81,7 +104,6 @@ export default function Integrations() {
                     <Badge tone={it.status === 'ok' ? 'ok' : it.status === 'error' ? 'error' : 'neutral'}>
                       {it.status === 'ok' ? 'OK' : it.status === 'error' ? 'Erro' : 'Não configurada'}
                     </Badge>
-                    {!it.isEnabled && <Badge>desativada</Badge>}
                   </div>
                   <p className="text-xs text-neutral-500">
                     Provedor {PROVIDER_LABEL[it.providerType] ?? it.providerType} · caixa{' '}
@@ -89,7 +111,30 @@ export default function Integrations() {
                     {it.chatwoot.inboxId ? ` (#${it.chatwoot.inboxId})` : ''}
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-4">
+                  {/* Ativar / desativar a integração */}
+                  <button
+                    type="button"
+                    onClick={() => toggleEnabled(it)}
+                    disabled={busy === it.id}
+                    title={it.isEnabled ? 'Desativar integração' : 'Ativar integração'}
+                    className="inline-flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <span
+                      className={`relative h-5 w-9 rounded-full transition-colors ${
+                        it.isEnabled ? 'bg-blue-500' : 'bg-neutral-600'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                          it.isEnabled ? 'left-[18px]' : 'left-0.5'
+                        }`}
+                      />
+                    </span>
+                    <span className="text-xs text-neutral-400 w-12 text-left">
+                      {it.isEnabled ? 'Ativa' : 'Inativa'}
+                    </span>
+                  </button>
                   <Link
                     to={`/integrations/${it.id}`}
                     className="text-neutral-500 hover:text-white transition-colors"
