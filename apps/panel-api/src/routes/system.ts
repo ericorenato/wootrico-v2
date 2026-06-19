@@ -257,6 +257,50 @@ export default async function systemRoutes(app: FastifyInstance) {
         : Promise.resolve([]),
     ]);
 
+    // Plain pt-BR titles so a non-technical user understands each event; the
+    // technical string stays in `detail` (shown small + copiable).
+    const auditTitle = (action: string): string => {
+      const map: Record<string, string> = {
+        'integration.created': 'Integração criada',
+        'integration.updated': 'Integração atualizada',
+        'integration.deleted': 'Integração removida',
+        'system.restart': 'Aplicação reiniciada',
+        'system.connections.updated': 'Conexões (banco/fila/cache) atualizadas',
+        'auth.login': 'Login no painel',
+        'admin.login': 'Login no painel',
+        'license.updated': 'Licença atualizada',
+      };
+      return map[action] ?? action.replace(/[._]/g, ' ');
+    };
+    const reasonText = (reason: string | null): string | null => {
+      if (!reason) return null;
+      if (reason === 'integration_disabled') return 'integração desativada';
+      if (reason.startsWith('license_')) return `licença ${reason.slice('license_'.length)}`;
+      return reason;
+    };
+    const webhookTitle = (source: string, eventType: string | null): string => {
+      if (source === 'chatwoot') {
+        const map: Record<string, string> = {
+          message_created: 'Nova mensagem no Chatwoot',
+          message_updated: 'Mensagem editada ou removida no Chatwoot',
+          conversation_created: 'Nova conversa aberta',
+          conversation_updated: 'Conversa atualizada',
+          conversation_status_changed: 'Status da conversa alterado',
+          conversation_typing_on: 'Atendente começou a digitar',
+          conversation_typing_off: 'Atendente parou de digitar',
+        };
+        return map[eventType ?? ''] ?? 'Evento do Chatwoot';
+      }
+      const map: Record<string, string> = {
+        Message: 'Mensagem recebida do WhatsApp',
+        message: 'Mensagem recebida do WhatsApp',
+        messages: 'Mensagem recebida do WhatsApp',
+        'messages.upsert': 'Mensagem recebida do WhatsApp',
+        'message.edited': 'Mensagem editada no WhatsApp',
+      };
+      return map[eventType ?? ''] ?? 'Evento do WhatsApp';
+    };
+
     type Entry = {
       id: string;
       at: string;
@@ -264,7 +308,8 @@ export default async function systemRoutes(app: FastifyInstance) {
       level: 'info' | 'warn';
       source: string;
       actor: string | null;
-      summary: string;
+      title: string;
+      detail: string;
     };
     const entries: Entry[] = [];
     for (const a of audits) {
@@ -275,11 +320,13 @@ export default async function systemRoutes(app: FastifyInstance) {
         level: 'info',
         source: 'admin',
         actor: a.adminUser?.email ?? null,
-        summary: `${a.action}${a.entityType ? ` · ${a.entityType}` : ''}${a.entityId ? ` #${a.entityId}` : ''}`,
+        title: auditTitle(a.action),
+        detail: `${a.action}${a.entityType ? ` · ${a.entityType}` : ''}${a.entityId ? ` #${a.entityId}` : ''}`,
       });
     }
     for (const w of webhooks) {
-      const parts = [w.source, w.originDetected, w.eventType].filter(Boolean).join(' ');
+      const reason = reasonText(w.reason ?? null);
+      const base = webhookTitle(w.source, w.eventType ?? null);
       entries.push({
         id: `w_${w.id}`,
         at: w.receivedAt.toISOString(),
@@ -287,7 +334,10 @@ export default async function systemRoutes(app: FastifyInstance) {
         level: w.accepted ? 'info' : 'warn',
         source: w.source,
         actor: w.integration?.name ?? null,
-        summary: `${parts} → ${w.accepted ? 'aceito' : 'descartado'}${w.reason ? ` (${w.reason})` : ''}`,
+        title: w.accepted ? base : `${base} — ignorado${reason ? ` (${reason})` : ''}`,
+        detail: `${[w.source, w.originDetected, w.eventType].filter(Boolean).join(' · ')} · ${
+          w.accepted ? 'aceito' : 'descartado'
+        }${reason ? ` (${reason})` : ''}`,
       });
     }
     entries.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));

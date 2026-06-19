@@ -1,20 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Badge, Button, Eyebrow } from '../components/ui';
+import { Badge, Button, CopyButton, Eyebrow } from '../components/ui';
 import { getLogs, type LogEntry } from '../lib/system-api';
 
 type KindFilter = 'all' | 'audit' | 'webhook';
 
 const REFRESH_MS = 5000;
 
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 }
+function fmtClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+// Friendly source label so a layperson knows where the event came from.
+const SOURCE_LABEL: Record<string, string> = {
+  provider: 'WhatsApp',
+  chatwoot: 'Chatwoot',
+  admin: 'Painel',
+};
 
 function SourceTag({ source }: { source: string }) {
   return (
-    <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/5 text-neutral-400 shrink-0">
-      {source}
+    <span className="text-[11px] uppercase tracking-wider px-2 py-0.5 rounded bg-white/5 text-neutral-300 shrink-0">
+      {SOURCE_LABEL[source] ?? source}
     </span>
   );
 }
@@ -94,13 +111,14 @@ export default function Logs() {
   ];
 
   return (
-    <div className="max-w-5xl">
+    <div className="max-w-6xl">
       <div className="mb-8">
         <Eyebrow>Sistema</Eyebrow>
         <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Logs do sistema</h1>
         <p className="mt-2 text-sm text-neutral-400">
-          Ações de administração e eventos de webhook. Por privacidade, o conteúdo das mensagens e
-          mídias <b>nunca</b> é registrado — apenas os controles e eventos.
+          Histórico de eventos da integração — mensagens trocadas com o WhatsApp e o Chatwoot e
+          ações no painel. Por privacidade, o <b>conteúdo</b> das mensagens e mídias nunca é
+          registrado, apenas o tipo do evento.
         </p>
       </div>
 
@@ -138,41 +156,69 @@ export default function Logs() {
       {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
 
       {/* console */}
-      <div className="rounded-2xl border border-white/5 bg-[#0B0B0D] font-mono text-xs">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/5">
+      <div className="rounded-2xl border border-white/5 bg-[#0B0B0D]">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
           <span className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
           <span className="w-2.5 h-2.5 rounded-full bg-amber-500/60" />
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/60" />
-          <span className="ml-2 text-[11px] text-neutral-500">console — {entries.length} eventos</span>
-          {auto && <span className="ml-auto text-[11px] text-emerald-400/80">● ao vivo</span>}
+          <span className="ml-2 text-xs text-neutral-500">{entries.length} eventos</span>
+          {auto && <span className="ml-auto text-xs text-emerald-400/80">● ao vivo</span>}
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto divide-y divide-white/[0.03]">
+        <div className="max-h-[64vh] overflow-y-auto divide-y divide-white/[0.04]">
           {entries.length === 0 && !loading ? (
-            <p className="px-4 py-6 text-neutral-600">Nenhum evento registrado ainda.</p>
+            <p className="px-4 py-6 text-neutral-500">Nenhum evento registrado ainda.</p>
           ) : (
-            entries.map((e) => (
-              <div key={e.id} className="flex items-start gap-3 px-4 py-2 hover:bg-white/[0.02]">
-                <span className="text-neutral-600 shrink-0" title={new Date(e.at).toLocaleString()}>
-                  {fmtTime(e.at)}
-                </span>
-                <span
-                  className={`shrink-0 ${e.level === 'warn' ? 'text-amber-400' : 'text-emerald-400/70'}`}
-                  title={e.level}
+            entries.map((e) => {
+              const copyText = `${fmtDate(e.at)} ${fmtClock(e.at)} — ${e.title}${
+                e.actor ? ` — ${e.actor}` : ''
+              } — [${e.detail}]`;
+              return (
+                <div
+                  key={e.id}
+                  className="group flex items-start gap-4 px-4 py-3.5 hover:bg-white/[0.025]"
                 >
-                  {e.level === 'warn' ? '▲' : '●'}
-                </span>
-                <SourceTag source={e.source} />
-                <span className={`flex-1 ${e.level === 'warn' ? 'text-amber-200' : 'text-neutral-200'}`}>
-                  {e.summary}
-                </span>
-                {e.actor && (
-                  <span className="text-neutral-500 shrink-0 truncate max-w-[12rem]" title={e.actor}>
-                    {e.actor}
+                  {/* date + time */}
+                  <div className="shrink-0 w-[92px] leading-tight tabular-nums">
+                    <div className="text-sm text-neutral-300">{fmtClock(e.at)}</div>
+                    <div className="text-[11px] text-neutral-600">{fmtDate(e.at)}</div>
+                  </div>
+                  <span
+                    className={`shrink-0 mt-1.5 ${e.level === 'warn' ? 'text-amber-400' : 'text-emerald-400/70'}`}
+                    title={e.level === 'warn' ? 'atenção' : 'ok'}
+                  >
+                    {e.level === 'warn' ? '▲' : '●'}
                   </span>
-                )}
-              </div>
-            ))
+                  <SourceTag source={e.source} />
+                  {/* friendly title + technical detail */}
+                  <div className="flex-1 min-w-0">
+                    <p
+                      className={`text-sm leading-snug ${
+                        e.level === 'warn' ? 'text-amber-200' : 'text-neutral-100'
+                      }`}
+                    >
+                      {e.title}
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-mono text-neutral-600 truncate" title={e.detail}>
+                      {e.detail}
+                    </p>
+                  </div>
+                  {e.actor && (
+                    <span
+                      className="shrink-0 max-w-[14rem] truncate text-xs px-2 py-1 rounded-md bg-white/5 text-neutral-300"
+                      title={e.actor}
+                    >
+                      {e.actor}
+                    </span>
+                  )}
+                  <CopyButton
+                    value={copyText}
+                    title="Copiar este evento"
+                    className="mt-1 shrink-0 opacity-0 group-hover:opacity-100"
+                  />
+                </div>
+              );
+            })
           )}
         </div>
 
@@ -181,7 +227,7 @@ export default function Logs() {
             <button
               onClick={loadMore}
               disabled={loading}
-              className="text-xs text-neutral-400 hover:text-white disabled:opacity-50"
+              className="text-sm text-neutral-400 hover:text-white disabled:opacity-50"
             >
               Carregar mais antigos
             </button>

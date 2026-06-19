@@ -1,8 +1,27 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Plug, Pencil } from 'lucide-react';
-import { Badge, Button, Card, Eyebrow } from '../components/ui';
+import { Badge, Button, Card, CopyButton, Eyebrow } from '../components/ui';
 import { deleteIntegration, listIntegrations, type IntegrationDTO } from '../lib/integrations-api';
+
+const PROVIDER_LABEL: Record<string, string> = {
+  evolution: 'Evolution',
+  uazapi: 'Uazapi',
+  zapi: 'Z-API',
+};
+
+/** A labelled, copiable URL row for the integration card. */
+function UrlRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="shrink-0 w-40 text-xs text-neutral-500">{label}</span>
+      <span className="flex-1 min-w-0 truncate font-mono text-xs text-neutral-300" title={value}>
+        {value}
+      </span>
+      <CopyButton value={value} title={`Copiar ${label}`} className="shrink-0" />
+    </div>
+  );
+}
 
 export default function Integrations() {
   const [items, setItems] = useState<IntegrationDTO[] | null>(null);
@@ -65,7 +84,8 @@ export default function Integrations() {
                     {!it.isEnabled && <Badge>desativada</Badge>}
                   </div>
                   <p className="text-xs text-neutral-500">
-                    {it.providerType} · caixa {it.chatwoot.inboxName}
+                    Provedor {PROVIDER_LABEL[it.providerType] ?? it.providerType} · caixa{' '}
+                    {it.chatwoot.inboxName}
                     {it.chatwoot.inboxId ? ` (#${it.chatwoot.inboxId})` : ''}
                   </p>
                 </div>
@@ -85,6 +105,13 @@ export default function Integrations() {
                     <Trash2 size={16} />
                   </button>
                 </div>
+              </div>
+
+              {/* URLs da integração — úteis para configurar o provedor e o Chatwoot */}
+              <div className="mt-4 space-y-2 border-t border-white/5 pt-4">
+                <UrlRow label="URL do Chatwoot" value={it.chatwoot.baseUrl} />
+                <UrlRow label="Webhook p/ o provedor" value={it.webhookUrls.provider} />
+                <UrlRow label="Webhook p/ o Chatwoot" value={it.webhookUrls.chatwoot} />
               </div>
             </Card>
           ))}

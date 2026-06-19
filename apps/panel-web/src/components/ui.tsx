@@ -4,6 +4,8 @@ import type {
   ReactNode,
   SelectHTMLAttributes,
 } from 'react';
+import { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 
 /** Glass card matching the reference design. */
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -53,12 +55,51 @@ export function Button({
     <button
       {...rest}
       disabled={isDisabled}
-      className={`inline-flex overflow-hidden h-12 rounded-full p-[1px] relative disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      className={`group inline-flex overflow-hidden h-12 rounded-full p-[1px] relative disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
     >
-      <span className="absolute inset-[-1000%] animate-[spin_2s_linear_infinite] bg-[conic-gradient(from_90deg_at_50%_50%,#E2CBFF_0%,#393BB2_50%,#E2CBFF_100%)]" />
+      {/* Static gradient border; only spins while loading or on hover (não fica
+          "piscando" o tempo todo). */}
+      <span
+        className={`absolute inset-[-1000%] bg-[conic-gradient(from_90deg_at_50%_50%,#E2CBFF_0%,#393BB2_50%,#E2CBFF_100%)] group-hover:animate-[spin_2s_linear_infinite] ${
+          loading ? 'animate-[spin_2s_linear_infinite]' : ''
+        }`}
+      />
       <span className="inline-flex cursor-pointer items-center justify-center gap-2 transition-colors hover:bg-slate-950/80 text-sm font-medium text-white bg-slate-950 w-full h-full rounded-full px-8 backdrop-blur-3xl">
         {loading ? 'Aguarde…' : children}
       </span>
+    </button>
+  );
+}
+
+/** Small inline "copy to clipboard" button with a brief confirmation state. */
+export function CopyButton({
+  value,
+  title = 'Copiar',
+  className = '',
+}: {
+  value: string;
+  title?: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        } catch {
+          /* clipboard unavailable */
+        }
+      }}
+      className={`inline-flex items-center justify-center text-neutral-500 hover:text-white transition-colors ${className}`}
+    >
+      {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
     </button>
   );
 }

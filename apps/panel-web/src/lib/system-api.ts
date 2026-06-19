@@ -94,7 +94,10 @@ export interface LogEntry {
   level: 'info' | 'warn';
   source: string;
   actor: string | null;
-  summary: string;
+  /** Plain-language description (pt-BR) for non-technical users. */
+  title: string;
+  /** Technical detail (event/source/etc) — shown small and copiable. */
+  detail: string;
 }
 
 export interface LogsPage {
