@@ -1,4 +1,5 @@
-import { hmac } from '@wootrico/config';
+import { hmac, logger } from '@wootrico/config';
+import { urlToBase64 } from '@wootrico/providers';
 import { withLock, throttle } from '@wootrico/cache';
 import {
   storeMapping,
@@ -117,11 +118,28 @@ export async function handleChatwootCallback(
     if (attachments.length > 0) {
       for (const att of attachments) {
         await throttle(`throttle:media:${integrationId}`, MEDIA_THROTTLE_MS);
+        // Download the attachment here (retry/backoff, follows the Chatwoot
+        // ActiveStorage→S3 redirect) and send it inline as base64, so the provider
+        // doesn't have to reach Chatwoot's storage — that fetch is the slow/flaky
+        // step. Fall back to handing over the URL if the download fails, so a
+        // misbehaving storage never blocks the send entirely.
+        let media: { url?: string; base64?: string; mimeType?: string; fileName?: string };
+        try {
+          const fetched = await urlToBase64(att.data_url);
+          media = {
+            base64: fetched.base64,
+            mimeType: fetched.mimeType ?? att.content_type ?? undefined,
+            fileName: att.filename ?? undefined,
+          };
+        } catch (err) {
+          logger.warn({ integrationId, err }, 'callback: media download failed, falling back to URL');
+          media = { url: att.data_url };
+        }
         const r = await provider.sendMessage({
           recipient: sendTarget,
           type: chatwootAttachmentType(att.file_type),
           content: content || undefined,
-          media: { url: att.data_url },
+          media,
           replyToProviderMessageId,
           replyToParticipant,
         });
