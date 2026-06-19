@@ -3,7 +3,6 @@ import { withLock, throttle } from '@wootrico/cache';
 import { addTicket, consumeTicket } from '../engine/dedup.js';
 import {
   storeMapping,
-  getProviderMessageId,
   getMappingByChatwootId,
   removeByChatwootId,
   decryptRecipient,
@@ -82,6 +81,12 @@ export async function handleChatwootCallback(
 
   // Serialize per conversation (ordering) — same lock domain as inbound.
   await withLock(`lock:conv:${integrationId}:${hmac(canonicalKey)}`, async () => {
+    // Idempotency guard — if this Chatwoot message was already sent to the
+    // provider (webhook re-delivery or queue retry), skip so we never send the
+    // same message to WhatsApp twice.
+    const alreadySent = await getMappingByChatwootId(integrationId, String(payload.id));
+    if (alreadySent) return;
+
     // CASE 2 dedup — if it originated on the phone, it's already mirrored: skip.
     const consumed = await consumeTicket(integrationId, canonicalKey, messageType, 'phone_origin');
     if (consumed) return;
@@ -94,9 +99,23 @@ export async function handleChatwootCallback(
 
     // reply mapping (Chatwoot reply → provider quoted message)
     let replyToProviderMessageId: string | null = null;
+    let replyToParticipant: string | null = null;
     const inReplyTo = payload.content_attributes?.in_reply_to;
     if (inReplyTo) {
-      replyToProviderMessageId = await getProviderMessageId(integrationId, String(inReplyTo));
+      const quotedMap = await getMappingByChatwootId(integrationId, String(inReplyTo));
+      replyToProviderMessageId = quotedMap?.providerMessageId ?? null;
+      if (replyToProviderMessageId) {
+        // Evolution GO needs the quoted message author's JID to render the quote.
+        // Prefer the author stored with the quoted message (works for groups);
+        // fall back to the chat partner for DMs (covers older mappings).
+        replyToParticipant =
+          decryptRecipient(quotedMap?.senderJid ?? null) ??
+          (isGroup
+            ? null
+            : sendTarget.includes('@')
+              ? sendTarget
+              : `${sendTarget}@s.whatsapp.net`);
+      }
     }
 
     const providerMessageIds: string[] = [];
@@ -109,6 +128,7 @@ export async function handleChatwootCallback(
           content: content || undefined,
           media: { url: att.data_url },
           replyToProviderMessageId,
+          replyToParticipant,
         });
         providerMessageIds.push(...r.providerMessageIds);
         content = ''; // caption only on the first attachment
@@ -119,6 +139,7 @@ export async function handleChatwootCallback(
         type: 'text',
         content,
         replyToProviderMessageId,
+        replyToParticipant,
       });
       providerMessageIds.push(...r.providerMessageIds);
     }

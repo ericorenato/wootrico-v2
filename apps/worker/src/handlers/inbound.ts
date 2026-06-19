@@ -37,8 +37,6 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     return;
   }
 
-  if (norm.kind === 'message_edited') return;
-
   const isGroup = norm.isGroup;
   // Pair the sender's PN↔LID onto a GLOBAL canonical id (shared across all
   // companies) for number discovery. For a DM this is the contact; for a group
@@ -75,7 +73,10 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   const senderLabel = norm.senderName ?? norm.name ?? null;
   const messageType = norm.media?.type ?? 'text';
 
-  const mirror = async (direction: ChatwootMessageType): Promise<void> => {
+  const mirror = async (
+    direction: ChatwootMessageType,
+    opts?: { bodyOverride?: string; inReplyToOverride?: number },
+  ): Promise<void> => {
     const contactName = isGroup
       ? (norm.groupName ?? norm.groupId ?? identifier)
       : (norm.name ?? norm.senderName ?? (discoveredPhone ?? sendTarget));
@@ -85,7 +86,8 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         : undefined;
     // Prefix the participant name on group messages so it's clear who spoke.
     const body =
-      isGroup && senderLabel ? `*${senderLabel}:*\n${norm.text ?? ''}` : (norm.text ?? '');
+      opts?.bodyOverride ??
+      (isGroup && senderLabel ? `*${senderLabel}:*\n${norm.text ?? ''}` : (norm.text ?? ''));
 
     // contact id is stable → cache it (keyed by pseudonymized identifier)
     const contactKey = `cw:contact:${integrationId}:${hmac(identifier)}`;
@@ -122,8 +124,8 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     const conversationId = conversation?.id;
     if (!conversationId) return logger.warn({ integrationId }, 'inbound: missing conversation id');
 
-    let inReplyTo: number | undefined;
-    if (norm.replyToProviderMessageId) {
+    let inReplyTo: number | undefined = opts?.inReplyToOverride;
+    if (inReplyTo == null && norm.replyToProviderMessageId) {
       const m = await getMappingByProviderId(integrationId, norm.replyToProviderMessageId);
       if (m) inReplyTo = Number(m.chatwootMessageId);
     }
@@ -153,6 +155,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
           contentType: mime,
         },
         inReplyTo,
+        sourceId: norm.providerMessageId ?? undefined,
       });
     } else {
       created = await chatwoot.createMessage({
@@ -160,10 +163,27 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         content: body,
         messageType: direction,
         inReplyTo,
+        sourceId: norm.providerMessageId ?? undefined,
       });
     }
 
     if (created?.id && norm.providerMessageId) {
+      // Author JID of THIS message — needed later to render a reply quote (esp. in
+      // groups, where the quoted author is a specific member). Only known for
+      // inbound (incoming) messages; for our own echo (outgoing) the author is the
+      // account owner, which we don't resolve here.
+      const senderJid =
+        direction === 'incoming'
+          ? norm.jid
+            ? `${norm.jid}@s.whatsapp.net`
+            : norm.lid
+              ? `${norm.lid}@lid`
+              : !isGroup
+                ? sendTarget.includes('@')
+                  ? sendTarget
+                  : `${sendTarget}@s.whatsapp.net`
+                : null
+          : null;
       await storeMapping({
         integrationId,
         chatwootMessageId: String(created.id),
@@ -171,6 +191,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         chatwootConversationId: String(conversationId),
         chatwootInboxId: inboxId,
         recipient: sendTarget,
+        senderJid,
         provider: providerType,
       });
     }
@@ -179,16 +200,36 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   // Serialize per conversation so messages stay ordered (replaces the old delay).
   const lockKey = `lock:conv:${integrationId}:${hmac(identifier)}`;
   await withLock(lockKey, async () => {
+    // Idempotency guard — if this provider message was already mirrored (queue
+    // retry after a transient failure, or a provider re-delivery), skip it so we
+    // never create a duplicate in Chatwoot. Covers both directions.
+    if (norm.providerMessageId) {
+      const already = await getMappingByProviderId(integrationId, norm.providerMessageId);
+      if (already) return;
+    }
+    // Edited message — Chatwoot's API cannot change an existing message's content
+    // (the `update` action only sets status), so post a NEW message carrying the
+    // edited text, threaded under the original via in_reply_to.
+    if (norm.kind === 'message_edited') {
+      let origCwId: number | undefined;
+      if (norm.editedProviderMessageId) {
+        const orig = await getMappingByProviderId(integrationId, norm.editedProviderMessageId);
+        if (orig) origCwId = Number(orig.chatwootMessageId);
+      }
+      const edited = (norm.text ?? '').trim();
+      await mirror(norm.fromMe ? 'outgoing' : 'incoming', {
+        bodyOverride: edited ? `${edited}\n\n_(mensagem editada)_` : '_(mensagem editada)_',
+        inReplyToOverride: origCwId,
+      });
+      return;
+    }
     // CASE 1 — customer message in
     if (!norm.fromMe) {
       await mirror('incoming');
       return;
     }
     // fromMe — our own API send echoing back, or agent typed on the phone.
-    if (norm.providerMessageId) {
-      const existing = await getMappingByProviderId(integrationId, norm.providerMessageId);
-      if (existing) return; // our own send, already mirrored
-    }
+    // (an already-mirrored echo is short-circuited by the guard above.)
     const consumed = await consumeTicket(integrationId, identifier, messageType, 'api_origin');
     if (consumed) return;
     await addTicket(integrationId, identifier, messageType, 'phone_origin');

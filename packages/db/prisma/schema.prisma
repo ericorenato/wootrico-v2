@@ -187,6 +187,8 @@ model MessageMapping {
   chatwootConversationId String?    @map("chatwoot_conversation_id")
   chatwootInboxId       String?     @map("chatwoot_inbox_id")
   recipient             String?
+  // JID of the message author — used to render reply quotes (esp. in groups).
+  senderJid             String?     @map("sender_jid")
   provider              ProviderType
   createdAt             DateTime    @default(now()) @map("created_at")
   expiresAt             DateTime    @map("expires_at")

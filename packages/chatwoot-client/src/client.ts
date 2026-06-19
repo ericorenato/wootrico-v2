@@ -309,12 +309,16 @@ export class ChatwootClient {
     content: string;
     messageType: ChatwootMessageType;
     inReplyTo?: string | number | null;
+    /** WhatsApp message id — persisted on the Chatwoot message for traceability
+     *  and reply threading (in_reply_to_external_id). */
+    sourceId?: string | null;
   }): Promise<any> {
     const body: Record<string, unknown> = {
       content: opts.content,
       message_type: opts.messageType,
     };
     if (opts.inReplyTo) body.content_attributes = { in_reply_to: opts.inReplyTo };
+    if (opts.sourceId) body.source_id = opts.sourceId;
     const res = await this.http.post(
       this.acc(`/conversations/${opts.conversationId}/messages`),
       body,
@@ -328,6 +332,8 @@ export class ChatwootClient {
     messageType: ChatwootMessageType;
     attachment: AttachmentInput;
     inReplyTo?: string | number | null;
+    /** WhatsApp message id — see createMessage. */
+    sourceId?: string | null;
   }): Promise<any> {
     const form = new FormData();
     if (opts.content) form.append('content', opts.content);
@@ -339,6 +345,7 @@ export class ChatwootClient {
     if (opts.inReplyTo) {
       form.append('content_attributes', JSON.stringify({ in_reply_to: opts.inReplyTo }));
     }
+    if (opts.sourceId) form.append('source_id', opts.sourceId);
     const res = await this.http.post(
       this.acc(`/conversations/${opts.conversationId}/messages`),
       form,

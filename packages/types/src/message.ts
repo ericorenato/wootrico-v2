@@ -72,6 +72,12 @@ export interface SendMessageInput {
   content?: string;
   media?: { url?: string; base64?: string; mimeType?: string; fileName?: string } | null;
   replyToProviderMessageId?: string | null;
+  /**
+   * JID of the AUTHOR of the quoted message. Required by Evolution GO (whatsmeow)
+   * to render a reply quote — the StanzaID alone is not enough. Ignored by
+   * providers that quote by message id only (uazapi/zapi).
+   */
+  replyToParticipant?: string | null;
 }
 
 export interface SendMessageResult {

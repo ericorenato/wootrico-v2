@@ -85,13 +85,17 @@ export function parseEvolutionInbound(
   const message = (data.Message ?? {}) as Record<string, any>;
 
   const isGroup = !!info.IsGroup;
+  // PushName is always the SENDER's name. On a fromMe message the sender is the
+  // WhatsApp account owner — never the contact — so it must NOT be used to name
+  // the Chatwoot contact (it would label the contact with our own name).
+  const pushName = !info.IsFromMe ? (info.PushName ?? null) : null;
 
   const base: NormalizedInboundMessage = {
     origin: 'evolution',
     kind: 'message',
     phone: null,
     text: '',
-    name: info.PushName ?? null,
+    name: pushName,
     isGroup,
     fromMe: !!info.IsFromMe,
     fromApi: false, // Evolution GO has no API-source flag; echo handled via mapping
@@ -116,7 +120,15 @@ export function parseEvolutionInbound(
     };
   }
 
-  const isEdit = !!data.IsEdit || protoType === 'MESSAGE_EDIT';
+  // Edit detection — Evolution GO serializes the whatsmeow proto with encoding/json,
+  // so `protocolMessage.type` is the NUMERIC enum value (MESSAGE_EDIT = 14), not the
+  // string "MESSAGE_EDIT". Detect it by the numeric/string type, the IsEdit flag, OR
+  // simply the presence of an editedMessage payload.
+  const isEdit =
+    !!data.IsEdit ||
+    protoType === 'MESSAGE_EDIT' ||
+    protoType === '14' ||
+    !!proto?.editedMessage;
   // Edited content lives under protocolMessage.editedMessage
   const effective = isEdit && proto?.editedMessage ? { ...message, ...proto.editedMessage } : message;
 
@@ -190,7 +202,7 @@ export function parseEvolutionInbound(
     lid,
     text,
     media,
-    senderName: info.PushName ?? null,
+    senderName: pushName,
     isGroup,
     groupId: isGroup ? chatJid : null,
     groupName,

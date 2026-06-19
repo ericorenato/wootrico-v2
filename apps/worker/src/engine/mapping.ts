@@ -20,12 +20,15 @@ export async function storeMapping(input: {
   chatwootConversationId?: string | null;
   chatwootInboxId?: string | null;
   recipient?: string | null;
+  /** JID of the message author (plaintext) — stored encrypted, used for reply quotes. */
+  senderJid?: string | null;
   provider: ProviderType;
 }): Promise<void> {
   const expiresAt = new Date(Date.now() + ttlMs);
   const data = {
     ...input,
     recipient: input.recipient ? encrypt(input.recipient) : null,
+    senderJid: input.senderJid ? encrypt(input.senderJid) : null,
     expiresAt,
   };
   await prisma.messageMapping.upsert({
@@ -36,7 +39,12 @@ export async function storeMapping(input: {
       },
     },
     create: data,
-    update: { providerMessageId: input.providerMessageId, recipient: data.recipient, expiresAt },
+    update: {
+      providerMessageId: input.providerMessageId,
+      recipient: data.recipient,
+      senderJid: data.senderJid,
+      expiresAt,
+    },
   });
 }
 

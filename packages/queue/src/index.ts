@@ -95,6 +95,23 @@ export interface ConsumeOptions {
 }
 
 /**
+ * Decide whether a failed job is worth retrying. Permanent client errors (4xx
+ * from Chatwoot/provider — bad payload, validation, not-found) will never
+ * succeed on retry and only amplify load and the duplicate window, so they go
+ * straight to the dead-letter. Transient conditions (5xx, network, timeout,
+ * rate-limit) are retried.
+ */
+function isRetryable(err: unknown): boolean {
+  const status = (err as { response?: { status?: number }; status?: number } | undefined)?.response
+    ?.status ?? (err as { status?: number } | undefined)?.status;
+  if (typeof status === 'number') {
+    if (status === 408 || status === 429) return true; // timeout / rate-limit
+    if (status >= 400 && status < 500) return false; // permanent client error
+  }
+  return true; // 5xx, network errors, timeouts, unknown
+}
+
+/**
  * Consume a queue with manual ack + bounded retry (via the retry queue) and a
  * dead-letter sink for poison messages.
  */
@@ -116,7 +133,10 @@ export async function consume(
       await handler(job);
       ch.ack(msg);
     } catch (err) {
-      if (retries < AMQP.maxRetries) {
+      if (!isRetryable(err)) {
+        logger.error({ err }, 'job failed with non-retryable error -> dead-letter');
+        ch.nack(msg, false, false); // -> DLX -> dead queue
+      } else if (retries < AMQP.maxRetries) {
         // Re-publish to the retry exchange using the ORIGINAL routing key. The
         // retry queue (fanout-bound) receives it regardless, but the message
         // keeps the routing key so DLX-on-TTL-expiry routes it back to the

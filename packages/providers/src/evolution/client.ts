@@ -73,8 +73,16 @@ export class EvolutionProvider implements WhatsAppProvider {
 
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     const number = input.recipient;
+    // Evolution GO's `quoted` needs BOTH the message id and the author JID
+    // (participant) to render the reply quote — it builds the whatsmeow
+    // ContextInfo{ StanzaID, Participant } from these.
     const quoted = input.replyToProviderMessageId
-      ? { quoted: { messageId: input.replyToProviderMessageId } }
+      ? {
+          quoted: {
+            messageId: input.replyToProviderMessageId,
+            ...(input.replyToParticipant ? { participant: input.replyToParticipant } : {}),
+          },
+        }
       : {};
 
     let path: string;
