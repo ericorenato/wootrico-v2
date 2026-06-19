@@ -21,6 +21,26 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     ignoreGroups: integration.desconsiderarGrupo,
   });
 
+  // TEMP diagnostic — structural only (no message text) to learn how the provider
+  // shapes edit events. Remove once edit mirroring is confirmed in production.
+  {
+    const p = payload as any;
+    const msg = p?.data?.Message ?? {};
+    logger.info(
+      {
+        integrationId,
+        event: p?.event,
+        parsedKind: norm.kind,
+        infoType: p?.data?.Info?.Type,
+        isEditFlag: p?.data?.IsEdit,
+        msgKeys: Object.keys(msg),
+        protoType: msg?.protocolMessage?.type,
+        hasEditedMessage: !!msg?.protocolMessage?.editedMessage,
+      },
+      'inbound: provider event (diag)',
+    );
+  }
+
   if (norm.kind === 'ignored' || norm.kind === 'unknown') return;
 
   if (norm.kind === 'message_deleted') {
