@@ -1,23 +1,11 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import {
-  LayoutDashboard,
-  Plug,
-  Users,
-  KeyRound,
-  Terminal,
-  SlidersHorizontal,
-  LogOut,
-} from 'lucide-react';
+import { KeyRound, Terminal, LogOut } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 
 const NAV = [
-  { to: '/', label: 'Início', icon: LayoutDashboard, end: true },
-  { to: '/integrations', label: 'Integrações', icon: Plug },
-  { to: '/contacts', label: 'Contatos', icon: Users },
-  { to: '/system', label: 'Sistema', icon: SlidersHorizontal },
-  { to: '/license', label: 'Licença', icon: KeyRound },
-  { to: '/logs', label: 'Logs', icon: Terminal },
+  { to: '/', label: 'Chaves', icon: KeyRound, end: true },
+  { to: '/events', label: 'Eventos', icon: Terminal },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -33,7 +21,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
           <div className="leading-tight">
             <p className="text-sm font-semibold text-white">Wootrico</p>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Painel</p>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Licenças</p>
           </div>
         </div>
 
@@ -60,7 +48,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         <div className="mt-auto pt-6">
           <div className="px-2 mb-3">
             <p className="text-xs text-neutral-400 truncate">{user?.email}</p>
-            <p className="text-[10px] uppercase tracking-wider text-neutral-600">{user?.role}</p>
+            <p className="text-[10px] uppercase tracking-wider text-neutral-600">Administrador</p>
           </div>
           <button
             onClick={() => {

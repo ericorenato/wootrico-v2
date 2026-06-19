@@ -1,64 +1,205 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Check, Globe, KeyRound, Plug, Activity } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Activity, Boxes, Check, Database, Eye, EyeOff, Globe, KeyRound, Loader2, Network } from 'lucide-react';
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import { completeSetup, setBaseUrl } from '../lib/setup-api';
 import { activateLicense, getLicenseStatus, type LicenseStatus } from '../lib/license-api';
-import { runDiagnostics, type Diagnostics } from '../lib/system-api';
-import ConnectionsEditor from '../components/ConnectionsEditor';
+import {
+  getConnections,
+  restartSystem,
+  saveConnections,
+  testConnection,
+  type ConnectionsState,
+} from '../lib/system-api';
+import {
+  buildPg,
+  buildRb,
+  buildRd,
+  parsePg,
+  parseRb,
+  parseRd,
+  type PgFields,
+  type RbFields,
+  type RdFields,
+} from '../lib/connection-fields';
 import { ApiError } from '../lib/api-client';
 
-const STEPS = ['Conexões', 'URL pública', 'Licença', 'Integração'] as const;
+const STEPS = ['Banco', 'Fila', 'Cache', 'Domínio', 'Licença'] as const;
+
+type Service = 'postgres' | 'rabbitmq' | 'redis';
+type TestState = { state: 'idle' | 'testing' | 'ok' | 'fail'; detail?: string };
+
+/**
+ * Auto-tests a connection URL: re-runs (debounced) whenever the URL changes and
+ * exposes runTest() for an explicit "test now" / "before advancing" check. A
+ * request id guards against stale responses so the latest edit always wins.
+ */
+function useAutoTest(service: Service, url: string) {
+  const [test, setTest] = useState<TestState>({ state: 'idle' });
+  const reqId = useRef(0);
+
+  const runTest = useCallback(async (): Promise<boolean> => {
+    if (!url) {
+      setTest({ state: 'fail', detail: 'preencha os campos' });
+      return false;
+    }
+    const id = ++reqId.current;
+    setTest({ state: 'testing' });
+    try {
+      const r = await testConnection(service, url);
+      if (id !== reqId.current) return false; // a newer test superseded this one
+      setTest({ state: r.ok ? 'ok' : 'fail', detail: r.detail });
+      return r.ok;
+    } catch {
+      if (id !== reqId.current) return false;
+      setTest({ state: 'fail', detail: 'falha na requisição' });
+      return false;
+    }
+  }, [service, url]);
+
+  // Debounced auto-test as the user edits the fields.
+  useEffect(() => {
+    if (!url) return;
+    const t = setTimeout(() => void runTest(), 700);
+    return () => clearTimeout(t);
+  }, [url, runTest]);
+
+  return { test, runTest };
+}
 
 export default function SetupWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
-
-  // step 0 — connection diagnostics
-  const [diag, setDiag] = useState<Diagnostics | null>(null);
-  const [diagBusy, setDiagBusy] = useState(false);
-  // step 1 — public URL
-  const [baseUrl, setBaseUrlValue] = useState(window.location.origin);
-  // step 2 — license
-  const [license, setLicense] = useState<LicenseStatus | null>(null);
-  const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    if (step === 2) getLicenseStatus().then(setLicense).catch(() => {});
-  }, [step]);
+  // connections (pre-filled from the installer's .env via /api/system/connections)
+  const [conn, setConn] = useState<ConnectionsState | null>(null);
+  const [pg, setPg] = useState<PgFields | null>(null);
+  const [rb, setRb] = useState<RbFields | null>(null);
+  const [rd, setRd] = useState<RdFields | null>(null);
 
-  // Auto-run the connection test when landing on the first step.
+  // public URL + license
+  const [baseUrl, setBaseUrlValue] = useState(window.location.origin);
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
+  const [key, setKey] = useState('');
+
+  // restart screen
+  const [restarting, setRestarting] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+
+  const builtPg = pg ? buildPg(pg) : '';
+  const builtRb = rb ? buildRb(rb) : '';
+  const builtRd = rd ? buildRd(rd) : '';
+  const pgT = useAutoTest('postgres', builtPg);
+  const rbT = useAutoTest('rabbitmq', builtRb);
+  const rdT = useAutoTest('redis', builtRd);
+
   useEffect(() => {
-    testConnections();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    getConnections()
+      .then((c) => {
+        setConn(c);
+        setPg(parsePg(c.services.postgres.value));
+        setRb(parseRb(c.services.rabbitmq.value));
+        setRd(parseRd(c.services.redis.value));
+      })
+      .catch(() => setError('Falha ao carregar o ambiente.'));
   }, []);
 
-  async function testConnections() {
-    setDiagBusy(true);
-    try {
-      setDiag(await runDiagnostics());
-    } catch {
-      setDiag({
-        postgres: { ok: false, detail: 'falha na requisição' },
-        rabbitmq: { ok: false, detail: 'falha na requisição' },
-        redis: { ok: false, detail: 'falha na requisição' },
-      });
-    } finally {
-      setDiagBusy(false);
+  useEffect(() => {
+    if (step === 4) getLicenseStatus().then(setLicense).catch(() => {});
+  }, [step]);
+
+  // ── restart screen: poll /api/health until the container is back, then go ──
+  useEffect(() => {
+    if (!restarting) return;
+    let cancelled = false;
+    const startedAt = Date.now();
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (cancelled) return;
+      const secs = Math.floor((Date.now() - startedAt) / 1000);
+      setElapsed(secs);
+      // Give the container a few seconds to actually go down before we trust an
+      // "ok" — otherwise we'd redirect into the old process that's about to exit.
+      if (secs > 5) {
+        try {
+          const res = await fetch('/api/health', { cache: 'no-store' });
+          if (res.ok && (await res.json())?.status === 'ok') {
+            cancelled = true;
+            navigate('/');
+            return;
+          }
+        } catch {
+          /* container is down — keep waiting */
+        }
+      }
+      timer = setTimeout(tick, 1500);
+    };
+    timer = setTimeout(tick, 1500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [restarting, navigate]);
+
+  /** Advance only after the current service connects (auto-tested or on click). */
+  async function advanceAfterTest(t: { test: TestState; runTest: () => Promise<boolean> }, next: number) {
+    setError('');
+    if (t.test.state === 'ok') {
+      setStep(next);
+      return;
     }
+    setBusy(true);
+    const ok = await t.runTest();
+    setBusy(false);
+    if (ok) setStep(next);
+    else setError('A conexão falhou — ajuste os campos e tente novamente.');
   }
 
-  async function saveBaseUrl() {
+  /** Persist changed RabbitMQ/Redis, set base URL, complete setup, then restart. */
+  async function finish() {
+    if (!conn) return;
     setError('');
     setBusy(true);
     try {
+      // 1) Persist RabbitMQ/Redis if they changed (tested again before saving).
+      //    Postgres is read from the environment at boot, so it isn't persisted
+      //    here — to point at another database, re-run the installer.
+      const body: { rabbitmqUrl?: string; redisUrl?: string } = {};
+      if (builtRb && builtRb !== conn.services.rabbitmq.value) body.rabbitmqUrl = builtRb;
+      if (builtRd && builtRd !== conn.services.redis.value) body.redisUrl = builtRd;
+      let needRestart = false;
+      if (Object.keys(body).length > 0) {
+        const r = await saveConnections(body);
+        if (!r.ok) {
+          const failed = Object.entries(r.results)
+            .filter(([, v]) => !v.ok)
+            .map(([k]) => (k === 'rabbitmqUrl' ? 'RabbitMQ' : 'Redis'))
+            .join(', ');
+          setError(`Não foi possível salvar: ${failed || 'conexão inválida'}.`);
+          setBusy(false);
+          return;
+        }
+        needRestart = true;
+      }
+
+      // 2) Public base URL + 3) mark setup complete.
       await setBaseUrl(baseUrl.trim());
-      setStep(2);
+      await completeSetup();
+
+      // 4) Apply via restart (RabbitMQ/Redis take effect on boot) or go straight.
+      if (needRestart) {
+        setBusy(false);
+        setRestarting(true);
+        restartSystem().catch(() => {
+          /* the server is going down — expected */
+        });
+      } else {
+        navigate('/');
+      }
     } catch {
-      setError('URL inválida.');
-    } finally {
+      setError('Falha ao concluir a configuração.');
       setBusy(false);
     }
   }
@@ -68,20 +209,17 @@ export default function SetupWizard() {
     setBusy(true);
     try {
       await activateLicense(key.trim());
-      const st = await getLicenseStatus();
-      setLicense(st);
-      setStep(3);
+      setLicense(await getLicenseStatus());
+      await finish();
     } catch (e) {
-      setError(e instanceof ApiError ? `Falha: ${e.code}` : 'Falha ao ativar.');
-    } finally {
       setBusy(false);
+      setError(e instanceof ApiError ? `Falha na licença: ${e.code}` : 'Falha ao ativar a licença.');
     }
   }
 
-  async function finish() {
-    await completeSetup();
-    navigate('/');
-  }
+  if (restarting) return <RestartScreen elapsed={elapsed} />;
+
+  const loading = !conn || !pg || !rb || !rd;
 
   return (
     <div className="min-h-screen bg-black relative flex items-center justify-center px-6 py-12 overflow-hidden">
@@ -96,7 +234,9 @@ export default function SetupWizard() {
         <div className="text-center mb-8">
           <Eyebrow>Configuração inicial</Eyebrow>
           <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Bem-vindo ao Wootrico</h1>
-          <p className="mt-2 text-sm text-neutral-400">Três passos rápidos para começar.</p>
+          <p className="mt-2 text-sm text-neutral-400">
+            Detectamos seu ambiente — confirme cada conexão e pronto.
+          </p>
         </div>
 
         {/* stepper */}
@@ -121,104 +261,142 @@ export default function SetupWizard() {
         </div>
 
         <Card>
-          {step === 0 && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-2 text-white">
-                <Activity size={16} className="text-blue-400" />
-                <h3 className="text-sm font-medium">Testar conexões</h3>
-              </div>
-              <p className="text-sm text-neutral-400">
-                Valida Postgres, RabbitMQ e Redis de dentro do container antes de prosseguir.
-              </p>
-              <div className="rounded-xl border border-white/5 bg-[#121212] divide-y divide-white/5">
-                <DiagLine label="Postgres" r={diag?.postgres} busy={diagBusy} />
-                <DiagLine label="RabbitMQ" r={diag?.rabbitmq} busy={diagBusy} />
-                <DiagLine label="Redis" r={diag?.redis} busy={diagBusy} />
-              </div>
-
-              <p className="text-xs text-neutral-500">
-                Alguma conexão falhou? Ajuste abaixo (ex.: o <b>VHost</b> do RabbitMQ — o padrão é{' '}
-                <code>/</code>), salve para testar e reinicie para aplicar.
-              </p>
-              <ConnectionsEditor heading={false} />
-
-              <div className="flex items-center gap-4">
-                <Button onClick={() => setStep(1)} loading={diagBusy}>
-                  Continuar
-                </Button>
-                <button
-                  onClick={testConnections}
-                  className="text-sm text-neutral-400 hover:text-white"
+          {loading ? (
+            <p className="text-sm text-neutral-500">{error || 'Detectando o ambiente…'}</p>
+          ) : (
+            <>
+              {/* ── 0 · Postgres (already running — confirmation) ── */}
+              {step === 0 && (
+                <StepShell
+                  icon={<Database size={16} className="text-blue-400" />}
+                  title="Banco de dados (Postgres)"
+                  desc="O painel já está usando este banco. Confira a conexão e siga."
                 >
-                  Testar novamente
-                </button>
-              </div>
-            </div>
-          )}
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Host"><Input value={pg.host} disabled /></Field>
+                    <Field label="Porta"><Input value={pg.port} disabled /></Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Usuário"><Input value={pg.user} disabled /></Field>
+                    <Field label="Banco"><Input value={pg.database} disabled /></Field>
+                  </div>
+                  <p className="text-xs text-neutral-500">
+                    O banco é definido na instalação. Para apontar para outro Postgres, rode o
+                    instalador novamente.
+                  </p>
+                  <TestRow test={pgT.test} onTest={pgT.runTest} />
+                  <ActionRow
+                    onContinue={() => advanceAfterTest(pgT, 1)}
+                    busy={busy}
+                    testState={pgT.test.state}
+                  />
+                </StepShell>
+              )}
 
-          {step === 1 && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-2 text-white">
-                <Globe size={16} className="text-blue-400" />
-                <h3 className="text-sm font-medium">URL pública desta instância</h3>
-              </div>
-              <p className="text-sm text-neutral-400">
-                Usada para montar as URLs de webhook que você colará no Chatwoot e na API.
-              </p>
-              <Field label="Base URL">
-                <Input value={baseUrl} onChange={(e) => setBaseUrlValue(e.target.value)} />
-              </Field>
-              <ErrorText>{error}</ErrorText>
-              <Button onClick={saveBaseUrl} loading={busy}>
-                Continuar
-              </Button>
-            </div>
-          )}
+              {/* ── 1 · RabbitMQ ── */}
+              {step === 1 && (
+                <StepShell
+                  icon={<Network size={16} className="text-blue-400" />}
+                  title="Fila de mensagens (RabbitMQ)"
+                  desc="Confirme ou ajuste o acesso. Testamos automaticamente ao editar."
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Host"><Input value={rb.host} onChange={(e) => setRb({ ...rb, host: e.target.value })} /></Field>
+                    <Field label="Porta"><Input value={rb.port} onChange={(e) => setRb({ ...rb, port: e.target.value })} /></Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Usuário"><Input value={rb.user} onChange={(e) => setRb({ ...rb, user: e.target.value })} /></Field>
+                    <Field label="Senha"><Secret value={rb.password} onChange={(v) => setRb({ ...rb, password: v })} /></Field>
+                  </div>
+                  <Field label="VHost (padrão: /; nomeado: só o nome, ex.: padrao)">
+                    <Input value={rb.vhost} onChange={(e) => setRb({ ...rb, vhost: e.target.value })} placeholder="/" />
+                  </Field>
+                  <TestRow test={rbT.test} onTest={rbT.runTest} />
+                  <ActionRow
+                    onContinue={() => advanceAfterTest(rbT, 2)}
+                    onBack={() => setStep(0)}
+                    busy={busy}
+                    testState={rbT.test.state}
+                  />
+                </StepShell>
+              )}
 
-          {step === 2 && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-2 text-white">
-                <KeyRound size={16} className="text-blue-400" />
-                <h3 className="text-sm font-medium">Ativar licença</h3>
-                {license && (
-                  <Badge tone={license.status === 'active' ? 'ok' : 'neutral'}>{license.status}</Badge>
-                )}
-              </div>
-              <p className="text-sm text-neutral-400">Informe a chave adquirida (formato WTR-…).</p>
-              <Field label="Chave de licença">
-                <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="WTR-..." />
-              </Field>
-              <ErrorText>{error}</ErrorText>
-              <div className="flex items-center gap-4">
-                <Button onClick={activate} loading={busy}>
-                  Ativar
-                </Button>
-                <button onClick={() => setStep(3)} className="text-sm text-neutral-400 hover:text-white">
-                  Pular por enquanto
-                </button>
-              </div>
-            </div>
-          )}
+              {/* ── 2 · Redis ── */}
+              {step === 2 && (
+                <StepShell
+                  icon={<Boxes size={16} className="text-blue-400" />}
+                  title="Cache (Redis)"
+                  desc="Confirme ou ajuste o acesso. Testamos automaticamente ao editar."
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Host"><Input value={rd.host} onChange={(e) => setRd({ ...rd, host: e.target.value })} /></Field>
+                    <Field label="Porta"><Input value={rd.port} onChange={(e) => setRd({ ...rd, port: e.target.value })} /></Field>
+                  </div>
+                  <Field label="Senha (opcional)">
+                    <Secret value={rd.password} onChange={(v) => setRd({ ...rd, password: v })} />
+                  </Field>
+                  <TestRow test={rdT.test} onTest={rdT.runTest} />
+                  <ActionRow
+                    onContinue={() => advanceAfterTest(rdT, 3)}
+                    onBack={() => setStep(1)}
+                    busy={busy}
+                    testState={rdT.test.state}
+                  />
+                </StepShell>
+              )}
 
-          {step === 3 && (
-            <div className="space-y-5">
-              <div className="flex items-center gap-2 text-white">
-                <Plug size={16} className="text-blue-400" />
-                <h3 className="text-sm font-medium">Primeira integração</h3>
-              </div>
-              <p className="text-sm text-neutral-400">
-                Crie uma integração ligando uma conta/inbox do Chatwoot a uma API não-oficial. Você
-                poderá testar a conexão e copiar as URLs de webhook na própria tela.
-              </p>
-              <div className="flex items-center gap-4">
-                <Link to="/integrations/new">
-                  <Button>Criar integração</Button>
-                </Link>
-                <button onClick={finish} className="text-sm text-neutral-400 hover:text-white">
-                  Concluir e ir ao painel
-                </button>
-              </div>
-            </div>
+              {/* ── 3 · Public URL ── */}
+              {step === 3 && (
+                <StepShell
+                  icon={<Globe size={16} className="text-blue-400" />}
+                  title="URL pública desta instância"
+                  desc="Usada para montar as URLs de webhook que você cola no Chatwoot e na API."
+                >
+                  <Field label="Base URL">
+                    <Input value={baseUrl} onChange={(e) => setBaseUrlValue(e.target.value)} />
+                  </Field>
+                  <ErrorText>{error}</ErrorText>
+                  <div className="flex items-center gap-4">
+                    <Button onClick={() => setStep(4)}>Continuar</Button>
+                    <button onClick={() => setStep(2)} className="text-sm text-neutral-400 hover:text-white">
+                      Voltar
+                    </button>
+                  </div>
+                </StepShell>
+              )}
+
+              {/* ── 4 · License + finish ── */}
+              {step === 4 && (
+                <StepShell
+                  icon={<KeyRound size={16} className="text-blue-400" />}
+                  title="Licença"
+                  desc="Informe a chave adquirida (formato WTR-…) ou conclua sem licença."
+                  badge={license ? <Badge tone={license.status === 'active' ? 'ok' : 'neutral'}>{license.status}</Badge> : undefined}
+                >
+                  <Field label="Chave de licença">
+                    <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="WTR-..." />
+                  </Field>
+                  <ErrorText>{error}</ErrorText>
+                  <p className="text-xs text-neutral-500">
+                    Se você alterou RabbitMQ ou Redis, a aplicação reinicia ao concluir para aplicar —
+                    leva alguns segundos.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-4">
+                    <Button onClick={key.trim() ? activate : finish} loading={busy}>
+                      {key.trim() ? 'Ativar e concluir' : 'Concluir'}
+                    </Button>
+                    {key.trim() && (
+                      <button onClick={finish} className="text-sm text-neutral-400 hover:text-white">
+                        Concluir sem licença
+                      </button>
+                    )}
+                    <button onClick={() => setStep(3)} className="text-sm text-neutral-400 hover:text-white">
+                      Voltar
+                    </button>
+                  </div>
+                </StepShell>
+              )}
+            </>
           )}
         </Card>
       </div>
@@ -226,32 +404,120 @@ export default function SetupWizard() {
   );
 }
 
-function DiagLine({
-  label,
-  r,
-  busy,
+function StepShell({
+  icon,
+  title,
+  desc,
+  badge,
+  children,
 }: {
-  label: string;
-  r?: { ok: boolean; detail?: string };
-  busy: boolean;
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  badge?: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-sm text-neutral-200">{label}</span>
-      {busy && !r ? (
-        <span className="text-xs text-neutral-500">testando…</span>
-      ) : r ? (
-        <span className="flex items-center gap-2 min-w-0">
-          {r.detail && (
-            <span className="text-xs text-neutral-500 truncate max-w-[14rem]" title={r.detail}>
-              {r.detail}
-            </span>
-          )}
-          <Badge tone={r.ok ? 'ok' : 'error'}>{r.ok ? 'ok' : 'falhou'}</Badge>
+    <div className="space-y-5">
+      <div className="flex items-center gap-2 text-white">
+        {icon}
+        <h3 className="text-sm font-medium">{title}</h3>
+        {badge}
+      </div>
+      <p className="text-sm text-neutral-400">{desc}</p>
+      {children}
+    </div>
+  );
+}
+
+function TestRow({ test, onTest }: { test: TestState; onTest: () => Promise<boolean> }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/5 bg-[#121212] px-4 py-3">
+      <div className="flex items-center gap-2 min-w-0">
+        {test.state === 'testing' && <Loader2 size={14} className="animate-spin text-neutral-400" />}
+        {test.state === 'ok' && <Activity size={14} className="text-emerald-400" />}
+        {test.state === 'fail' && <Activity size={14} className="text-red-400" />}
+        <span className="text-xs text-neutral-400 truncate" title={test.detail}>
+          {test.state === 'idle' && 'aguardando…'}
+          {test.state === 'testing' && 'testando conexão…'}
+          {test.state === 'ok' && 'conexão ok'}
+          {test.state === 'fail' && `falhou${test.detail ? `: ${test.detail}` : ''}`}
         </span>
-      ) : (
-        <span className="text-xs text-neutral-600">—</span>
+      </div>
+      <button
+        type="button"
+        onClick={() => void onTest()}
+        className="text-xs text-neutral-400 hover:text-white shrink-0"
+      >
+        Testar agora
+      </button>
+    </div>
+  );
+}
+
+function ActionRow({
+  onContinue,
+  onBack,
+  busy,
+  testState,
+}: {
+  onContinue: () => void;
+  onBack?: () => void;
+  busy: boolean;
+  testState: TestState['state'];
+}) {
+  return (
+    <div className="flex items-center gap-4">
+      <Button onClick={onContinue} loading={busy || testState === 'testing'}>
+        Continuar
+      </Button>
+      {onBack && (
+        <button onClick={onBack} className="text-sm text-neutral-400 hover:text-white">
+          Voltar
+        </button>
       )}
+    </div>
+  );
+}
+
+function Secret({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="pr-12"
+        autoComplete="off"
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setShow((s) => !s)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-white transition-colors"
+        title={show ? 'Ocultar' : 'Mostrar'}
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  );
+}
+
+/** Full-screen wait while the container restarts — survives the backend going
+ *  away because it's already loaded in the browser and only polls /api/health. */
+function RestartScreen({ elapsed }: { elapsed: number }) {
+  return (
+    <div className="min-h-screen bg-black flex items-center justify-center px-6">
+      <div className="text-center max-w-md">
+        <Loader2 size={32} className="animate-spin text-blue-400 mx-auto" />
+        <h1 className="mt-6 text-2xl font-semibold text-white">Aplicando e reiniciando…</h1>
+        <p className="mt-3 text-sm text-neutral-400">
+          Seu Wootrico estará pronto em alguns segundos. Esta página redireciona sozinha — não feche o
+          navegador.
+        </p>
+        <p className="mt-4 text-xs text-neutral-600">aguardando há {elapsed}s</p>
+      </div>
     </div>
   );
 }

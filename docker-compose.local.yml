@@ -48,8 +48,9 @@ services:
     # sem emulação. Deixe WOOTRICO_PLATFORM vazio para auto-seleção; defina só se
     # quiser forçar uma arquitetura específica (ex: linux/amd64).
     platform: ${WOOTRICO_PLATFORM:-}
-    # Para buildar localmente em vez de puxar do Hub, comente a linha 'image' acima e descomente:
-    # build: { context: ., dockerfile: Dockerfile }
+    # Para buildar localmente em vez de puxar do Hub, comente a linha 'image' acima e descomente.
+    # IMPORTANTE: use o target 'runtime-app' (imagem do cliente, sem o servidor de licença):
+    # build: { context: ., dockerfile: Dockerfile, target: runtime-app }
     restart: unless-stopped
     env_file: .env
     command: >-
@@ -65,7 +66,7 @@ services:
   worker:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
     platform: ${WOOTRICO_PLATFORM:-}
-    # build: { context: ., dockerfile: Dockerfile }
+    # build: { context: ., dockerfile: Dockerfile, target: runtime-app }
     restart: unless-stopped
     env_file: .env
     command: node apps/worker/dist/main.cjs

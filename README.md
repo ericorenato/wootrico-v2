@@ -158,19 +158,39 @@ Chatwoot     ─▶ /webhook/:token/chatwoot ─┤ panel-api (ingress)
 
 ## 🔐 Servidor de licença (fornecedor)
 
-Hospedado **separadamente** dos clientes:
+Hospedado **separadamente** dos clientes, em uma **imagem própria** (`runtime-license`)
+que **nunca** é embarcada na imagem do cliente (`runtime-app`):
 
 ```bash
+# duas imagens a partir do mesmo Dockerfile:
+docker build --target runtime-app     -t ericoautomacao/wootrico-v2:latest .       # CLIENTE
+docker build --target runtime-license -t ericoautomacao/wootrico-license:latest .  # FORNECEDOR
+docker push ericoautomacao/wootrico-v2:latest
+docker push ericoautomacao/wootrico-license:latest
+
 node scripts/gen-license-keys.mjs                              # par Ed25519
 cp apps/license-server/.env.example apps/license-server/.env   # cole as chaves + ADMIN_TOKEN
+#   defina também LICENSE_ADMIN_EMAIL / LICENSE_ADMIN_PASSWORD (login do painel)
 docker compose -f docker-compose.license-server.yml up -d
-# criar/vender uma chave:
-curl -XPOST https://license.seudominio/admin/keys \
-  -H "authorization: Bearer SEU_ADMIN_TOKEN" -H 'content-type: application/json' \
-  -d '{"plan":"pro","email":"cliente@x.com"}'
 ```
 
-A chave (`WTR-…`) é entregue ao cliente; ela ativa **uma** instância.
+Fluxo de chaves:
+
+- **Autosserviço (padrão):** o cliente se cadastra no Wootrico (nome + e-mail) e clica
+  **“Obter licença”** — o servidor gera e vincula a chave à instância, registrando o IP
+  da máquina. Regra de uma chave ativa por instância.
+- **Manual:** crie uma chave pelo painel admin (`http://<host>:4000/`, login com
+  `LICENSE_ADMIN_EMAIL`/`PASSWORD`) ou via API:
+
+```bash
+curl -XPOST https://license.seudominio/admin/keys \
+  -H "authorization: Bearer SEU_ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"plan":"pro","email":"cliente@x.com","name":"Cliente X"}'
+```
+
+O **painel admin** (mesmo design do painel do cliente) lista chaves, ativa/desativa e
+mostra os **eventos de acesso/uso** (apenas metadados — IP, instância, versão; sem dados
+de conversa, em conformidade com a LGPD).
 
 ## 🛠️ Desenvolvimento
 
@@ -197,7 +217,7 @@ node --env-file-if-exists=.env scripts/m4-e2e.mjs   # licença: ativar/revogar/b
 ## 📁 Monorepo
 
 ```
-apps/      panel-api · panel-web · worker · license-server
+apps/      panel-api · panel-web · worker · license-server · license-admin-web
 packages/  config · db · types · providers · chatwoot-client · queue · cache · license-client
 ```
 

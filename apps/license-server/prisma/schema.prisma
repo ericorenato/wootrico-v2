@@ -15,6 +15,8 @@ model LicenseKey {
   keyHash        String       @unique @map("key_hash")
   plan           String       @default("pro")
   email          String?
+  name           String?
+  provisionedBy  String       @default("admin") @map("provisioned_by")
   features       Json?
   maxActivations Int          @default(1) @map("max_activations")
   revokedAt      DateTime?    @map("revoked_at")
@@ -31,12 +33,15 @@ model Activation {
   instanceId      String     @map("instance_id")
   appVersion      String?    @map("app_version")
   publicBaseUrl   String?    @map("public_base_url")
+  firstIp         String?    @map("first_ip")
+  lastIp          String?    @map("last_ip")
   boundAt         DateTime   @default(now()) @map("bound_at")
   lastHeartbeatAt DateTime?  @map("last_heartbeat_at")
   lastTelemetry   Json?      @map("last_telemetry")
   revokedAt       DateTime?  @map("revoked_at")
 
   @@unique([licenseKeyId, instanceId])
+  @@index([instanceId])
   @@map("activations")
 }
 
@@ -49,4 +54,22 @@ model HeartbeatLog {
 
   @@index([licenseKeyId, createdAt])
   @@map("heartbeat_log")
+}
+
+/// Unified, LGPD-safe access/usage log. Stores only operational metadata
+/// (event type, ip, app version, instanceId, timestamps) — never message
+/// or conversation content.
+model LicenseEvent {
+  id           String   @id @default(uuid())
+  licenseKeyId String?  @map("license_key_id")
+  instanceId   String?  @map("instance_id")
+  type         String
+  ip           String?
+  appVersion   String?  @map("app_version")
+  meta         Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([licenseKeyId, createdAt])
+  @@index([createdAt])
+  @@map("license_events")
 }

@@ -8,71 +8,17 @@ import {
   type ConnectionsState,
   type SaveConnectionsResult,
 } from '../lib/system-api';
-
-// ── URL <-> structured fields ──
-const enc = (s: string) => encodeURIComponent(s);
-const dec = (s: string) => {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-};
-
-type PgFields = { host: string; port: string; user: string; password: string; database: string; query: string };
-type RbFields = { host: string; port: string; user: string; password: string; vhost: string };
-type RdFields = { host: string; port: string; password: string };
-
-function parsePg(url: string): PgFields {
-  try {
-    const u = new URL(url);
-    return {
-      host: u.hostname,
-      port: u.port || '5432',
-      user: dec(u.username),
-      password: dec(u.password),
-      database: dec(u.pathname.replace(/^\//, '')),
-      query: u.search || '?schema=public',
-    };
-  } catch {
-    return { host: '', port: '5432', user: '', password: '', database: '', query: '?schema=public' };
-  }
-}
-function buildPg(f: PgFields): string {
-  const q = f.query || '?schema=public';
-  return `postgresql://${enc(f.user)}:${enc(f.password)}@${f.host}:${f.port}/${enc(f.database)}${q}`;
-}
-
-function parseRb(url: string): RbFields {
-  try {
-    const u = new URL(url);
-    const p = u.pathname;
-    const vhost = p && p.length > 1 ? dec(p.slice(1)) : '/';
-    return { host: u.hostname, port: u.port || '5672', user: dec(u.username), password: dec(u.password), vhost };
-  } catch {
-    return { host: '', port: '5672', user: '', password: '', vhost: '/' };
-  }
-}
-function buildRb(f: RbFields): string {
-  // Aceita o vhost só pelo nome (sem barra): 'padrao' ou '/padrao' → vhost
-  // 'padrao'. '/' (ou vazio) = vhost padrão, codificado como %2F.
-  let vh = (f.vhost || '/').trim();
-  if (vh !== '/') vh = vh.replace(/^\/+/, '') || '/';
-  const path = `/${enc(vh)}`;
-  return `amqp://${enc(f.user)}:${enc(f.password)}@${f.host}:${f.port}${path}`;
-}
-
-function parseRd(url: string): RdFields {
-  try {
-    const u = new URL(url);
-    return { host: u.hostname, port: u.port || '6379', password: dec(u.password) };
-  } catch {
-    return { host: '', port: '6379', password: '' };
-  }
-}
-function buildRd(f: RdFields): string {
-  return f.password ? `redis://:${enc(f.password)}@${f.host}:${f.port}` : `redis://${f.host}:${f.port}`;
-}
+import {
+  buildPg,
+  buildRb,
+  buildRd,
+  parsePg,
+  parseRb,
+  parseRd,
+  type PgFields,
+  type RbFields,
+  type RdFields,
+} from '../lib/connection-fields';
 
 function SecretInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [show, setShow] = useState(false);

@@ -66,7 +66,10 @@ enum WebhookSource {
 model AdminUser {
   id           String     @id @default(uuid())
   email        String     @unique
-  passwordHash String     @map("password_hash")
+  name         String?
+  passwordHash String?    @map("password_hash")
+  authProvider String     @default("password") @map("auth_provider")
+  googleSub    String?    @unique @map("google_sub")
   role         AdminRole  @default(owner)
   isActive     Boolean    @default(true) @map("is_active")
   lastLoginAt  DateTime?  @map("last_login_at")
@@ -147,7 +150,8 @@ model ContactIdentity {
   lid String? @unique // LID number, without the @lid suffix
   pn  String? @unique // phone number digits, without the @s.whatsapp.net suffix
 
-  pushName String? @map("push_name")
+  pushName  String? @map("push_name")
+  avatarUrl String? @map("avatar_url") // last WhatsApp profile picture URL seen
 
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { hashPassword } from '../lib/password.js';
 
 const CreateAdminSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(120),
   email: z.string().email(),
   password: z.string().min(8, 'Password must be at least 8 characters'),
 });
@@ -32,9 +33,9 @@ export default async function setupRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: 'admin_already_exists' });
     }
 
-    const { email, password } = parsed.data;
+    const { name, email, password } = parsed.data;
     const user = await app.prisma.adminUser.create({
-      data: { email, passwordHash: await hashPassword(password), role: 'owner' },
+      data: { name, email, passwordHash: await hashPassword(password), role: 'owner' },
     });
 
     // Ensure singletons exist.
@@ -52,7 +53,7 @@ export default async function setupRoutes(app: FastifyInstance) {
     const token = app.jwt.sign({ sub: user.id, email: user.email, role: user.role });
     return reply.code(201).send({
       token,
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
     });
   });
 

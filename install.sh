@@ -64,39 +64,9 @@ port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1 && { exec 3>&- 3
 containers_for() { $SUDO docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | grep -iE "$1" | awk '{print $1}'; }
 # Detecta um serviço por imagem de container OU porta em uso. $1=regex img $2=porta
 svc_detected() { [ -n "$(containers_for "$1")" ] && return 0; port_open "$2"; }
-# 0 se ALGUM container do serviço ($1=regex img) está na rede $NET_NAME.
-existing_on_selected_net() {
-  local c nets
-  for c in $(containers_for "$1"); do
-    nets="$($SUDO docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$c" 2>/dev/null)"
-    case " $nets " in *" ${NET_NAME} "*) return 0 ;; esac
-  done
-  return 1
-}
 # Lê uma senha sem ecoar; valor vai p/ stdout, prompt/linha p/ stderr.
 ask_pass() { local p="$1" a; read -rsp "$(echo -e "${C_C}?${C_0} ${p}: ")" a </dev/tty || true; printf '\n' >&2; printf '%s' "$a"; }
 
-# Executa uma verificação DENTRO da rede do Swarm. Redes overlay de stacks
-# normalmente NÃO são "attachable" (um 'docker run --network' não entra nelas e
-# não resolve nomes de serviço). Por isso usamos um SERVIÇO Swarm efêmero — ele
-# entra em qualquer overlay e enxerga nomes (ex.: postgres_postgres) e IPs reais.
-# Ecoa os logs do teste; o sucesso é avaliado por uma sentinela na saída.
-net_probe() { # imagem + comando…
-  local name="wttest_${RANDOM}${RANDOM}" i state
-  $SUDO docker service rm "$name" >/dev/null 2>&1 || true
-  if ! $SUDO docker service create --name "$name" --network "$NET_NAME" \
-        --restart-condition none --detach --quiet "$@" >/dev/null 2>&1; then
-    $SUDO docker service rm "$name" >/dev/null 2>&1 || true
-    return 1
-  fi
-  for i in $(seq 1 40); do
-    state="$($SUDO docker service ps "$name" --format '{{.CurrentState}}' 2>/dev/null | head -1)"
-    case "$state" in Complete*|Failed*|Rejected*|Shutdown*) break ;; esac
-    sleep 1
-  done
-  $SUDO docker service logs --raw "$name" 2>/dev/null
-  $SUDO docker service rm "$name" >/dev/null 2>&1 || true
-}
 # Nome DNS curto de um serviço existente na rede $NET_NAME (sem expor portas).
 # Convenção comum (Swarm/stack): o nome CURTO do serviço (ex.: 'postgres') é
 # registrado como alias de rede e resolve para qualquer container da mesma
@@ -112,24 +82,6 @@ svc_alias_on_net() { # $1 img-regex
     return 0
   done
   return 1
-}
-# Testes na rede do Swarm (sentinela na saída). 0 = sucesso.
-# Autentica no servidor (db de manutenção 'postgres') — não exige o banco-alvo.
-test_pg_server() { # host port user pass
-  net_probe -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc "select 'PGOK'" 2>/dev/null | grep -q PGOK
-}
-pg_db_exists() { # host port user pass db
-  net_probe -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -tAc "select 'DBEXISTS' from pg_database where datname='$5'" 2>/dev/null | grep -q DBEXISTS
-}
-pg_create_db() { # host port user pass db
-  net_probe -e PGPASSWORD="$4" postgres:16-alpine psql -h "$1" -p "$2" -U "$3" -d postgres -c "create database \"$5\"" 2>/dev/null | grep -qi 'CREATE DATABASE'
-}
-test_redis() { # host port pass
-  if [ -n "$3" ]; then net_probe redis:7-alpine redis-cli -h "$1" -p "$2" -a "$3" ping 2>/dev/null | grep -q PONG
-  else net_probe redis:7-alpine redis-cli -h "$1" -p "$2" ping 2>/dev/null | grep -q PONG; fi
-}
-test_rabbit_tcp() { # host port — alcance TCP (credenciais validadas no runtime)
-  net_probe busybox sh -c "nc -z -w3 $1 $2 && echo RBOK" 2>/dev/null | grep -q RBOK
 }
 
 # ───────────────────────────── INSTALL ─────────────────────────────
@@ -199,51 +151,27 @@ configure_env() {
   gen() { openssl rand -base64 "$1" | tr -d '\n='; }
   genhex() { openssl rand -hex "$1"; }
 
-  local AUTO=0; confirm "Gerar senhas/segredos automaticamente (recomendado)?" && AUTO=1
-  secret_for() {
-    local key="$1"; shift; local cur; cur="$(get_env "$key")"; [ -n "$cur" ] && { echo "$cur"; return; }
-    local val; val="$("$@")"
-    if [ "$AUTO" = 0 ]; then local t; t="$(ask "Valor para $key (enter = gerar)" "")"; [ -n "$t" ] && val="$t"; note "$key: definido manualmente"; else note "$key: gerado automaticamente"; fi
-    echo "$val"
-  }
+  # Segredos: SEMPRE automáticos (sem perguntas). Preserva valores já existentes.
+  JWT_SECRET="$(get_env JWT_SECRET)"; [ -z "$JWT_SECRET" ] && { JWT_SECRET="$(gen 48)"; note "JWT_SECRET: gerado automaticamente"; }
+  APP_ENCRYPTION_KEY="$(get_env APP_ENCRYPTION_KEY)"; [ -z "$APP_ENCRYPTION_KEY" ] && { APP_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"; note "APP_ENCRYPTION_KEY: gerado automaticamente"; }
 
   echo
   info "Informe o DOMÍNIO onde o Wootrico vai responder — é o endereço do PAINEL de"
   info "configuração e dos WEBHOOKS (a URL do webhook é derivada dele)."
-  info "Use um domínio/subdomínio que você controla. Exemplo: wootrico.suaempresa.com.br"
-  local SRV_IP; SRV_IP="$(public_ip)"
+  info "Use um domínio/subdomínio que você controla. Ex.: wootrico.suaempresa.com.br"
   while :; do
     DOMAIN="$(ask "Domínio do Wootrico (painel + webhooks)" "$(get_env DOMAIN)")"
-    [ -z "$DOMAIN" ] && { warn "Informe um domínio."; continue; }
-    info "Testando o domínio '${DOMAIN}' (resolução DNS/ping)…"
-    local DOM_IP; DOM_IP="$(resolve_domain_ip "$DOMAIN")"
-    if [ -n "$DOM_IP" ]; then
-      ok "Domínio responde: '${DOMAIN}' → ${DOM_IP}."
-      if [ -n "$SRV_IP" ] && [ "$DOM_IP" != "$SRV_IP" ]; then
-        warn "Porém o IP do domínio (${DOM_IP}) é DIFERENTE do IP deste servidor (${SRV_IP})."
-        warn "Para o Traefik emitir o certificado digital, o domínio deve apontar para ${SRV_IP}."
-        confirm "Continuar mesmo assim?" || continue
-      fi
-      break
-    fi
-    warn "O domínio '${DOMAIN}' NÃO respondeu (sem registro/propagação de DNS)."
-    warn "Registre um registro A de '${DOMAIN}' → ${SRV_IP:-IP deste servidor} no seu painel DNS"
-    warn "ANTES de continuar. Sem isso o Traefik NÃO gera o certificado digital (Let's Encrypt)"
-    warn "e o painel não abre pelo domínio."
-    confirm "Já registrei / quero tentar de novo? ('n' = continuar assim mesmo, não recomendado)" || break
+    [ -n "$DOMAIN" ] && break
+    warn "Informe um domínio."
   done
-  echo
+  info "Aponte um registro A de '${DOMAIN}' para o IP deste servidor para o TLS (Let's Encrypt) emitir o certificado."
 
-  # Só precisamos do e-mail do Let's Encrypt quando o Wootrico instala o Traefik.
+  # E-mail do Let's Encrypt só quando o Wootrico instala o Traefik (default: admin@domínio).
   if [ "${USE_TRAEFIK:-1}" = 1 ]; then
-    ACME_EMAIL="$(ask "E-mail para o certificado TLS (Let's Encrypt)" "$(get_env ACME_EMAIL)")"
+    ACME_EMAIL="$(ask "E-mail para o certificado TLS (Let's Encrypt)" "$(keep_or ACME_EMAIL "admin@${DOMAIN}")")"
   else
     ACME_EMAIL="$(get_env ACME_EMAIL)"
   fi
-  # Licenciamento NÃO é configurado aqui: é validado pela aplicação e será
-  # provisionado automaticamente por uma ferramenta nossa (a ser implementada).
-  JWT_SECRET="$(secret_for JWT_SECRET gen 48)"
-  APP_ENCRYPTION_KEY="$(get_env APP_ENCRYPTION_KEY)"; [ -z "$APP_ENCRYPTION_KEY" ] && { APP_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\n')"; note "APP_ENCRYPTION_KEY: gerado automaticamente"; }
 
   set_env DOMAIN "$DOMAIN"; set_env ACME_EMAIL "$ACME_EMAIL"
   set_env WOOTRICO_TRAEFIK "${USE_TRAEFIK:-1}"
@@ -284,15 +212,6 @@ public_ip() {
   [ -z "$ip" ] && ip="$(curl -s --max-time 4 https://ifconfig.me 2>/dev/null)"
   [ -z "$ip" ] && ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo "$ip"
-}
-# Resolve o IP de um domínio (getent → dig → host → ping). Vazio se não resolver.
-resolve_domain_ip() {
-  local d="$1" ip=""
-  ip="$(getent hosts "$d" 2>/dev/null | awk '{print $1; exit}')"
-  [ -z "$ip" ] && command -v dig  >/dev/null 2>&1 && ip="$(dig +short A "$d" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)"
-  [ -z "$ip" ] && command -v host >/dev/null 2>&1 && ip="$(host "$d" 2>/dev/null | awk '/has address/{print $4; exit}')"
-  [ -z "$ip" ] && ip="$(ping -c1 -W2 "$d" 2>/dev/null | sed -n 's/.*(\([0-9.]*\)).*/\1/p' | head -1)"
-  printf '%s' "$ip"
 }
 
 # Detecta um Traefik já em execução (Swarm ou container) para não duplicar o
@@ -376,136 +295,79 @@ decide_network() {
   fi
 }
 
-# Decide, para Postgres/RabbitMQ/Redis: reusar um existente (conectar) OU subir
-# uma instância própria do Wootrico (na rede selecionada). Regra do usuário:
-#  - se o serviço existe e JÁ está na rede do Wootrico → pode reusar;
-#  - se existe mas está em OUTRA rede → sugere instância nova (com porta alterada)
-#    na rede do Wootrico (o instalador não move serviços entre redes);
-#  - se não existe → instância nova com portas padrão.
-# Senha em branco numa instância nova → gerada automaticamente.
+# Banco/Fila/Cache — versão MÍNIMA. O instalador decide só o ESSENCIAL para subir:
+# para cada serviço, se já existe no ambiente, pergunta se quer reaproveitar;
+# senão, sobe um embarcado (segredos automáticos). Sem testes/loops aqui — o
+# ASSISTENTE do 1º acesso valida e refina host/usuário/senha/vhost de cada
+# serviço, com teste de conexão automático.
+# Exceção: o Postgres é necessário JÁ no 1º start (o painel guarda os dados nele),
+# então, ao reaproveitar um Postgres externo, pedimos o acesso aqui mesmo.
 decide_infra() {
-  title "Banco / Fila / Cache (Postgres · RabbitMQ · Redis)"
+  title "Banco · Fila · Cache (Postgres · RabbitMQ · Redis)"
+  info "O instalador decide só o necessário para subir. Ajustes finos (host, usuário,"
+  info "senha, vhost) ficam no assistente do 1º acesso, com teste de conexão automático."
   local gw; gw="$(host_gw)"
-  # Segurança: remove serviços de teste órfãos de uma execução interrompida.
-  { $SUDO docker service ls --format '{{.Name}}' 2>/dev/null | grep -E '^wttest_' \
-    | while read -r s; do $SUDO docker service rm "$s" >/dev/null 2>&1 || true; done; } || true
 
+  # Para um serviço: define __MODE (new|existing) e __DEFHOST (host sugerido).
   _infra_one() { # $1 label  $2 img-regex  $3 porta-padrão
-    local label="$1" img="$2" defport="$3" exists=0 samenet=0 sugg_new=1
-    svc_detected "$img" "$defport" && exists=1
-    if [ "$exists" = 1 ]; then
-      if existing_on_selected_net "$img"; then samenet=1; sugg_new=0; fi
+    local label="$1" img="$2" defport="$3"
+    __MODE=new; __DEFHOST=""
+    if svc_detected "$img" "$defport"; then
+      local alias; alias="$(svc_alias_on_net "$img")"; [ -z "$alias" ] && alias="${gw:-127.0.0.1}"
       echo
-      if [ "$samenet" = 1 ]; then
-        warn "${label} detectado e JÁ na rede '${NET_NAME}'."
-        info "Você pode REUSAR esse ${label} (conectar a ele) ou subir uma instância nova do Wootrico."
-      else
-        warn "${label} detectado, mas NÃO está na rede '${NET_NAME}' (ou está em outra rede)."
-        info "Não dá para alcançá-lo a partir da rede do Wootrico sem alterá-lo. Sugiro subir uma instância NOVA (com porta alterada) na rede do Wootrico."
+      warn "${label} já existe neste ambiente (host sugerido: ${alias})."
+      if confirm "Reaproveitar o ${label} existente? ('n' = subir um novo do Wootrico)"; then
+        __MODE=existing; __DEFHOST="$alias"
       fi
-    fi
-    # Pergunta o modo. Default: reusar só quando existe e está na mesma rede.
-    local mode
-    if [ "$exists" = 1 ] && [ "$sugg_new" = 0 ]; then
-      confirm "Reusar o ${label} existente (responder 'n' = subir um novo)?" && mode=existing || mode=new
-    elif [ "$exists" = 1 ]; then
-      confirm "Subir uma instância NOVA do ${label} na rede do Wootrico (recomendado)? ('n' = reusar mesmo assim)" && mode=new || mode=existing
     else
-      info "${label} não detectado — vou subir uma instância nova do Wootrico."
-      mode=new
+      info "${label} não encontrado — vou subir um embarcado."
     fi
-    __MODE="$mode"
   }
 
-  # ---- Postgres ----
+  # ---- Postgres (boot-crítico: precisa de acesso já no 1º start) ----
   PG_USER="$(genv POSTGRES_USER)"; PG_USER="${PG_USER:-wootrico}"
   PG_DB="$(genv POSTGRES_DB)";     PG_DB="${PG_DB:-wootrico}"
   PG_PASS="$(genv POSTGRES_PASSWORD)"
   _infra_one Postgres 'postgres|postgis' 5432; PG_MODE="$__MODE"
   if [ "$PG_MODE" = existing ]; then
-    local pg_def; pg_def="$(svc_alias_on_net 'postgres|postgis')"; [ -z "$pg_def" ] && pg_def="${gw:-127.0.0.1}"
-    info "Acesso interno pela rede '${NET_NAME}': use o NOME do serviço (não precisa expor portas)."
-    while :; do
-      PG_HOST="$(ask "Host do Postgres (nome do serviço na rede / IP)" "$pg_def")"
-      PG_PORT="$(ask "Porta do Postgres (interna na rede)" "5432")"
-      PG_USER="$(ask "Usuário do Postgres" "$PG_USER")"
-      local p; p="$(ask_pass "Senha do Postgres")"; [ -n "$p" ] && PG_PASS="$p"
-      PG_DB="$(ask "Banco do Wootrico (será criado se não existir)" "$PG_DB")"
-      info "Testando autenticação no servidor Postgres (${PG_HOST}:${PG_PORT})…"
-      if test_pg_server "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS"; then
-        ok "Postgres: autenticação OK."
-        if pg_db_exists "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS" "$PG_DB"; then
-          ok "Banco '${PG_DB}' já existe."
-        elif confirm "Banco '${PG_DB}' não existe. Criar agora?"; then
-          pg_create_db "$PG_HOST" "$PG_PORT" "$PG_USER" "$PG_PASS" "$PG_DB" \
-            && ok "Banco '${PG_DB}' criado." \
-            || warn "Não consegui criar o banco (privilégios?). Crie manualmente: CREATE DATABASE \"${PG_DB}\";"
-        else
-          warn "Crie o banco '${PG_DB}' antes do 1º start (o app roda as migrations)."
-        fi
-        break
-      fi
-      warn "Não consegui autenticar no Postgres (host/porta/usuário/senha)."
-      confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
-    done
+    info "O painel guarda os dados no Postgres — informe o acesso ao banco existente."
+    PG_HOST="$(ask "Host do Postgres (nome do serviço na rede / IP)" "${__DEFHOST:-${gw:-127.0.0.1}}")"
+    PG_PORT="$(ask "Porta do Postgres" "5432")"
+    PG_USER="$(ask "Usuário do Postgres" "$PG_USER")"
+    local pp; pp="$(ask_pass "Senha do Postgres")"; [ -n "$pp" ] && PG_PASS="$pp"
+    PG_DB="$(ask "Banco do Wootrico (crie-o antes, se não existir)" "$PG_DB")"
   else
     PG_HOST="postgres"
-    PG_PORT="$(ask "Porta do Postgres (nova instância)" "$(svc_detected 'postgres|postgis' 5432 && echo 5433 || echo 5432)")"
-    local p; p="$(ask_pass "Senha do Postgres (enter = manter/gerar)")"; [ -n "$p" ] && PG_PASS="$p"
+    PG_PORT="$(svc_detected 'postgres|postgis' 5432 && echo 5433 || echo 5432)"
     [ -z "$PG_PASS" ] && { PG_PASS="$(openssl rand -hex 16)"; note "Postgres: senha gerada automaticamente"; }
   fi
   ok "Postgres: ${PG_MODE} → ${PG_HOST}:${PG_PORT}"; note "Postgres: ${PG_MODE} (${PG_HOST}:${PG_PORT})"
 
-  # ---- RabbitMQ ----
+  # ---- RabbitMQ (refinado no assistente) ----
   RB_USER="$(genv RABBITMQ_USER)"; RB_USER="${RB_USER:-wootrico}"
   RB_PASS="$(genv RABBITMQ_PASSWORD)"
   RB_VHOST="$(genv RABBITMQ_VHOST)"; RB_VHOST="${RB_VHOST:-/}"
   _infra_one RabbitMQ 'rabbitmq' 5672; RB_MODE="$__MODE"
   if [ "$RB_MODE" = existing ]; then
-    local rb_def; rb_def="$(svc_alias_on_net 'rabbitmq')"; [ -z "$rb_def" ] && rb_def="${gw:-127.0.0.1}"
-    info "Acesso interno pela rede '${NET_NAME}': use o NOME do serviço (não precisa expor portas)."
-    while :; do
-      RB_HOST="$(ask "Host do RabbitMQ (nome do serviço na rede / IP)" "$rb_def")"
-      RB_PORT="$(ask "Porta AMQP do RabbitMQ (interna na rede)" "5672")"
-      RB_USER="$(ask "Usuário do RabbitMQ" "$RB_USER")"
-      local p; p="$(ask_pass "Senha do RabbitMQ")"; [ -n "$p" ] && RB_PASS="$p"
-      # Muitos RabbitMQ gerenciados usam um vhost nomeado; o padrão é '/'.
-      RB_VHOST="$(ask "VHost do RabbitMQ (padrão: /; nomeado: digite só o nome, ex.: padrao)" "$RB_VHOST")"
-      # Aceita só o nome: '/padrao' ou 'padrao' viram o vhost 'padrao'. '/' = padrão.
-      [ "$RB_VHOST" != "/" ] && RB_VHOST="${RB_VHOST#/}"; RB_VHOST="${RB_VHOST:-/}"
-      info "Testando alcance do RabbitMQ (${RB_HOST}:${RB_PORT})…"
-      if test_rabbit_tcp "$RB_HOST" "$RB_PORT"; then ok "RabbitMQ: porta acessível (usuário/senha/vhost serão validados na conexão do worker)."; break; fi
-      warn "Não consegui alcançar o RabbitMQ em ${RB_HOST}:${RB_PORT}."
-      confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
-    done
+    RB_HOST="${__DEFHOST:-${gw:-127.0.0.1}}"; RB_PORT=5672
+    info "Usuário/senha/vhost do RabbitMQ você confirma no assistente do 1º acesso."
   else
     RB_HOST="rabbitmq"
-    RB_PORT="$(ask "Porta AMQP do RabbitMQ (nova instância)" "$(svc_detected 'rabbitmq' 5672 && echo 5673 || echo 5672)")"
-    local p; p="$(ask_pass "Senha do RabbitMQ (enter = manter/gerar)")"; [ -n "$p" ] && RB_PASS="$p"
+    RB_PORT="$(svc_detected 'rabbitmq' 5672 && echo 5673 || echo 5672)"
     [ -z "$RB_PASS" ] && { RB_PASS="$(openssl rand -hex 16)"; note "RabbitMQ: senha gerada automaticamente"; }
-    RB_VHOST="$(ask "VHost do RabbitMQ (padrão: /)" "$RB_VHOST")"
   fi
   ok "RabbitMQ: ${RB_MODE} → ${RB_HOST}:${RB_PORT} (vhost ${RB_VHOST})"; note "RabbitMQ: ${RB_MODE} (${RB_HOST}:${RB_PORT} vhost ${RB_VHOST})"
 
-  # ---- Redis ----
+  # ---- Redis (refinado no assistente) ----
   RD_PASS="$(genv REDIS_PASSWORD)"
   _infra_one Redis 'redis' 6379; RD_MODE="$__MODE"
   if [ "$RD_MODE" = existing ]; then
-    local rd_def; rd_def="$(svc_alias_on_net 'redis')"; [ -z "$rd_def" ] && rd_def="${gw:-127.0.0.1}"
-    info "Acesso interno pela rede '${NET_NAME}': use o NOME do serviço (não precisa expor portas)."
-    while :; do
-      RD_HOST="$(ask "Host do Redis (nome do serviço na rede / IP)" "$rd_def")"
-      RD_PORT="$(ask "Porta do Redis (interna na rede)" "6379")"
-      local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; RD_PASS="$p"
-      info "Testando conexão com o Redis (${RD_HOST}:${RD_PORT})…"
-      if test_redis "$RD_HOST" "$RD_PORT" "$RD_PASS"; then ok "Redis: conexão OK."; break; fi
-      warn "Não consegui conectar/autenticar no Redis."
-      confirm "Corrigir os dados e tentar de novo? ('n' = seguir mesmo assim)" || { warn "Seguindo sem validar — confirme os dados depois."; break; }
-    done
+    RD_HOST="${__DEFHOST:-${gw:-127.0.0.1}}"; RD_PORT=6379
+    info "Senha do Redis (se houver) você confirma no assistente do 1º acesso."
   else
     RD_HOST="redis"
-    RD_PORT="$(ask "Porta do Redis (nova instância)" "$(svc_detected 'redis' 6379 && echo 6380 || echo 6379)")"
-    local p; p="$(ask_pass "Senha do Redis (enter = sem senha)")"; [ -n "$p" ] && RD_PASS="$p"
+    RD_PORT="$(svc_detected 'redis' 6379 && echo 6380 || echo 6379)"
+    # Redis embarcado sem senha por padrão (rede interna do Swarm).
   fi
   ok "Redis: ${RD_MODE} → ${RD_HOST}:${RD_PORT}"; note "Redis: ${RD_MODE} (${RD_HOST}:${RD_PORT})"
 }

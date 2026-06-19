@@ -11,6 +11,7 @@ import healthRoutes from './routes/health.js';
 import setupRoutes from './routes/setup.js';
 import authRoutes from './routes/auth.js';
 import integrationRoutes from './routes/integrations.js';
+import contactRoutes from './routes/contacts.js';
 import licenseRoutes from './routes/license.js';
 import systemRoutes from './routes/system.js';
 import webhookRoutes from './routes/webhooks.js';
@@ -56,6 +57,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(setupRoutes);
   await app.register(authRoutes);
   await app.register(integrationRoutes);
+  await app.register(contactRoutes);
   await app.register(licenseRoutes);
   await app.register(systemRoutes);
   await app.register(webhookRoutes);

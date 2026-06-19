@@ -1,24 +1,21 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, getToken, setToken } from './api-client';
 
-export interface User {
-  id: string;
+export interface AdminUser {
   email: string;
-  name?: string | null;
-  role: string;
 }
 
 interface AuthState {
-  user: User | null;
+  user: AdminUser | null;
   loading: boolean;
-  login: (token: string, user: User) => void;
+  login: (token: string, user: AdminUser) => void;
   logout: () => void;
 }
 
 const AuthCtx = createContext<AuthState | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AdminUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,8 +24,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    api<{ user: User }>('/api/auth/me')
-      .then((r) => setUser(r.user))
+    // /admin/me just validates the token; reconstruct the user from storage.
+    api<{ ok: boolean }>('/admin/me')
+      .then(() => setUser({ email: localStorage.getItem('wootrico.license-admin.email') ?? '' }))
       .catch(() => setToken(null))
       .finally(() => setLoading(false));
   }, []);
@@ -39,10 +37,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login: (token, u) => {
         setToken(token);
+        localStorage.setItem('wootrico.license-admin.email', u.email);
         setUser(u);
       },
       logout: () => {
         setToken(null);
+        localStorage.removeItem('wootrico.license-admin.email');
         setUser(null);
       },
     }),

@@ -1,6 +1,10 @@
-# VENDOR-ONLY: the central license server (you host this, not your customers).
+# VENDOR-ONLY: the central license server + admin panel (you host this, not your customers).
+# Uses the SEPARATE vendor image (runtime-license target) — never the customer image.
+#   docker build --target runtime-license -t ericoautomacao/wootrico-license:latest .
 #   cp apps/license-server/.env.example apps/license-server/.env   # fill secrets
 #   docker compose -f docker-compose.license-server.yml up -d
+# Admin panel is served by the license-server at http://<host>:4000/ (login with
+# LICENSE_ADMIN_EMAIL / LICENSE_ADMIN_PASSWORD).
 services:
   license-postgres:
     image: postgres:16-alpine
@@ -18,7 +22,7 @@ services:
       retries: 12
 
   license-server:
-    image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
+    image: ${WOOTRICO_LICENSE_IMAGE:-ericoautomacao/wootrico-license:latest}
     platform: ${WOOTRICO_PLATFORM:-}
     restart: unless-stopped
     env_file: apps/license-server/.env

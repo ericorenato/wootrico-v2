@@ -1,5 +1,6 @@
 import { hmac, logger } from '@wootrico/config';
 import { cacheGet, cacheSet } from '@wootrico/cache';
+import { prisma } from '@wootrico/db';
 import type { ChatwootClient } from '@wootrico/chatwoot-client';
 import type { WhatsAppProvider } from '@wootrico/providers';
 
@@ -63,6 +64,12 @@ export async function syncContactMeta(opts: {
   if (avatarUrl) {
     update.avatarUrl = avatarUrl;
     avatarDone = true;
+    // Mirror it onto the GLOBAL identity row so the panel's contacts list can
+    // show it. Best-effort: identifier is the canonical id for DMs; a non-UUID
+    // fallback (phone/jid) simply matches no row and is swallowed.
+    await prisma.contactIdentity
+      .update({ where: { id: opts.identifier }, data: { avatarUrl } })
+      .catch(() => undefined);
   }
 
   if (Object.keys(update).length) {

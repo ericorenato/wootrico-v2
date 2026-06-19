@@ -87,6 +87,13 @@ export const saveConnections = (body: {
 export const restartSystem = () =>
   api<{ ok: boolean }>('/api/system/restart', { method: 'POST' });
 
+/** Test a single connection URL without persisting (wizard auto-test). */
+export const testConnection = (service: 'postgres' | 'rabbitmq' | 'redis', url: string) =>
+  api<PingResult>('/api/system/connections/test', {
+    method: 'POST',
+    body: JSON.stringify({ service, url }),
+  });
+
 export interface LogEntry {
   id: string;
   at: string;

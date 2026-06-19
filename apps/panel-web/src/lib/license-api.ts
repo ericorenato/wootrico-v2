@@ -19,5 +19,11 @@ export const activateLicense = (licenseKey: string) =>
     body: JSON.stringify({ licenseKey }),
   });
 
+export const provisionLicense = () =>
+  api<{ status: string; features: Record<string, unknown>; instanceId: string }>(
+    '/api/license/provision',
+    { method: 'POST' },
+  );
+
 export const deactivateLicense = () =>
   api<void>('/api/license/deactivate', { method: 'POST' });

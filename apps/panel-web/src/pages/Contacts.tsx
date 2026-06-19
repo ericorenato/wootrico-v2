@@ -1,0 +1,244 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Download, Search, User, Users } from 'lucide-react';
+import { Button, CopyButton, Eyebrow } from '../components/ui';
+import { exportContacts, listContacts, type ContactDTO } from '../lib/contacts-api';
+
+const PAGE_SIZE = 50;
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function initials(c: ContactDTO): string {
+  const base = (c.pushName ?? c.pn ?? c.lid ?? '?').trim();
+  const parts = base.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0]![0]}${parts[1]![0]}`.toUpperCase();
+  return (base.slice(0, 2) || '?').toUpperCase();
+}
+
+/** Stable, non-UUID key (the canonical id is never exposed to the client). */
+function contactKey(c: ContactDTO): string {
+  return `${c.lid ?? ''}|${c.pn ?? ''}`;
+}
+
+function Avatar({ contact }: { contact: ContactDTO }) {
+  const [failed, setFailed] = useState(false);
+  const showImg = contact.avatarUrl && !failed;
+  return (
+    <div className="w-9 h-9 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+      {showImg ? (
+        <img
+          src={contact.avatarUrl ?? ''}
+          alt=""
+          className="w-full h-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="text-[11px] font-medium text-neutral-400">{initials(contact)}</span>
+      )}
+    </div>
+  );
+}
+
+function Mono({ value }: { value: string | null }) {
+  if (!value) return <span className="text-neutral-600">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 group/mono">
+      <span className="font-mono text-xs text-neutral-300 truncate" title={value}>
+        {value}
+      </span>
+      <CopyButton value={value} className="opacity-0 group-hover/mono:opacity-100" />
+    </span>
+  );
+}
+
+export default function Contacts() {
+  const [contacts, setContacts] = useState<ContactDTO[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState(''); // debounced value sent to the API
+  const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState('');
+
+  // Debounce the search box so we don't hit the API on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const load = useCallback(async (p: number, q: string, append: boolean) => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await listContacts({ search: q || undefined, page: p, pageSize: PAGE_SIZE });
+      setTotal(res.total);
+      setPage(res.page);
+      setContacts((prev) => (append ? [...prev, ...res.contacts] : res.contacts));
+    } catch {
+      setError('Falha ao carregar os contatos.');
+      if (!append) setContacts([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Reload from the first page whenever the (debounced) query changes.
+  useEffect(() => {
+    void load(1, query, false);
+  }, [query, load]);
+
+  const hasMore = contacts.length < total;
+
+  async function onExport() {
+    setExporting(true);
+    setError('');
+    try {
+      await exportContacts(query || undefined);
+    } catch {
+      setError('Falha ao exportar os contatos.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <div className="max-w-6xl">
+      <div className="flex items-start justify-between gap-4 mb-8">
+        <div>
+          <Eyebrow>Diretório</Eyebrow>
+          <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Contatos</h1>
+          <p className="mt-2 text-sm text-neutral-400">
+            Diretório global de contatos do WhatsApp descobertos pelas integrações, com seus
+            identificadores (número, LID e JID), nome e datas de cadastro e atualização.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          title="Exportar contatos em CSV"
+          onClick={onExport}
+          loading={exporting}
+          disabled={total === 0}
+        >
+          <Download size={16} />
+          Exportar
+        </Button>
+      </div>
+
+      {/* search */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="relative flex-1 max-w-md">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
+          />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por número, LID ou nome…"
+            className="w-full bg-[#121212] border border-white/5 rounded-xl pl-9 pr-4 py-2.5 text-sm text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-blue-500/30 focus:bg-white/5 transition-all"
+          />
+        </div>
+        <span className="text-xs text-neutral-500 tabular-nums">
+          {total} {total === 1 ? 'contato' : 'contatos'}
+        </span>
+      </div>
+
+      {error && <p className="text-sm text-red-400 mb-3">{error}</p>}
+
+      <div className="rounded-2xl border border-white/5 bg-[#0B0B0D] overflow-hidden">
+        {/* header */}
+        <div className="hidden md:grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] gap-4 px-4 py-3 border-b border-white/5 text-[11px] uppercase tracking-wider text-neutral-500">
+          <span>Contato</span>
+          <span>Número</span>
+          <span>LID</span>
+          <span>JID</span>
+          <span>Cadastro</span>
+          <span>Atualização</span>
+        </div>
+
+        <div className="divide-y divide-white/[0.04]">
+          {contacts.length === 0 && !loading ? (
+            <div className="flex flex-col items-center text-center py-12 gap-3">
+              <Users className="text-neutral-700" size={32} />
+              <p className="text-sm text-neutral-500">
+                {query ? 'Nenhum contato encontrado para a busca.' : 'Nenhum contato registrado ainda.'}
+              </p>
+            </div>
+          ) : (
+            contacts.map((c) => (
+              <div
+                key={contactKey(c)}
+                className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] gap-2 md:gap-4 px-4 py-3 hover:bg-white/[0.025] items-center"
+              >
+                {/* contact (avatar + name) */}
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar contact={c} />
+                  <div className="min-w-0">
+                    <p className="text-sm text-neutral-100 truncate">
+                      {c.pushName ?? <span className="text-neutral-500">sem nome</span>}
+                    </p>
+                    <p className="md:hidden text-[11px] text-neutral-600">
+                      {fmtDateTime(c.createdAt)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="min-w-0">
+                  <span className="md:hidden text-[11px] uppercase tracking-wider text-neutral-600 mr-2">
+                    Número
+                  </span>
+                  <Mono value={c.pn} />
+                </div>
+                <div className="min-w-0">
+                  <span className="md:hidden text-[11px] uppercase tracking-wider text-neutral-600 mr-2">
+                    LID
+                  </span>
+                  <Mono value={c.lid} />
+                </div>
+                <div className="min-w-0">
+                  <span className="md:hidden text-[11px] uppercase tracking-wider text-neutral-600 mr-2">
+                    JID
+                  </span>
+                  <Mono value={c.jid} />
+                </div>
+                <div className="hidden md:block text-xs text-neutral-400 tabular-nums">
+                  {fmtDateTime(c.createdAt)}
+                </div>
+                <div className="hidden md:block text-xs text-neutral-400 tabular-nums">
+                  {fmtDateTime(c.updatedAt)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {hasMore && (
+          <div className="px-4 py-3 border-t border-white/5 text-center">
+            <button
+              onClick={() => void load(page + 1, query, true)}
+              disabled={loading}
+              className="text-sm text-neutral-400 hover:text-white disabled:opacity-50"
+            >
+              {loading ? 'Carregando…' : 'Carregar mais'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-center gap-2 text-xs text-neutral-600">
+        <User size={12} />
+        O identificador interno (UUID) não é exibido. A foto do perfil pode não estar disponível.
+      </div>
+    </div>
+  );
+}

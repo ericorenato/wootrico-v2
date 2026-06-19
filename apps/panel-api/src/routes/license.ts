@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   activateLicense,
+  provisionLicense,
   deactivateLicense,
   evaluateLicense,
   getLicenseState,
@@ -36,6 +37,24 @@ export default async function licenseRoutes(app: FastifyInstance) {
       const result = await activateLicense(p.data.licenseKey);
       await app.prisma.auditLog.create({
         data: { adminUserId: req.user.sub, action: 'license.activated', entityType: 'license' },
+      });
+      return result;
+    } catch (err) {
+      if (err instanceof LicenseError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // Self-service: provision + bind a key using the logged-in admin's identity.
+  app.post('/api/license/provision', guard, async (req, reply) => {
+    const user = await app.prisma.adminUser.findUnique({ where: { id: req.user.sub } });
+    try {
+      const result = await provisionLicense({
+        name: user?.name ?? null,
+        email: user?.email ?? req.user.email ?? null,
+      });
+      await app.prisma.auditLog.create({
+        data: { adminUserId: req.user.sub, action: 'license.provisioned', entityType: 'license' },
       });
       return result;
     } catch (err) {

@@ -11,4 +11,9 @@ export const cfg = {
   adminToken: required('ADMIN_TOKEN'),
   tokenTtlDays: Number(process.env.LICENSE_TOKEN_TTL_DAYS ?? 14),
   nodeEnv: process.env.NODE_ENV ?? 'development',
+  // Admin web panel credentials (optional). When set, /admin/login issues a JWT;
+  // when unset, the panel login is disabled and only ADMIN_TOKEN (Bearer) works.
+  adminEmail: process.env.LICENSE_ADMIN_EMAIL,
+  adminPassword: process.env.LICENSE_ADMIN_PASSWORD,
+  adminJwtSecret: process.env.LICENSE_ADMIN_JWT_SECRET ?? required('ADMIN_TOKEN'),
 };

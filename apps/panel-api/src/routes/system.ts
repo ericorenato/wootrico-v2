@@ -225,6 +225,26 @@ export default async function systemRoutes(app: FastifyInstance) {
     return { ok: true, results };
   });
 
+  // ── test a SINGLE connection URL without persisting ──
+  // Powers the wizard's auto-test as the user edits fields (host/user/pass/
+  // vhost). Body: { service: 'postgres'|'rabbitmq'|'redis', url }. Returns the
+  // raw test result; nothing is saved.
+  app.post('/api/system/connections/test', guard, async (req) => {
+    const body = (req.body ?? {}) as { service?: string; url?: string };
+    const url = String(body.url ?? '').trim();
+    if (!url) return { ok: false, detail: 'informe a URL' };
+    const tester =
+      body.service === 'rabbitmq'
+        ? testRabbitUrl
+        : body.service === 'redis'
+          ? testRedisUrl
+          : body.service === 'postgres'
+            ? testPgUrl
+            : null;
+    if (!tester) return { ok: false, detail: 'serviço inválido' };
+    return tester(url);
+  });
+
   // ── system logs (console) ──
   // A unified, CONTENT-FREE feed of admin actions (audit_logs) and webhook
   // events (webhook_events). Never includes message bodies or media — only the
