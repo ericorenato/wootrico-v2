@@ -51,6 +51,12 @@ export interface NormalizedInboundMessage {
   providerMessageId: string | null;
   replyToProviderMessageId?: string | null;
   editedProviderMessageId?: string | null;
+  /**
+   * True when we know a message was edited but the new text is NOT available
+   * (e.g. Evolution GO forwards the edit as an undecrypted `secretEncryptedMessage`).
+   * The handler then posts a "contact edited this message" note instead of content.
+   */
+  editedContentUnavailable?: boolean;
   deletedProviderMessageIds?: string[];
 
   status?: string | null;

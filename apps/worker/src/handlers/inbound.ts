@@ -21,35 +21,6 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     ignoreGroups: integration.desconsiderarGrupo,
   });
 
-  // TEMP diagnostic — structural only (no message text) to learn how the provider
-  // shapes edit events. Remove once edit mirroring is confirmed in production.
-  {
-    const p = payload as any;
-    const msg = p?.data?.Message ?? {};
-    logger.info(
-      {
-        integrationId,
-        event: p?.event,
-        parsedKind: norm.kind,
-        infoType: p?.data?.Info?.Type,
-        isEditFlag: p?.data?.IsEdit,
-        msgKeys: Object.keys(msg),
-        protoType: msg?.protocolMessage?.type,
-        hasEditedMessage: !!msg?.protocolMessage?.editedMessage,
-      },
-      'inbound: provider event (diag)',
-    );
-    // When the edit envelope shows up, dump the whole event so we can see whether
-    // Evolution decrypted anything (a sibling editedMessage / a decoded field) or
-    // only forwarded the ciphertext. Low volume (edits only).
-    if (msg?.secretEncryptedMessage) {
-      logger.info(
-        { integrationId, fullEvent: JSON.stringify(p?.data) },
-        'inbound: secretEncryptedMessage dump (diag)',
-      );
-    }
-  }
-
   if (norm.kind === 'ignored' || norm.kind === 'unknown') return;
 
   if (norm.kind === 'message_deleted') {
@@ -249,8 +220,15 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         const orig = await getMappingByProviderId(integrationId, norm.editedProviderMessageId);
         if (orig) origCwId = Number(orig.chatwootMessageId);
       }
+      // When the provider can't give us the new text (encrypted edit), post a notice
+      // citing the original so the agent knows to re-check it on WhatsApp.
+      const body = norm.editedContentUnavailable
+        ? '✏️ _O contato editou esta mensagem — o novo texto não está disponível aqui. Confira no WhatsApp._'
+        : edited
+          ? `${edited}\n\n_(mensagem editada)_`
+          : '_(mensagem editada)_';
       await mirror(norm.fromMe ? 'outgoing' : 'incoming', {
-        bodyOverride: edited ? `${edited}\n\n_(mensagem editada)_` : '_(mensagem editada)_',
+        bodyOverride: body,
         inReplyToOverride: origCwId,
         mappingProviderId: editKey,
       });

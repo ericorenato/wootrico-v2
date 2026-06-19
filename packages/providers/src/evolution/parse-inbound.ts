@@ -124,11 +124,21 @@ export function parseEvolutionInbound(
   // so `protocolMessage.type` is the NUMERIC enum value (MESSAGE_EDIT = 14), not the
   // string "MESSAGE_EDIT". Detect it by the numeric/string type, the IsEdit flag, OR
   // simply the presence of an editedMessage payload.
+  // Newer WhatsApp clients deliver edits as a `secretEncryptedMessage` (the same
+  // envelope used for poll votes): an ENCRYPTED payload that whatsmeow/Evolution GO
+  // does not decrypt. There's no `protocolMessage`/`editedMessage` and `data.IsEdit`
+  // is false — the only edit signal is `Info.Edit` and the secret envelope itself.
+  // We can't recover the new text, but we can tell which message was edited via
+  // `targetMessageKey.ID` and flag it so the handler posts a notice.
+  const secretEnc = message.secretEncryptedMessage as Record<string, any> | undefined;
+  const editedContentUnavailable = !!secretEnc && (info.Edit ?? '') !== '';
   const isEdit =
     !!data.IsEdit ||
+    (info.Edit ?? '') !== '' ||
     protoType === 'MESSAGE_EDIT' ||
     protoType === '14' ||
-    !!proto?.editedMessage;
+    !!proto?.editedMessage ||
+    editedContentUnavailable;
   // Edited content lives under protocolMessage.editedMessage
   const effective = isEdit && proto?.editedMessage ? { ...message, ...proto.editedMessage } : message;
 
@@ -209,9 +219,17 @@ export function parseEvolutionInbound(
     directoryHints,
     replyToProviderMessageId: replyTo,
     kind: isEdit ? 'message_edited' : 'message',
+    // Which message was edited: the protocolMessage key (standard edits) or the
+    // secret envelope's targetMessageKey (encrypted edits).
     editedProviderMessageId: isEdit
-      ? (proto?.key?.ID ?? proto?.key?.id ?? info.ID ?? undefined)
+      ? (proto?.key?.ID ??
+        proto?.key?.id ??
+        secretEnc?.targetMessageKey?.ID ??
+        secretEnc?.targetMessageKey?.id ??
+        info.ID ??
+        undefined)
       : undefined,
+    editedContentUnavailable,
   };
 
   if (isGroup && ctx.ignoreGroups) result.kind = 'ignored';
