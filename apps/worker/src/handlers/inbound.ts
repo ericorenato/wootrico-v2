@@ -2,7 +2,6 @@ import { logger, hmac } from '@wootrico/config';
 import { normalizePhone } from '@wootrico/providers';
 import { withLock, cacheGet, cacheSet } from '@wootrico/cache';
 import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/chatwoot-client';
-import { addTicket, consumeTicket } from '../engine/dedup.js';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
 import { resolveIdentity, ingestDirectoryHints } from '../engine/identity.js';
 import { syncContactMeta } from '../engine/contact-sync.js';
@@ -71,7 +70,6 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   // In groups, label each message with who sent it (Chatwoot has no groups, so
   // the whole group is one contact/conversation).
   const senderLabel = norm.senderName ?? norm.name ?? null;
-  const messageType = norm.media?.type ?? 'text';
 
   const mirror = async (
     direction: ChatwootMessageType,
@@ -228,11 +226,9 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       await mirror('incoming');
       return;
     }
-    // fromMe — our own API send echoing back, or agent typed on the phone.
-    // (an already-mirrored echo is short-circuited by the guard above.)
-    const consumed = await consumeTicket(integrationId, identifier, messageType, 'api_origin');
-    if (consumed) return;
-    await addTicket(integrationId, identifier, messageType, 'phone_origin');
+    // fromMe — either our own API-send echoing back (already short-circuited by the
+    // idempotency guard above, which matches it by providerMessageId), or the owner
+    // typing on the phone, which we mirror into Chatwoot as an outgoing message.
     await mirror('outgoing');
   });
 }

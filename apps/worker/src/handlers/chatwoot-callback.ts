@@ -1,6 +1,5 @@
 import { hmac } from '@wootrico/config';
 import { withLock, throttle } from '@wootrico/cache';
-import { addTicket, consumeTicket } from '../engine/dedup.js';
 import {
   storeMapping,
   getMappingByChatwootId,
@@ -9,7 +8,7 @@ import {
 } from '../engine/mapping.js';
 import { resolveIdentity, getIdentityById } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
-import { chatwootAttachmentType, getMessageTypeFromChatwoot } from '../lib/message-type.js';
+import { chatwootAttachmentType } from '../lib/message-type.js';
 
 const MEDIA_THROTTLE_MS = 1000;
 
@@ -77,19 +76,15 @@ export async function handleChatwootCallback(
   if (!canonicalKey || !sendTarget) return;
 
   const attachments: any[] = payload.attachments ?? [];
-  const messageType = getMessageTypeFromChatwoot(attachments);
 
   // Serialize per conversation (ordering) — same lock domain as inbound.
   await withLock(`lock:conv:${integrationId}:${hmac(canonicalKey)}`, async () => {
-    // Idempotency guard — if this Chatwoot message was already sent to the
-    // provider (webhook re-delivery or queue retry), skip so we never send the
-    // same message to WhatsApp twice.
+    // Idempotency / echo guard — a Chatwoot message that already has a mapping was
+    // either already sent to the provider (webhook re-delivery / queue retry) or is
+    // the echo of a phone-origin message we mirrored in (inbound stored the mapping
+    // keyed by this Chatwoot id). Either way it must NOT be re-sent to WhatsApp.
     const alreadySent = await getMappingByChatwootId(integrationId, String(payload.id));
     if (alreadySent) return;
-
-    // CASE 2 dedup — if it originated on the phone, it's already mirrored: skip.
-    const consumed = await consumeTicket(integrationId, canonicalKey, messageType, 'phone_origin');
-    if (consumed) return;
 
     // signature
     let content: string = payload.content ?? '';
@@ -144,9 +139,8 @@ export async function handleChatwootCallback(
       providerMessageIds.push(...r.providerMessageIds);
     }
 
-    // Our send will echo back via the provider webhook → consume on inbound (case 4).
-    await addTicket(integrationId, canonicalKey, messageType, 'api_origin');
-
+    // Our send echoes back via the provider webhook; inbound dedups it by
+    // providerMessageId against the mapping stored just below — no ticket needed.
     if (providerMessageIds[0]) {
       await storeMapping({
         integrationId,
