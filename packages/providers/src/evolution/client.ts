@@ -31,12 +31,6 @@ function pureBase64(value: string): string {
   return idx >= 0 ? value.slice(idx + 'base64,'.length) : value;
 }
 
-/** Build a data: URL when we only have raw base64 (Evolution GO send/media takes a URL). */
-function toDataUrl(base64: string, mimeType?: string): string {
-  if (base64.startsWith('data:')) return base64;
-  return `data:${mimeType ?? 'application/octet-stream'};base64,${pureBase64(base64)}`;
-}
-
 function toRemoteJid(recipient: string): string {
   if (recipient.includes('@')) return recipient;
   return `${recipient}@s.whatsapp.net`;
@@ -93,11 +87,16 @@ export class EvolutionProvider implements WhatsAppProvider {
       body = { number, text: input.content ?? '', ...quoted };
     } else {
       // image | video | audio | document → /send/media (type in the body).
+      // Evolution GO's send/media treats the `url` field as base64 whenever it
+      // does NOT start with http(s) — it decodes the *entire* string. So we must
+      // send raw base64 here, never a `data:...;base64,` URL (the `data:` prefix
+      // is not valid base64 and Evolution rejects it with "invalid base64
+      // encoding"). The `type`/`filename` fields tell Evolution how to handle it.
       path = '/send/media';
       const url = input.media?.url
         ? input.media.url
         : input.media?.base64
-          ? toDataUrl(input.media.base64, input.media.mimeType)
+          ? pureBase64(input.media.base64)
           : '';
       body = {
         number,
