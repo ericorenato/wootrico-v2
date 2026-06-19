@@ -112,6 +112,29 @@ export interface LogsPage {
   nextBefore: string | null;
 }
 
+export interface StatsBucket {
+  at: string;
+  received: number;
+  sent: number;
+}
+
+export interface SystemStats {
+  range: '24h' | '7d';
+  since: string;
+  buckets: StatsBucket[];
+  totals: {
+    events: number;
+    received: number;
+    sent: number;
+    accepted: number;
+    discarded: number;
+  };
+  byEventType: Array<{ source: string; eventType: string | null; n: number }>;
+}
+
+export const getSystemStats = (range: '24h' | '7d' = '24h') =>
+  api<SystemStats>(`/api/system/stats?range=${range}`);
+
 export const getLogs = (opts: { limit?: number; before?: string; kind?: 'audit' | 'webhook' } = {}) => {
   const p = new URLSearchParams();
   if (opts.limit) p.set('limit', String(opts.limit));

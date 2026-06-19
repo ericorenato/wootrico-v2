@@ -369,6 +369,86 @@ export default async function systemRoutes(app: FastifyInstance) {
     };
   });
 
+  // ── message-flow stats (dashboard charts) ──
+  // Time-bucketed counts of webhook events, CONTENT-FREE: how many messages were
+  // received from WhatsApp (source=provider) vs sent out via Chatwoot
+  // (source=chatwoot, message_created), plus accepted/discarded totals and a
+  // breakdown by event type. Powers the "Visão geral" charts.
+  app.get('/api/system/stats', guard, async (req) => {
+    const q = req.query as { range?: string };
+    const range = q.range === '7d' ? '7d' : '24h';
+    const unit = range === '7d' ? 'day' : 'hour';
+    const stepMs = range === '7d' ? 86_400_000 : 3_600_000;
+    const spanMs = range === '7d' ? 7 * 86_400_000 : 24 * 3_600_000;
+    const since = new Date(Date.now() - spanMs);
+
+    // Truncate to UTC so DB buckets line up with the ones we generate in JS.
+    const truncBuckets = await app.prisma.$queryRawUnsafe<
+      Array<{ bucket: Date; received: number; sent: number }>
+    >(
+      `SELECT date_trunc('${unit}', received_at AT TIME ZONE 'UTC') AS bucket,
+          count(*) FILTER (WHERE source = 'provider')::int AS received,
+          count(*) FILTER (WHERE source = 'chatwoot' AND event_type = 'message_created')::int AS sent
+       FROM webhook_events
+       WHERE received_at >= $1
+       GROUP BY 1
+       ORDER BY 1`,
+      since,
+    );
+
+    const [totals] = await app.prisma.$queryRawUnsafe<
+      Array<{
+        events: number;
+        received: number;
+        sent: number;
+        accepted: number;
+        discarded: number;
+      }>
+    >(
+      `SELECT count(*)::int AS events,
+          count(*) FILTER (WHERE source = 'provider')::int AS received,
+          count(*) FILTER (WHERE source = 'chatwoot' AND event_type = 'message_created')::int AS sent,
+          count(*) FILTER (WHERE accepted)::int AS accepted,
+          count(*) FILTER (WHERE NOT accepted)::int AS discarded
+       FROM webhook_events
+       WHERE received_at >= $1`,
+      since,
+    );
+
+    const byEventType = await app.prisma.$queryRawUnsafe<
+      Array<{ source: string; eventType: string | null; n: number }>
+    >(
+      `SELECT source, event_type AS "eventType", count(*)::int AS n
+       FROM webhook_events
+       WHERE received_at >= $1
+       GROUP BY 1, 2
+       ORDER BY n DESC
+       LIMIT 8`,
+      since,
+    );
+
+    // Fill gaps: build the full bucket series so the chart has no holes.
+    const counts = new Map<number, { received: number; sent: number }>();
+    for (const r of truncBuckets) {
+      counts.set(new Date(r.bucket).getTime(), { received: r.received, sent: r.sent });
+    }
+    const startTrunc = Math.floor(since.getTime() / stepMs) * stepMs;
+    const endTrunc = Math.floor(Date.now() / stepMs) * stepMs;
+    const buckets: Array<{ at: string; received: number; sent: number }> = [];
+    for (let t = startTrunc; t <= endTrunc; t += stepMs) {
+      const c = counts.get(t);
+      buckets.push({ at: new Date(t).toISOString(), received: c?.received ?? 0, sent: c?.sent ?? 0 });
+    }
+
+    return {
+      range,
+      since: since.toISOString(),
+      buckets,
+      totals: totals ?? { events: 0, received: 0, sent: 0, accepted: 0, discarded: 0 },
+      byEventType,
+    };
+  });
+
   // ── restart: signal worker + self-exit so Swarm recreates with new settings ──
   app.post('/api/system/restart', guard, async (req) => {
     await app.prisma.appSettings.upsert({
