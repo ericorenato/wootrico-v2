@@ -39,6 +39,15 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       },
       'inbound: provider event (diag)',
     );
+    // When the edit envelope shows up, dump the whole event so we can see whether
+    // Evolution decrypted anything (a sibling editedMessage / a decoded field) or
+    // only forwarded the ciphertext. Low volume (edits only).
+    if (msg?.secretEncryptedMessage) {
+      logger.info(
+        { integrationId, fullEvent: JSON.stringify(p?.data) },
+        'inbound: secretEncryptedMessage dump (diag)',
+      );
+    }
   }
 
   if (norm.kind === 'ignored' || norm.kind === 'unknown') return;
