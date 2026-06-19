@@ -73,7 +73,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
 
   const mirror = async (
     direction: ChatwootMessageType,
-    opts?: { bodyOverride?: string; inReplyToOverride?: number },
+    opts?: { bodyOverride?: string; inReplyToOverride?: number; mappingProviderId?: string },
   ): Promise<void> => {
     const contactName = isGroup
       ? (norm.groupName ?? norm.groupId ?? identifier)
@@ -165,7 +165,12 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       });
     }
 
-    if (created?.id && norm.providerMessageId) {
+    // For an edit we store under a synthetic provider id (passed by the caller),
+    // because a WhatsApp edit reuses the ORIGINAL message id and that id is already
+    // mapped (unique constraint) — the synthetic key keeps the new Chatwoot message
+    // mapped (so its echo is deduped by the callback) without colliding.
+    const mappingProviderId = opts?.mappingProviderId ?? norm.providerMessageId;
+    if (created?.id && mappingProviderId) {
       // Author JID of THIS message — needed later to render a reply quote (esp. in
       // groups, where the quoted author is a specific member). Only known for
       // inbound (incoming) messages; for our own echo (outgoing) the author is the
@@ -185,7 +190,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       await storeMapping({
         integrationId,
         chatwootMessageId: String(created.id),
-        providerMessageId: norm.providerMessageId,
+        providerMessageId: mappingProviderId,
         chatwootConversationId: String(conversationId),
         chatwootInboxId: inboxId,
         recipient: sendTarget,
@@ -198,28 +203,36 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   // Serialize per conversation so messages stay ordered (replaces the old delay).
   const lockKey = `lock:conv:${integrationId}:${hmac(identifier)}`;
   await withLock(lockKey, async () => {
+    // Edited message — handle BEFORE the idempotency guard: a WhatsApp edit reuses
+    // the ORIGINAL message id, so the guard below would see it as already-mirrored
+    // and drop the edit. Chatwoot's API cannot change an existing message's content
+    // (the `update` action only sets status), so post a NEW message carrying the
+    // edited text, threaded under the original via in_reply_to.
+    if (norm.kind === 'message_edited') {
+      const edited = (norm.text ?? '').trim();
+      // Dedup the edit on a synthetic key (original id + edited text) so a queue
+      // retry / re-delivery of the same edit doesn't post it twice, while distinct
+      // edits of the same message still go through.
+      const editKey = `edit:${norm.providerMessageId ?? ''}:${hmac(edited)}`;
+      if (await getMappingByProviderId(integrationId, editKey)) return;
+      let origCwId: number | undefined;
+      if (norm.editedProviderMessageId) {
+        const orig = await getMappingByProviderId(integrationId, norm.editedProviderMessageId);
+        if (orig) origCwId = Number(orig.chatwootMessageId);
+      }
+      await mirror(norm.fromMe ? 'outgoing' : 'incoming', {
+        bodyOverride: edited ? `${edited}\n\n_(mensagem editada)_` : '_(mensagem editada)_',
+        inReplyToOverride: origCwId,
+        mappingProviderId: editKey,
+      });
+      return;
+    }
     // Idempotency guard — if this provider message was already mirrored (queue
     // retry after a transient failure, or a provider re-delivery), skip it so we
     // never create a duplicate in Chatwoot. Covers both directions.
     if (norm.providerMessageId) {
       const already = await getMappingByProviderId(integrationId, norm.providerMessageId);
       if (already) return;
-    }
-    // Edited message — Chatwoot's API cannot change an existing message's content
-    // (the `update` action only sets status), so post a NEW message carrying the
-    // edited text, threaded under the original via in_reply_to.
-    if (norm.kind === 'message_edited') {
-      let origCwId: number | undefined;
-      if (norm.editedProviderMessageId) {
-        const orig = await getMappingByProviderId(integrationId, norm.editedProviderMessageId);
-        if (orig) origCwId = Number(orig.chatwootMessageId);
-      }
-      const edited = (norm.text ?? '').trim();
-      await mirror(norm.fromMe ? 'outgoing' : 'incoming', {
-        bodyOverride: edited ? `${edited}\n\n_(mensagem editada)_` : '_(mensagem editada)_',
-        inReplyToOverride: origCwId,
-      });
-      return;
     }
     // CASE 1 — customer message in
     if (!norm.fromMe) {
