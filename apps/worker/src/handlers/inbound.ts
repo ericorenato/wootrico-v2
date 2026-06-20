@@ -98,20 +98,21 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     if (!contactId) return logger.warn({ integrationId }, 'inbound: missing contact id');
 
     // Complete the contact when data not present on the first (LID-only) message
-    // arrives later: phone, name and avatar — keeping it the same contact.
-    if (!isGroup) {
-      await syncContactMeta({
-        integrationId,
-        identifier,
-        contactId,
-        chatwoot,
-        provider,
-        name: norm.name ?? norm.senderName ?? null,
-        phoneE164: phoneNumber,
-        avatarUrl: norm.senderPhoto ?? null,
-        avatarTarget: sendTarget,
-      });
-    }
+    // arrives later: phone, name and avatar — keeping it the same contact. For a
+    // group there's no phone and the name is the group's; the avatar is the
+    // group photo (uazapi sends it in the payload; Evolution is fetched from the
+    // group id, which is the avatarTarget here).
+    await syncContactMeta({
+      integrationId,
+      identifier,
+      contactId,
+      chatwoot,
+      provider,
+      name: isGroup ? (norm.groupName ?? null) : (norm.name ?? norm.senderName ?? null),
+      phoneE164: phoneNumber,
+      avatarUrl: norm.senderPhoto ?? null,
+      avatarTarget: sendTarget,
+    });
 
     const conversation = await chatwoot.findOrCreateConversation({
       contactId,
