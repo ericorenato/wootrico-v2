@@ -265,6 +265,7 @@ export default function Contacts() {
           <span className="inline-flex items-center gap-1.5">
             JID
             <InfoTip
+              align="right"
               text={
                 <>
                   Endereço técnico derivado: usa o número (<code>@s.whatsapp.net</code>) quando
@@ -277,6 +278,7 @@ export default function Contacts() {
           <span className="inline-flex items-center gap-1.5">
             Origem
             <InfoTip
+              align="right"
               text={
                 <>
                   Onde o contato foi visto: <b>Direto</b> (conversa 1:1) e/ou <b>Grupo</b>
@@ -287,11 +289,11 @@ export default function Contacts() {
           </span>
           <span className="inline-flex items-center gap-1.5">
             Cadastro
-            <InfoTip text="Quando o contato foi visto pela primeira vez." />
+            <InfoTip align="right" text="Quando o contato foi visto pela primeira vez." />
           </span>
           <span className="inline-flex items-center gap-1.5">
             Atualização
-            <InfoTip text="Última vez que algum dado deste contato mudou." />
+            <InfoTip align="right" text="Última vez que algum dado deste contato mudou." />
           </span>
         </div>
 

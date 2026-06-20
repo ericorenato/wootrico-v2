@@ -15,13 +15,18 @@ import { Check, Copy, Info } from 'lucide-react';
 export function InfoTip({
   text,
   side = 'bottom',
+  align = 'left',
   className = '',
 }: {
   text: ReactNode;
   side?: 'top' | 'bottom';
+  /** Which edge the bubble grows from. Use 'right' for right-side table columns
+   *  so it opens leftward and isn't clipped by the table's overflow-hidden. */
+  align?: 'left' | 'right';
   className?: string;
 }) {
   const pos = side === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5';
+  const xpos = align === 'right' ? 'right-0' : 'left-0';
   return (
     <span className={`relative inline-flex group/tip align-middle ${className}`}>
       <button
@@ -33,7 +38,7 @@ export function InfoTip({
       </button>
       <span
         role="tooltip"
-        className={`pointer-events-none absolute left-0 ${pos} z-50 w-max max-w-[280px] whitespace-normal rounded-lg border border-white/10 bg-[#16161a] px-3 py-2 text-[11px] font-normal leading-relaxed text-neutral-300 normal-case tracking-normal shadow-xl shadow-black/40 opacity-0 translate-y-0.5 transition-all duration-150 group-hover/tip:opacity-100 group-hover/tip:translate-y-0 group-focus-within/tip:opacity-100 group-focus-within/tip:translate-y-0`}
+        className={`pointer-events-none absolute ${xpos} ${pos} z-50 w-max max-w-[280px] whitespace-normal rounded-lg border border-white/10 bg-[#16161a] px-3 py-2 text-[11px] font-normal leading-relaxed text-neutral-300 normal-case tracking-normal shadow-xl shadow-black/40 opacity-0 translate-y-0.5 transition-all duration-150 group-hover/tip:opacity-100 group-hover/tip:translate-y-0 group-focus-within/tip:opacity-100 group-focus-within/tip:translate-y-0`}
       >
         {text}
       </span>
