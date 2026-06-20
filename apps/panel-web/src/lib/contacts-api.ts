@@ -11,6 +11,10 @@ export interface ContactDTO {
   pushName: string | null;
   /** Last profile picture URL seen (may be null/expired). */
   avatarUrl: string | null;
+  /** Observed in a direct (1:1) conversation. */
+  seenInDm: boolean;
+  /** Observed as a participant of a group (sender or seeded from the roster). */
+  seenInGroup: boolean;
   createdAt: string;
   updatedAt: string;
   lastSeenAt: string | null;

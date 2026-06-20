@@ -19,6 +19,14 @@ function toJid(pn: string | null, lid: string | null): string | null {
   return pn ? `${pn}@s.whatsapp.net` : lid ? `${lid}@lid` : null;
 }
 
+/** Human label for where the contact was observed (CSV). */
+function originLabel(seenInDm: boolean, seenInGroup: boolean): string {
+  if (seenInDm && seenInGroup) return 'Direto e grupo';
+  if (seenInDm) return 'Direto';
+  if (seenInGroup) return 'Grupo';
+  return 'Desconhecida';
+}
+
 /** Escape one CSV cell (RFC 4180). */
 function csvCell(v: string | null): string {
   const s = v ?? '';
@@ -58,6 +66,8 @@ export default async function contactRoutes(app: FastifyInstance) {
           pn: true,
           pushName: true,
           avatarUrl: true,
+          seenInDm: true,
+          seenInGroup: true,
           createdAt: true,
           updatedAt: true,
           lastSeenAt: true,
@@ -71,6 +81,8 @@ export default async function contactRoutes(app: FastifyInstance) {
       pn: c.pn,
       pushName: c.pushName,
       avatarUrl: c.avatarUrl,
+      seenInDm: c.seenInDm,
+      seenInGroup: c.seenInGroup,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
       lastSeenAt: c.lastSeenAt ? c.lastSeenAt.toISOString() : null,
@@ -93,13 +105,15 @@ export default async function contactRoutes(app: FastifyInstance) {
         lid: true,
         pn: true,
         pushName: true,
+        seenInDm: true,
+        seenInGroup: true,
         createdAt: true,
         updatedAt: true,
         lastSeenAt: true,
       },
     });
 
-    const header = ['Nome', 'Numero', 'LID', 'JID', 'Cadastro', 'Atualizacao', 'Ultimo visto'];
+    const header = ['Nome', 'Numero', 'LID', 'JID', 'Origem', 'Cadastro', 'Atualizacao', 'Ultimo visto'];
     const lines = [header.join(',')];
     for (const c of rows) {
       lines.push(
@@ -108,6 +122,7 @@ export default async function contactRoutes(app: FastifyInstance) {
           csvCell(c.pn),
           csvCell(c.lid),
           csvCell(toJid(c.pn, c.lid)),
+          csvCell(originLabel(c.seenInDm, c.seenInGroup)),
           csvCell(c.createdAt.toISOString()),
           csvCell(c.updatedAt.toISOString()),
           csvCell(c.lastSeenAt ? c.lastSeenAt.toISOString() : null),

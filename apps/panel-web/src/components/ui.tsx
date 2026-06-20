@@ -5,7 +5,41 @@ import type {
   SelectHTMLAttributes,
 } from 'react';
 import { useState } from 'react';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, Info } from 'lucide-react';
+
+/**
+ * Discreet hover/focus tooltip anchored to a small info glyph. CSS-only (no
+ * portal), so place it inside a container that doesn't clip overflow on the
+ * chosen side. Defaults to opening downward to survive `overflow-hidden` tables.
+ */
+export function InfoTip({
+  text,
+  side = 'bottom',
+  className = '',
+}: {
+  text: ReactNode;
+  side?: 'top' | 'bottom';
+  className?: string;
+}) {
+  const pos = side === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5';
+  return (
+    <span className={`relative inline-flex group/tip align-middle ${className}`}>
+      <button
+        type="button"
+        aria-label="Ajuda"
+        className="text-neutral-600 hover:text-neutral-300 focus:text-neutral-300 outline-none cursor-help transition-colors"
+      >
+        <Info size={12} />
+      </button>
+      <span
+        role="tooltip"
+        className={`pointer-events-none absolute left-0 ${pos} z-50 w-max max-w-[280px] whitespace-normal rounded-lg border border-white/10 bg-[#16161a] px-3 py-2 text-[11px] font-normal leading-relaxed text-neutral-300 normal-case tracking-normal shadow-xl shadow-black/40 opacity-0 translate-y-0.5 transition-all duration-150 group-hover/tip:opacity-100 group-hover/tip:translate-y-0 group-focus-within/tip:opacity-100 group-focus-within/tip:translate-y-0`}
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
 
 /** Glass card matching the reference design. */
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {

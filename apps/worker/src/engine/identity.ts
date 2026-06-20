@@ -27,6 +27,7 @@ export interface IdentityInput {
   pn?: string | null; // phone digits, no @s.whatsapp.net
   lid?: string | null; // LID number, no @lid
   pushName?: string | null;
+  source?: 'dm' | 'group'; // where this sender was observed (sets the origin flags)
 }
 
 function clean(v?: string | null): string | null {
@@ -47,6 +48,7 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
   const pn = clean(input.pn);
   const lid = clean(input.lid);
   const pushName = clean(input.pushName);
+  const source = input.source;
   if (!pn && !lid) return null;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -64,6 +66,8 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
               pn: byLid.pn ?? byPn.pn ?? pn,
               lid: byLid.lid ?? lid,
               pushName: pushName ?? byLid.pushName ?? byPn.pushName,
+              seenInDm: byLid.seenInDm || byPn.seenInDm || source === 'dm',
+              seenInGroup: byLid.seenInGroup || byPn.seenInGroup || source === 'group',
               lastSeenAt: new Date(),
             },
           });
@@ -76,6 +80,8 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
           if (pn && !existing.pn) data.pn = pn;
           if (lid && !existing.lid) data.lid = lid;
           if (pushName && pushName !== existing.pushName) data.pushName = pushName;
+          if (source === 'dm' && !existing.seenInDm) data.seenInDm = true;
+          if (source === 'group' && !existing.seenInGroup) data.seenInGroup = true;
           const row =
             Object.keys(data).length > 1
               ? await tx.contactIdentity.update({ where: { id: existing.id }, data })
@@ -84,7 +90,14 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
         }
 
         const created = await tx.contactIdentity.create({
-          data: { pn, lid, pushName, lastSeenAt: new Date() },
+          data: {
+            pn,
+            lid,
+            pushName,
+            seenInDm: source === 'dm',
+            seenInGroup: source === 'group',
+            lastSeenAt: new Date(),
+          },
         });
         return toResolved(created);
       });
@@ -103,10 +116,19 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
  * fills brand-new entries cheaply; real DM events still do the precise merge.
  */
 export async function ingestDirectoryHints(
-  hints: Array<{ pn?: string | null; lid?: string | null }>,
+  hints: Array<{ pn?: string | null; lid?: string | null; pushName?: string | null }>,
 ): Promise<void> {
+  // New rows are tagged seen_in_group and carry the roster display name when the
+  // provider gives one — so a participant who never sent a DM still shows up
+  // named. skipDuplicates means existing rows are left untouched (the member who
+  // actually speaks gets the precise update via resolveIdentity).
   const rows = hints
-    .map((h) => ({ pn: clean(h.pn), lid: clean(h.lid) }))
+    .map((h) => ({
+      pn: clean(h.pn),
+      lid: clean(h.lid),
+      pushName: clean(h.pushName),
+      seenInGroup: true,
+    }))
     .filter((h) => h.pn || h.lid);
   if (!rows.length) return;
   await prisma.contactIdentity

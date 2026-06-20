@@ -1,9 +1,45 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Download, Search, User, Users } from 'lucide-react';
-import { Button, CopyButton, Eyebrow } from '../components/ui';
+import { Button, CopyButton, Eyebrow, InfoTip } from '../components/ui';
 import { exportContacts, listContacts, type ContactDTO } from '../lib/contacts-api';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+
+// Shared grid template so the header and every row stay column-aligned.
+const ROW_GRID =
+  'md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,0.95fr)_minmax(0,0.85fr)_minmax(0,0.85fr)]';
+
+/** Origin badges: where the contact was observed (not mutually exclusive). */
+function OriginCell({ contact }: { contact: ContactDTO }) {
+  const { seenInDm, seenInGroup } = contact;
+  if (!seenInDm && !seenInGroup) {
+    return (
+      <span className="text-xs text-neutral-600" title="Origem ainda não registrada">
+        —
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {seenInDm && (
+        <span
+          title="Visto em conversa direta (1:1)"
+          className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300"
+        >
+          <User size={10} /> Direto
+        </span>
+      )}
+      {seenInGroup && (
+        <span
+          title="Visto como participante de grupo"
+          className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-300"
+        >
+          <Users size={10} /> Grupo
+        </span>
+      )}
+    </div>
+  );
+}
 
 function fmtDateTime(iso: string | null): string {
   if (!iso) return '—';
@@ -119,10 +155,23 @@ export default function Contacts() {
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <Eyebrow>Diretório</Eyebrow>
-          <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Contatos</h1>
+          <h1 className="mt-5 flex items-center gap-2 text-3xl font-semibold tracking-tight text-white">
+            Contatos
+            <InfoTip
+              side="bottom"
+              text={
+                <>
+                  Cada pessoa é uma <b>identidade única</b>: o número e o LID são pareados sob o
+                  mesmo cadastro. Mesmo que o WhatsApp alterne entre número e LID de uma mensagem
+                  para outra, a conversa <b>não se divide</b> — continua sendo o mesmo contato. O
+                  identificador interno (UUID) nunca é exibido.
+                </>
+              }
+            />
+          </h1>
           <p className="mt-2 text-sm text-neutral-400">
             Diretório global de contatos do WhatsApp descobertos pelas integrações, com seus
-            identificadores (número, LID e JID), nome e datas de cadastro e atualização.
+            identificadores (número, LID e JID), nome, origem e datas de cadastro e atualização.
           </p>
         </div>
         <Button
@@ -176,13 +225,74 @@ export default function Contacts() {
 
       <div className="rounded-2xl border border-white/5 bg-[#0B0B0D] overflow-hidden">
         {/* header */}
-        <div className="hidden md:grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] gap-4 px-4 py-3 border-b border-white/5 text-[11px] uppercase tracking-wider text-neutral-500">
-          <span>Contato</span>
-          <span>Número</span>
-          <span>LID</span>
-          <span>JID</span>
-          <span>Cadastro</span>
-          <span>Atualização</span>
+        <div
+          className={`hidden md:grid ${ROW_GRID} gap-4 px-4 py-3 border-b border-white/5 text-[11px] uppercase tracking-wider text-neutral-500`}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            Contato
+            <InfoTip
+              text={
+                <>
+                  Nome de exibição (<i>push name</i>) e foto do WhatsApp. Podem faltar: só aparecem
+                  depois que a pessoa envia uma mensagem. Contatos vindos apenas da lista de um grupo
+                  entram sem nome/foto até falarem.
+                </>
+              }
+            />
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            Número
+            <InfoTip
+              text={
+                <>
+                  Telefone (sem <code>@s.whatsapp.net</code>). O WhatsApp pode não enviá-lo na
+                  primeira mensagem — é preenchido depois, assim que aparece.
+                </>
+              }
+            />
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            LID
+            <InfoTip
+              text={
+                <>
+                  Identificador privado do WhatsApp (<code>@lid</code>). É o id estável da pessoa; o
+                  WhatsApp está migrando os contatos de número para LID.
+                </>
+              }
+            />
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            JID
+            <InfoTip
+              text={
+                <>
+                  Endereço técnico derivado: usa o número (<code>@s.whatsapp.net</code>) quando
+                  conhecido, senão o LID (<code>@lid</code>). A aparência pode mudar quando o número é
+                  descoberto — continua sendo a mesma pessoa.
+                </>
+              }
+            />
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            Origem
+            <InfoTip
+              text={
+                <>
+                  Onde o contato foi visto: <b>Direto</b> (conversa 1:1) e/ou <b>Grupo</b>
+                  (participante). Não são exclusivos — a mesma pessoa pode ter as duas origens.
+                </>
+              }
+            />
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            Cadastro
+            <InfoTip text="Quando o contato foi visto pela primeira vez." />
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            Atualização
+            <InfoTip text="Última vez que algum dado deste contato mudou." />
+          </span>
         </div>
 
         <div className="divide-y divide-white/[0.04]">
@@ -197,7 +307,7 @@ export default function Contacts() {
             contacts.map((c) => (
               <div
                 key={contactKey(c)}
-                className="grid grid-cols-1 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] gap-2 md:gap-4 px-4 py-3 hover:bg-white/[0.025] items-center"
+                className={`grid grid-cols-1 ${ROW_GRID} gap-2 md:gap-4 px-4 py-3 hover:bg-white/[0.025] items-center`}
               >
                 {/* contact (avatar + name) */}
                 <div className="flex items-center gap-3 min-w-0">
@@ -230,6 +340,12 @@ export default function Contacts() {
                   </span>
                   <Mono value={c.jid} />
                 </div>
+                <div className="min-w-0">
+                  <span className="md:hidden text-[11px] uppercase tracking-wider text-neutral-600 mr-2">
+                    Origem
+                  </span>
+                  <OriginCell contact={c} />
+                </div>
                 <div className="hidden md:block text-xs text-neutral-400 tabular-nums">
                   {fmtDateTime(c.createdAt)}
                 </div>
@@ -255,8 +371,12 @@ export default function Contacts() {
       </div>
 
       <div className="mt-3 flex items-center gap-2 text-xs text-neutral-600">
-        <User size={12} />
-        O identificador interno (UUID) não é exibido. A foto do perfil pode não estar disponível.
+        <User size={12} className="shrink-0" />
+        <span>
+          O identificador interno (UUID) não é exibido. Contatos <b>sem nome ou foto</b> normalmente
+          vêm apenas da lista de participantes de um grupo e ainda não enviaram mensagem — os dados
+          chegam quando a pessoa fala. A foto do perfil pode não estar disponível.
+        </span>
       </div>
     </div>
   );

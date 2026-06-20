@@ -44,6 +44,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     pn: norm.phone,
     lid: norm.lid,
     pushName: norm.name ?? norm.senderName,
+    source: isGroup ? 'group' : 'dm',
   });
   // Seed the directory with the whole group roster (throttled, best-effort).
   if (isGroup && norm.groupId && norm.directoryHints?.length) {

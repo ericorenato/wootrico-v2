@@ -201,6 +201,8 @@ export function parseEvolutionInbound(
               ? normalizePhone(stripJid(p.PhoneNumber), ctx.defaultCountry).digits
               : null,
             lid: (p?.LID ?? p?.JID)?.endsWith?.('@lid') ? stripJid(p.LID ?? p.JID) : null,
+            // whatsmeow serializes the participant's name as DisplayName.
+            pushName: p?.DisplayName ?? p?.PushName ?? p?.Name ?? null,
           }))
           .filter((h) => h.pn || h.lid)
       : undefined;

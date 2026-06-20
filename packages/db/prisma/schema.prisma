@@ -153,6 +153,13 @@ model ContactIdentity {
   pushName  String? @map("push_name")
   avatarUrl String? @map("avatar_url") // last WhatsApp profile picture URL seen
 
+  // Where this person has been observed. Not mutually exclusive: the same
+  // canonical identity can be seen both in a DM and as a group participant.
+  // Roster-only members (seeded from a group's participant list, never spoke)
+  // are seen_in_group=true with no push name/avatar until they send a message.
+  seenInDm    Boolean @default(false) @map("seen_in_dm")
+  seenInGroup Boolean @default(false) @map("seen_in_group")
+
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   lastSeenAt DateTime? @map("last_seen_at")
