@@ -9,14 +9,11 @@ export type MessageType = (typeof MESSAGE_TYPES)[number];
 export const CONVERSATION_STATUSES = ['open', 'resolved', 'pending'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
 
-export const LICENSE_STATUSES = [
-  'unactivated',
-  'active',
-  'warning',
-  'grace',
-  'blocked',
-] as const;
+export const LICENSE_STATUSES = ['unactivated', 'active', 'warning', 'blocked'] as const;
 export type LicenseStatus = (typeof LICENSE_STATUSES)[number];
+
+export const LICENSE_PLANS = ['trial', 'paid'] as const;
+export type LicensePlan = (typeof LICENSE_PLANS)[number];
 
 /** RabbitMQ topology names. */
 export const AMQP = {
@@ -37,11 +34,13 @@ export const AMQP = {
   maxRetries: 5,
 } as const;
 
-/** License timing (instance side). */
+/** License timing (instance side). Validation is fully online. */
 export const LICENSE = {
-  heartbeatIntervalMs: 6 * 60 * 60 * 1000, // 6h
-  tokenTtlDays: 14,
-  graceDays: 7,
+  // How often the instance re-checks "is my key still active?" with the server.
+  validateIntervalMs: 30 * 60 * 1000, // 30 min
+  // How long a last-known-good "active" answer is trusted when the server is
+  // unreachable, before flipping to blocked. Tolerates brief outages only.
+  cacheGraceMs: 6 * 60 * 60 * 1000, // 6h
 } as const;
 
 /** TTLs for cleanup sweeps. */

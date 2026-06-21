@@ -13,7 +13,9 @@ export interface SystemInfo {
     required?: boolean;
     instanceId?: string | null;
     serverUrl?: string | null;
-    tokenExpiresAt?: string | null;
+    plan?: 'trial' | 'paid' | null;
+    expiresAt?: string | null;
+    lastValidatedAt?: string | null;
     lastHeartbeatAt?: string | null;
   };
   directory: { contactIdentities: number };

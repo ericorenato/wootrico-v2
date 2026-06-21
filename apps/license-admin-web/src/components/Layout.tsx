@@ -1,10 +1,11 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { KeyRound, Terminal, LogOut } from 'lucide-react';
+import { KeyRound, Terminal, LogOut, Webhook } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 
 const NAV = [
   { to: '/', label: 'Chaves', icon: KeyRound, end: true },
+  { to: '/webhook-keys', label: 'Webhooks', icon: Webhook },
   { to: '/events', label: 'Eventos', icon: Terminal },
 ];
 

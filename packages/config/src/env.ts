@@ -13,9 +13,10 @@ const EnvSchema = z.object({
 
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
   LICENSE_SERVER_URL: z.string().url().default('https://license.example.com'),
-  LICENSE_KEY: z.string().optional(),
-  // Ed25519 public key (base64 PEM) used to verify license tokens offline.
-  LICENSE_PUBLIC_KEY: z.string().optional(),
+  // Optional external checkout URL opened when a customer chooses to buy a
+  // lifetime license. The instanceId is registered with the license server
+  // first (purchase intent); this is just where the buyer completes payment.
+  LICENSE_CHECKOUT_URL: z.string().url().optional(),
   // When true, message processing is blocked until a license is active.
   LICENSE_REQUIRED: z
     .enum(['true', 'false'])

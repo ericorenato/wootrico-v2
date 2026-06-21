@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { cfg } from './env.js';
 import { prisma } from './db.js';
-import { generateKey, hashKey, signToken } from './crypto.js';
+import { generateKey, generateWebhookKey, hashKey } from './crypto.js';
 import {
   adminLoginConfigured,
   checkAdminCredentials,
@@ -72,6 +72,90 @@ async function recordEvent(opts: {
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type KeyLike = { revokedAt: Date | null; plan: string; expiresAt: Date | null };
+
+/** Whether a license key is currently valid, and if not, why. Online source of truth. */
+function keyStatus(lk: KeyLike, now: Date): { active: boolean; reason: string | null } {
+  if (lk.revokedAt) return { active: false, reason: 'revoked' };
+  if (lk.plan === 'trial' && lk.expiresAt && lk.expiresAt <= now) {
+    return { active: false, reason: 'expired' };
+  }
+  return { active: true, reason: null };
+}
+
+/** Prisma filter: keys that are still valid (not revoked, trial not expired). */
+function liveKeyFilter(
+  now: Date,
+): import('../generated/client/index.js').Prisma.LicenseKeyWhereInput {
+  return {
+    revokedAt: null,
+    OR: [{ plan: 'paid' }, { expiresAt: null }, { expiresAt: { gt: now } }],
+  };
+}
+
+/**
+ * Record IP activity for a key after its activation row has been updated with
+ * the latest IP. Emits `ip_changed` when a single instance moves IP, and a
+ * persistent `ip_alert` whenever the KEY as a whole spans more than one IP
+ * (possible key-sharing / multi-machine use) — escalating, deduped by level so
+ * the admin sees one alert per new distinct IP rather than a flood.
+ */
+async function recordIpActivity(opts: {
+  licenseKeyId: string;
+  instanceId: string;
+  ip?: string;
+  previousIp?: string | null;
+  appVersion?: string;
+}): Promise<void> {
+  const { licenseKeyId, instanceId, ip, previousIp, appVersion } = opts;
+  if (!ip) return;
+
+  if (previousIp && previousIp !== ip) {
+    await recordEvent({
+      type: 'ip_changed',
+      licenseKeyId,
+      instanceId,
+      ip,
+      appVersion,
+      meta: { previousIp },
+    });
+  }
+
+  const rows = await prisma.activation.findMany({
+    where: { licenseKeyId },
+    select: { firstIp: true, lastIp: true },
+  });
+  const ips = new Set<string>();
+  for (const r of rows) {
+    if (r.firstIp) ips.add(r.firstIp);
+    if (r.lastIp) ips.add(r.lastIp);
+  }
+  ips.add(ip);
+  if (ips.size <= 1) return;
+
+  // Escalation dedupe: skip if we already alerted at this distinct-IP level.
+  const last = await prisma.licenseEvent.findFirst({
+    where: { licenseKeyId, type: 'ip_alert' },
+    orderBy: { createdAt: 'desc' },
+  });
+  const lastLevel =
+    last && typeof (last.meta as { distinctIps?: number } | null)?.distinctIps === 'number'
+      ? (last.meta as { distinctIps: number }).distinctIps
+      : 0;
+  if (lastLevel >= ips.size) return;
+
+  await recordEvent({
+    type: 'ip_alert',
+    licenseKeyId,
+    instanceId,
+    ip,
+    appVersion,
+    meta: { previousIp: previousIp ?? null, distinctIps: ips.size },
+  });
+}
+
 const ProvisionSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   email: z.string().email().optional(),
@@ -85,13 +169,18 @@ const ActivateSchema = z.object({
   appVersion: z.string().optional(),
   publicBaseUrl: z.string().optional(),
 });
-const HeartbeatSchema = z.object({
+const ValidateSchema = z.object({
   key: z.string().min(1),
   instanceId: z.string().min(1),
   token: z.string().optional(),
   telemetry: z.record(z.unknown()).optional(),
 });
 const DeactivateSchema = z.object({ key: z.string().min(1), instanceId: z.string().min(1) });
+const PurchaseIntentSchema = z.object({
+  key: z.string().min(1),
+  instanceId: z.string().min(1),
+  email: z.string().email().optional(),
+});
 
 app.get('/health', async () => ({ status: 'ok' }));
 
@@ -101,33 +190,29 @@ app.post('/provision', async (req, reply) => {
   if (!p.success) return reply.code(400).send({ error: 'validation' });
   const { name, email, instanceId, appVersion, publicBaseUrl } = p.data;
   const ip = clientIp(req);
+  const now = new Date();
 
-  // Rule: one active key per instanceId. If this instance already has a live
-  // activation, re-sign its token instead of minting a second key.
+  // One live key per instanceId. If this instance already has a live activation
+  // (paid, or a still-valid trial), reuse it instead of minting a second key.
+  // An EXPIRED trial does not count as live — so this same call re-mints a fresh
+  // trial after expiry (the "manually request a new trial" flow).
   const existing = await prisma.activation.findFirst({
-    where: { instanceId, revokedAt: null, licenseKey: { revokedAt: null } },
+    where: { instanceId, revokedAt: null, licenseKey: liveKeyFilter(now) },
     include: { licenseKey: true },
+    orderBy: { boundAt: 'desc' },
   });
   if (existing) {
     await prisma.activation.update({
       where: { id: existing.id },
-      data: { lastHeartbeatAt: new Date(), lastIp: ip, appVersion, publicBaseUrl },
+      data: { lastHeartbeatAt: now, lastIp: ip, appVersion, publicBaseUrl },
     });
-    const token = await signToken({
+    await recordIpActivity({
+      licenseKeyId: existing.licenseKeyId,
       instanceId,
-      keyId: existing.licenseKeyId,
-      features: existing.licenseKey.features as never,
+      ip,
+      previousIp: existing.lastIp,
+      appVersion,
     });
-    if (existing.lastIp && ip && existing.lastIp !== ip) {
-      await recordEvent({
-        type: 'ip_changed',
-        licenseKeyId: existing.licenseKeyId,
-        instanceId,
-        ip,
-        appVersion,
-        meta: { previousIp: existing.lastIp },
-      });
-    }
     await recordEvent({
       type: 'provision_reused',
       licenseKeyId: existing.licenseKeyId,
@@ -135,14 +220,22 @@ app.post('/provision', async (req, reply) => {
       ip,
       appVersion,
     });
-    return { token, features: existing.licenseKey.features ?? {}, reused: true };
+    return {
+      active: true,
+      plan: existing.licenseKey.plan,
+      expiresAt: existing.licenseKey.expiresAt,
+      features: existing.licenseKey.features ?? {},
+      reused: true,
+    };
   }
 
   const raw = generateKey();
+  const expiresAt = new Date(now.getTime() + cfg.trialDays * DAY_MS);
   const lk = await prisma.licenseKey.create({
     data: {
       keyHash: hashKey(raw),
-      plan: 'pro',
+      plan: 'trial',
+      expiresAt,
       email,
       name,
       provisionedBy: 'self-service',
@@ -158,12 +251,11 @@ app.post('/provision', async (req, reply) => {
       publicBaseUrl,
       firstIp: ip,
       lastIp: ip,
-      lastHeartbeatAt: new Date(),
+      lastHeartbeatAt: now,
     },
   });
-  const token = await signToken({ instanceId, keyId: lk.id, features: lk.features as never });
   await recordEvent({ type: 'provision', licenseKeyId: lk.id, instanceId, ip, appVersion });
-  return { key: raw, token, features: lk.features ?? {} };
+  return { key: raw, active: true, plan: lk.plan, expiresAt: lk.expiresAt, features: lk.features ?? {} };
 });
 
 // ── activate ──
@@ -172,13 +264,20 @@ app.post('/activate', async (req, reply) => {
   if (!p.success) return reply.code(400).send({ error: 'validation' });
   const { key, instanceId, appVersion, publicBaseUrl } = p.data;
   const ip = clientIp(req);
+  const now = new Date();
 
   const lk = await prisma.licenseKey.findUnique({ where: { keyHash: hashKey(key) } });
   if (!lk) return reply.code(404).send({ error: 'invalid_key' });
-  // Only MANUAL blocking applies: a revoked key cannot activate.
-  if (lk.revokedAt) {
-    await recordEvent({ type: 'activate_revoked', licenseKeyId: lk.id, instanceId, ip, appVersion });
-    return reply.code(403).send({ error: 'revoked' });
+  const st = keyStatus(lk, now);
+  if (!st.active) {
+    await recordEvent({
+      type: st.reason === 'expired' ? 'activate_expired' : 'activate_revoked',
+      licenseKeyId: lk.id,
+      instanceId,
+      ip,
+      appVersion,
+    });
+    return reply.code(403).send({ active: false, plan: lk.plan, expiresAt: lk.expiresAt, reason: st.reason });
   }
 
   // No activation limit: a user may run as many instances as they want on any
@@ -196,61 +295,212 @@ app.post('/activate', async (req, reply) => {
       publicBaseUrl,
       firstIp: ip,
       lastIp: ip,
-      lastHeartbeatAt: new Date(),
+      lastHeartbeatAt: now,
     },
-    update: { appVersion, publicBaseUrl, lastIp: ip, revokedAt: null, lastHeartbeatAt: new Date() },
+    update: { appVersion, publicBaseUrl, lastIp: ip, revokedAt: null, lastHeartbeatAt: now },
   });
 
-  if (prev?.lastIp && ip && prev.lastIp !== ip) {
-    await recordEvent({
-      type: 'ip_changed',
-      licenseKeyId: lk.id,
-      instanceId,
-      ip,
-      appVersion,
-      meta: { previousIp: prev.lastIp },
-    });
-  }
+  await recordIpActivity({ licenseKeyId: lk.id, instanceId, ip, previousIp: prev?.lastIp, appVersion });
 
-  const token = await signToken({ instanceId, keyId: lk.id, features: lk.features as never });
   await recordEvent({ type: 'activate', licenseKeyId: lk.id, instanceId, ip, appVersion });
-  return { token, features: lk.features ?? {} };
+  return { active: true, plan: lk.plan, expiresAt: lk.expiresAt, features: lk.features ?? {} };
 });
 
-// ── heartbeat ──
-app.post('/heartbeat', async (req, reply) => {
-  const p = HeartbeatSchema.safeParse(req.body);
+// ── validate (online source of truth; replaces token heartbeat) ──
+// Returns {active, plan, expiresAt, reason} and, when a newer paid key has been
+// minted for this instance (payment webhook), delivers it as `key` so the client
+// updates itself. `/heartbeat` is kept as a back-compat alias during rollout.
+const validateHandler = async (req: FastifyRequest, reply: FastifyReply) => {
+  const p = ValidateSchema.safeParse(req.body);
   if (!p.success) return reply.code(400).send({ error: 'validation' });
   const { key, instanceId, telemetry } = p.data;
   const ip = clientIp(req);
   const appVersion = typeof telemetry?.appVersion === 'string' ? telemetry.appVersion : undefined;
+  const now = new Date();
 
-  const lk = await prisma.licenseKey.findUnique({ where: { keyHash: hashKey(key) } });
-  if (!lk || lk.revokedAt) return reply.send({ revoked: true });
-
-  const activation = await prisma.activation.findUnique({
-    where: { licenseKeyId_instanceId: { licenseKeyId: lk.id, instanceId } },
+  const presented = await prisma.licenseKey.findUnique({
+    where: { keyHash: hashKey(key) },
+    include: { activations: { where: { instanceId }, select: { id: true } } },
   });
-  if (!activation || activation.revokedAt) return reply.send({ revoked: true });
+  // The presented key must belong to this instance — proves the caller owns the install.
+  const ownsInstance = !!presented && presented.activations.length > 0;
 
-  await prisma.activation.update({
-    where: { id: activation.id },
-    data: { lastHeartbeatAt: new Date(), lastIp: ip, lastTelemetry: (telemetry ?? {}) as never },
+  // Best live license currently bound to this instance (may be a freshly minted
+  // paid key the client doesn't know about yet).
+  const activeBinding = await prisma.activation.findFirst({
+    where: { instanceId, revokedAt: null, licenseKey: liveKeyFilter(now) },
+    include: { licenseKey: true },
+    orderBy: { licenseKey: { createdAt: 'desc' } },
   });
-  if (activation.lastIp && ip && activation.lastIp !== ip) {
-    await recordEvent({
-      type: 'ip_changed',
-      licenseKeyId: lk.id,
-      instanceId,
-      ip,
-      appVersion,
-      meta: { previousIp: activation.lastIp },
+
+  if (!ownsInstance || !activeBinding) {
+    const reason = presented ? keyStatus(presented, now).reason ?? 'revoked' : 'invalid_key';
+    return reply.send({
+      active: false,
+      plan: presented?.plan ?? null,
+      expiresAt: presented?.expiresAt ?? null,
+      reason,
     });
   }
-  await recordEvent({ type: 'heartbeat', licenseKeyId: lk.id, instanceId, ip, appVersion });
 
-  const token = await signToken({ instanceId, keyId: lk.id, features: lk.features as never });
-  return { token, features: lk.features ?? {} };
+  const lk = activeBinding.licenseKey;
+
+  await prisma.activation.update({
+    where: { id: activeBinding.id },
+    data: { lastHeartbeatAt: now, lastIp: ip, lastTelemetry: (telemetry ?? {}) as never },
+  });
+  await recordIpActivity({
+    licenseKeyId: lk.id,
+    instanceId,
+    ip,
+    previousIp: activeBinding.lastIp,
+    appVersion,
+  });
+  await recordEvent({ type: 'validate', licenseKeyId: lk.id, instanceId, ip, appVersion });
+
+  // Key delivery: hand over the new raw key parked on the paid PurchaseIntent
+  // when the client is still on an older key; clear it once receipt is proven.
+  let deliveredKey: string | undefined;
+  if (lk.keyHash !== hashKey(key)) {
+    const intent = await prisma.purchaseIntent.findFirst({
+      where: { instanceId, licenseKeyId: lk.id, issuedKey: { not: null } },
+      orderBy: { paidAt: 'desc' },
+    });
+    deliveredKey = intent?.issuedKey ?? undefined;
+  } else {
+    await prisma.purchaseIntent.updateMany({
+      where: { instanceId, licenseKeyId: lk.id, issuedKey: { not: null } },
+      data: { issuedKey: null },
+    });
+  }
+
+  return {
+    active: true,
+    plan: lk.plan,
+    expiresAt: lk.expiresAt,
+    features: lk.features ?? {},
+    ...(deliveredKey ? { key: deliveredKey } : {}),
+  };
+};
+app.post('/validate', validateHandler);
+app.post('/heartbeat', validateHandler);
+
+// ── purchase intent (customer clicked "buy" for this installation) ──
+app.post('/purchase-intent', async (req, reply) => {
+  const p = PurchaseIntentSchema.safeParse(req.body);
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const { key, instanceId, email } = p.data;
+  const ip = clientIp(req);
+
+  const lk = await prisma.licenseKey.findUnique({
+    where: { keyHash: hashKey(key) },
+    include: { activations: { where: { instanceId }, select: { id: true } } },
+  });
+  if (!lk || lk.activations.length === 0) return reply.code(404).send({ error: 'unknown_instance' });
+
+  // Supersede any earlier pending intent for this instance so the webhook always
+  // settles the latest request.
+  await prisma.purchaseIntent.updateMany({
+    where: { instanceId, status: 'pending' },
+    data: { status: 'cancelled' },
+  });
+  const intent = await prisma.purchaseIntent.create({
+    data: { instanceId, email: email ?? lk.email, status: 'pending' },
+  });
+  await recordEvent({
+    type: 'purchase_intent',
+    licenseKeyId: lk.id,
+    instanceId,
+    ip,
+    meta: { intentId: intent.id, email: intent.email },
+  });
+  return { ok: true, intentId: intent.id };
+});
+
+// ── payment webhook (external provider → license server) ──
+const WebhookPaymentSchema = z.object({
+  email: z.string().email(),
+  paymentRef: z.string().optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+});
+
+/** Authenticate a payment webhook call via a `Bearer WHK-...` key. */
+async function requireWebhookKey(req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
+  const auth = req.headers.authorization;
+  const raw = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length) : '';
+  if (!raw) {
+    reply.code(401).send({ error: 'unauthorized' });
+    return false;
+  }
+  const wk = await prisma.webhookKey.findUnique({ where: { keyHash: hashKey(raw) } });
+  if (!wk || wk.revokedAt) {
+    reply.code(401).send({ error: 'unauthorized' });
+    return false;
+  }
+  await prisma.webhookKey.update({ where: { id: wk.id }, data: { lastUsedAt: new Date() } });
+  return true;
+}
+
+app.post('/webhook/payment', async (req, reply) => {
+  if (!(await requireWebhookKey(req, reply))) return;
+  const p = WebhookPaymentSchema.safeParse(req.body);
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const { email, paymentRef, name } = p.data;
+  const now = new Date();
+
+  // Idempotency: a retried webhook with the same paymentRef is a no-op.
+  if (paymentRef) {
+    const done = await prisma.purchaseIntent.findFirst({
+      where: { paymentRef, status: 'paid' },
+    });
+    if (done) return { ok: true, alreadyProcessed: true, intentId: done.id };
+  }
+
+  // Settle the most recent pending request for this email.
+  const intent = await prisma.purchaseIntent.findFirst({
+    where: { email, status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (!intent) return reply.code(404).send({ error: 'no_pending_intent' });
+
+  // Mint a fresh paid (lifetime) key and bind it to the buying instance.
+  const raw = generateKey();
+  const paidKey = await prisma.licenseKey.create({
+    data: {
+      keyHash: hashKey(raw),
+      plan: 'paid',
+      expiresAt: null,
+      email,
+      name,
+      provisionedBy: 'payment',
+      features: {} as never,
+      maxActivations: 1,
+    },
+  });
+  await prisma.activation.create({
+    data: {
+      licenseKeyId: paidKey.id,
+      instanceId: intent.instanceId,
+      lastHeartbeatAt: now,
+    },
+  });
+  await prisma.purchaseIntent.update({
+    where: { id: intent.id },
+    data: {
+      status: 'paid',
+      licenseKeyId: paidKey.id,
+      issuedKey: raw,
+      paymentRef: paymentRef ?? null,
+      paidAt: now,
+    },
+  });
+  await recordEvent({
+    type: 'payment_confirmed',
+    licenseKeyId: paidKey.id,
+    instanceId: intent.instanceId,
+    meta: { intentId: intent.id, email, paymentRef: paymentRef ?? null },
+  });
+  return { ok: true, intentId: intent.id };
 });
 
 // ── deactivate (release binding) ──
@@ -307,7 +557,7 @@ app.get('/admin/me', async (req, reply) => {
 });
 
 const CreateKeySchema = z.object({
-  plan: z.string().optional(),
+  plan: z.enum(['trial', 'paid']).optional(),
   email: z.string().email().optional(),
   name: z.string().trim().min(1).max(120).optional(),
   features: z.record(z.unknown()).optional(),
@@ -318,11 +568,14 @@ app.post('/admin/keys', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const p = CreateKeySchema.safeParse(req.body ?? {});
   if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const plan = p.data.plan ?? 'paid'; // admin-created keys default to paid (lifetime)
+  const expiresAt = plan === 'trial' ? new Date(Date.now() + cfg.trialDays * DAY_MS) : null;
   const raw = generateKey();
   const created = await prisma.licenseKey.create({
     data: {
       keyHash: hashKey(raw),
-      plan: p.data.plan ?? 'pro',
+      plan,
+      expiresAt,
       email: p.data.email,
       name: p.data.name,
       provisionedBy: 'admin',
@@ -385,6 +638,17 @@ app.get('/admin/keys', async (req, reply) => {
     },
   });
 
+  // IP-sharing alerts per key (persistent count of ip_alert events).
+  const alertCounts = keys.length
+    ? await prisma.licenseEvent.groupBy({
+        by: ['licenseKeyId'],
+        where: { type: 'ip_alert', licenseKeyId: { in: keys.map((k) => k.id) } },
+        _count: { _all: true },
+      })
+    : [];
+  const alertsByKey = new Map(alertCounts.map((a) => [a.licenseKeyId, a._count._all]));
+  const now = new Date();
+
   return {
     keys: keys.map((k) => {
       const liveBindings = k.activations.filter((a) => !a.revokedAt);
@@ -393,9 +657,12 @@ app.get('/admin/keys', async (req, reply) => {
         k.activations.map((a) => a.lastIp ?? a.firstIp).filter(Boolean) as string[],
       );
       const activeInstances = liveBindings.length;
+      const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
       return {
         id: k.id,
         plan: k.plan,
+        expiresAt: k.expiresAt,
+        expired,
         email: k.email,
         name: k.name,
         provisionedBy: k.provisionedBy,
@@ -403,6 +670,7 @@ app.get('/admin/keys', async (req, reply) => {
         activations: k._count.activations,
         activeInstances,
         distinctIps: distinctIps.size,
+        alerts: alertsByKey.get(k.id) ?? 0,
         // Informational warning only — never an automatic block.
         warning: distinctIps.size > 1 || activeInstances > 1,
         lastIp: live?.lastIp ?? null,
@@ -427,6 +695,53 @@ app.post('/admin/keys/:id/activate', async (req, reply) => {
   const { id } = req.params as { id: string };
   await prisma.licenseKey.update({ where: { id }, data: { revokedAt: null } });
   await recordEvent({ type: 'admin_activate', licenseKeyId: id });
+  return { ok: true };
+});
+
+// Manually upgrade a trial key to paid (lifetime) — e.g. after offline payment.
+app.post('/admin/keys/:id/upgrade', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  await prisma.licenseKey.update({
+    where: { id },
+    data: { plan: 'paid', expiresAt: null, revokedAt: null },
+  });
+  await recordEvent({ type: 'admin_upgrade', licenseKeyId: id });
+  return { ok: true };
+});
+
+// ── admin: webhook keys (payment provider authentication) ──
+const CreateWebhookKeySchema = z.object({ name: z.string().trim().min(1).max(120).optional() });
+
+app.post('/admin/webhook-keys', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const p = CreateWebhookKeySchema.safeParse(req.body ?? {});
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const raw = generateWebhookKey();
+  const created = await prisma.webhookKey.create({
+    data: { keyHash: hashKey(raw), name: p.data.name },
+  });
+  return reply.code(201).send({ id: created.id, key: raw });
+});
+
+app.get('/admin/webhook-keys', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const rows = await prisma.webhookKey.findMany({ orderBy: { createdAt: 'desc' } });
+  return {
+    keys: rows.map((w) => ({
+      id: w.id,
+      name: w.name,
+      revoked: !!w.revokedAt,
+      lastUsedAt: w.lastUsedAt,
+      createdAt: w.createdAt,
+    })),
+  };
+});
+
+app.post('/admin/webhook-keys/:id/revoke', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  await prisma.webhookKey.update({ where: { id }, data: { revokedAt: new Date() } });
   return { ok: true };
 });
 
@@ -499,8 +814,11 @@ async function registerAdminSpa(): Promise<void> {
       req.url.startsWith('/admin/') ||
       req.url.startsWith('/activate') ||
       req.url.startsWith('/heartbeat') ||
+      req.url.startsWith('/validate') ||
       req.url.startsWith('/deactivate') ||
       req.url.startsWith('/provision') ||
+      req.url.startsWith('/purchase-intent') ||
+      req.url.startsWith('/webhook/') ||
       req.url.startsWith('/health')
     ) {
       return reply.code(404).send({ error: 'not_found' });

@@ -1,4 +1,4 @@
-import type { MessageType } from '@wootrico/config';
+import { logger, type MessageType } from '@wootrico/config';
 import type { InboundMedia, NormalizedInboundMessage } from '@wootrico/types';
 import type { ParseContext } from '../provider.interface.js';
 import { normalizePhone } from '../util/phone.js';
@@ -72,11 +72,21 @@ export function parseUazapiInbound(
   const { digits } = pnRaw ? normalizePhone(pnRaw, ctx.defaultCountry) : { digits: null };
   const lidRaw = stripJid(m.sender_lid) || stripJid(m.lid);
 
-  // Reaction: the emoji is in m.reaction. Chatwoot has no reaction type, so we
-  // mirror it as a short text threaded under the reacted message. Empty = removed.
-  const reactionEmoji = (m.reaction ?? '').toString().trim();
-  const isReaction =
-    messageTypeLc === 'reactionmessage' || (!!m.reaction && !content.text && !m.text);
+  // Reaction: uazapi puts the *reacted message id* in m.reaction (a WhatsApp id
+  // string) and the emoji in the text field. Chatwoot has no reaction type, so we
+  // mirror it as a short text threaded under the reacted message. If we can't find
+  // the emoji, ignore it rather than echo the raw id. Empty emoji = reaction removed.
+  const isReaction = messageTypeLc === 'reactionmessage' || !!m.reaction;
+  const reactedMessageId = typeof m.reaction === 'string' && m.reaction ? m.reaction : null;
+  const reactionEmoji = isReaction ? (content.text ?? m.text ?? '').toString().trim() : '';
+  if (isReaction) {
+    // TEMP debug: confirm where uazapi carries the reaction emoji (keys only, no
+    // message content). Remove once reactions are verified working.
+    logger.info(
+      { msgKeys: Object.keys(m), contentKeys: Object.keys(content), foundEmoji: !!reactionEmoji },
+      'uazapi reaction payload shape',
+    );
+  }
   if (isReaction && !reactionEmoji) {
     return { ...base, kind: 'ignored' };
   }
@@ -112,7 +122,11 @@ export function parseUazapiInbound(
     groupId: isGroup ? (chat.wa_chatid ?? m.chatid ?? null) : null,
     groupName: isGroup ? (m.groupName ?? chat.name ?? null) : null,
     replyToProviderMessageId:
-      m.quoted ?? content.contextInfo?.stanzaID ?? content.contextInfo?.stanzaId ?? null,
+      reactedMessageId ??
+      m.quoted ??
+      content.contextInfo?.stanzaID ??
+      content.contextInfo?.stanzaId ??
+      null,
     editedProviderMessageId: m.edited ?? m.editMessageId ?? null,
   };
 

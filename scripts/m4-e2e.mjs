@@ -93,7 +93,7 @@ async function main() {
   const tok = created.data.integration.webhookUrls.provider.split('/webhook/')[1].split('/')[0];
 
   // 1) create key + activate
-  const k1 = await adminReq('/admin/keys', { plan: 'pro', features: { maxIntegrations: 5 } });
+  const k1 = await adminReq('/admin/keys', { plan: 'paid', features: { maxIntegrations: 5 } });
   check('admin created key K1', k1.status === 201 && !!k1.data.key);
   const act = await apiReq('/api/license/activate', 'POST', { licenseKey: k1.data.key });
   check('activate K1 -> active', act.status === 200 && act.data.status === 'active');
@@ -114,20 +114,28 @@ async function main() {
   check('reactivate with K2 -> active', re.data.status === 'active');
   check('webhook accepted after reactivation', (await postWebhook(tok)) === true);
 
-  // 4) instance binding: K3 bound to inst-A, inst-B rejected (no sharing)
+  // 4) multi-instance: K3 used from two instances is allowed (no hard block),
+  //    but a different IP is flagged with an ip_alert for the admin.
   const k3 = await adminReq('/admin/keys', {});
   const a = await jsonReq(`${LS}/activate`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.0.0.1' },
     body: JSON.stringify({ key: k3.data.key, instanceId: 'inst-A' }),
   });
   const b = await jsonReq(`${LS}/activate`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '10.0.0.2' },
     body: JSON.stringify({ key: k3.data.key, instanceId: 'inst-B' }),
   });
-  check('binding: inst-A activates', a.status === 200 && !!a.data.token);
-  check('binding: inst-B rejected (no sharing)', b.status === 409);
+  check('inst-A activates', a.status === 200 && a.data.active === true);
+  check('inst-B also activates (sharing allowed, alerted)', b.status === 200 && b.data.active === true);
+  const ev = await jsonReq(`${LS}/admin/keys/${k3.data.id}/events`, {
+    headers: { authorization: `Bearer ${ADMIN}` },
+  });
+  check(
+    'ip_alert recorded for multi-IP use',
+    Array.isArray(ev.data.events) && ev.data.events.some((e) => e.type === 'ip_alert'),
+  );
 
   // cleanup
   await apiReq(`/api/integrations/${created.data.integration.id}`, 'DELETE');

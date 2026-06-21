@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, AlertTriangle, User } from 'lucide-react';
+import { Plus, Search, AlertTriangle, User, BadgeCheck } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -15,6 +15,7 @@ import {
   createKey,
   getKeys,
   revokeKey,
+  upgradeKey,
   type LicenseKeyRow,
 } from '../lib/admin-api';
 
@@ -58,6 +59,7 @@ export default function Keys() {
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPlan, setNewPlan] = useState<'trial' | 'paid'>('paid');
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -115,6 +117,7 @@ export default function Keys() {
       const res = await createKey({
         name: newName.trim() || undefined,
         email: newEmail.trim() || undefined,
+        plan: newPlan,
       });
       setCreatedKey(res.key);
       setNewName('');
@@ -122,6 +125,19 @@ export default function Keys() {
       await load();
     } catch {
       setError('Falha ao criar chave.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function upgrade(k: LicenseKeyRow) {
+    if (!confirm('Converter esta chave de teste em licença vitalícia (paga)?')) return;
+    setBusy(k.id);
+    try {
+      await upgradeKey(k.id);
+      await load();
+    } catch {
+      alert('Não foi possível fazer o upgrade da chave.');
     } finally {
       setBusy(null);
     }
@@ -182,6 +198,16 @@ export default function Keys() {
             <Field label="E-mail">
               <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="Opcional" />
             </Field>
+            <Field label="Plano">
+              <select
+                value={newPlan}
+                onChange={(e) => setNewPlan(e.target.value as 'trial' | 'paid')}
+                className="w-full rounded-lg border border-white/10 bg-[#121212] px-3 py-2 text-sm text-white outline-none focus:border-blue-500/50"
+              >
+                <option value="paid">Paga (vitalícia)</option>
+                <option value="trial">Teste (7 dias)</option>
+              </select>
+            </Field>
             <div className="sm:col-span-2">
               <ErrorText>{error}</ErrorText>
               {createdKey && (
@@ -232,22 +258,29 @@ export default function Keys() {
                   <Card key={k.id}>
                     <div className="flex items-start justify-between">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge tone={k.revoked ? 'error' : 'ok'}>
-                            {k.revoked ? 'Bloqueada' : 'Ativa'}
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <Badge tone={k.revoked ? 'error' : k.expired ? 'error' : 'ok'}>
+                            {k.revoked ? 'Bloqueada' : k.expired ? 'Expirada' : 'Ativa'}
                           </Badge>
-                          {k.warning && (
+                          <Badge tone={k.plan === 'paid' ? 'ok' : 'neutral'}>
+                            {k.plan === 'paid' ? 'Vitalícia' : 'Teste'}
+                          </Badge>
+                          {k.alerts > 0 && (
                             <span
-                              className="inline-flex items-center gap-1 text-amber-400 text-[11px]"
-                              title="Usada em mais de um IP/instância"
+                              className="inline-flex items-center gap-1 rounded-full bg-red-500/15 border border-red-500/40 px-2 py-0.5 text-red-300 text-[11px]"
+                              title="Acessos de IPs diferentes — possível compartilhamento"
                             >
-                              <AlertTriangle size={12} /> múltiplos acessos
+                              <AlertTriangle size={12} /> {k.alerts} alerta(s) de IP
                             </span>
                           )}
                         </div>
                         <p className="text-xs text-neutral-500 font-mono truncate">
-                          {k.id.slice(0, 8)} · plano {k.plan} ·{' '}
-                          {k.provisionedBy === 'self-service' ? 'autosserviço' : 'manual'}
+                          {k.id.slice(0, 8)} ·{' '}
+                          {k.provisionedBy === 'self-service'
+                            ? 'autosserviço'
+                            : k.provisionedBy === 'payment'
+                              ? 'pagamento'
+                              : 'manual'}
                         </p>
                       </div>
 
@@ -279,6 +312,14 @@ export default function Keys() {
                       <dd className={k.distinctIps > 1 ? 'text-amber-300' : 'text-neutral-300'}>
                         {k.distinctIps}
                       </dd>
+                      {k.plan === 'trial' && (
+                        <>
+                          <dt className="text-neutral-500">Teste expira</dt>
+                          <dd className={k.expired ? 'text-red-300' : 'text-neutral-300'}>
+                            {fmt(k.expiresAt)}
+                          </dd>
+                        </>
+                      )}
                       <dt className="text-neutral-500">Último IP</dt>
                       <dd className="text-neutral-300 font-mono">{k.lastIp ?? '—'}</dd>
                       <dt className="text-neutral-500">Último sinal</dt>
@@ -286,6 +327,22 @@ export default function Keys() {
                       <dt className="text-neutral-500">Criada em</dt>
                       <dd className="text-neutral-300">{fmt(k.createdAt)}</dd>
                     </dl>
+
+                    {k.plan === 'trial' && (
+                      <div className="mt-4">
+                        <Button
+                          variant="ghost"
+                          loading={busy === k.id}
+                          onClick={() => upgrade(k)}
+                        >
+                          <BadgeCheck size={14} /> Liberar como vitalícia
+                        </Button>
+                        <p className="mt-1.5 text-[11px] text-neutral-500">
+                          Converte esta chave de teste em paga (vitalícia) — liberação manual, sem
+                          aguardar o webhook de pagamento.
+                        </p>
+                      </div>
+                    )}
                   </Card>
                 ))}
               </div>

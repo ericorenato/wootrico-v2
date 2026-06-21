@@ -4,7 +4,12 @@ import { Activity, Boxes, Check, Database, Eye, EyeOff, Globe, Images, KeyRound,
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import MediaStorageEditor from '../components/MediaStorageEditor';
 import { completeSetup, setBaseUrl } from '../lib/setup-api';
-import { activateLicense, getLicenseStatus, type LicenseStatus } from '../lib/license-api';
+import {
+  activateLicense,
+  provisionLicense,
+  getLicenseStatus,
+  type LicenseStatus,
+} from '../lib/license-api';
 import {
   getConnections,
   restartSystem,
@@ -218,6 +223,19 @@ export default function SetupWizard() {
     }
   }
 
+  async function getFreeTrial() {
+    setError('');
+    setBusy(true);
+    try {
+      await provisionLicense();
+      setLicense(await getLicenseStatus());
+      await finish();
+    } catch (e) {
+      setBusy(false);
+      setError(e instanceof ApiError ? `Falha na licença: ${e.code}` : 'Falha ao obter o teste.');
+    }
+  }
+
   if (restarting) return <RestartScreen elapsed={elapsed} />;
 
   const loading = !conn || !pg || !rb || !rd;
@@ -392,30 +410,35 @@ export default function SetupWizard() {
                 <StepShell
                   icon={<KeyRound size={16} className="text-blue-400" />}
                   title="Licença"
-                  desc="Informe a chave adquirida (formato WTR-…) ou conclua sem licença."
+                  desc="Obtenha um teste gratuito de 7 dias com um clique, ou informe uma chave já adquirida (WTR-…)."
                   badge={license ? <Badge tone={license.status === 'active' ? 'ok' : 'neutral'}>{license.status}</Badge> : undefined}
                 >
-                  <Field label="Chave de licença">
-                    <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="WTR-..." />
-                  </Field>
                   <ErrorText>{error}</ErrorText>
                   <p className="text-xs text-neutral-500">
                     Se você alterou RabbitMQ ou Redis, a aplicação reinicia ao concluir para aplicar —
                     leva alguns segundos.
                   </p>
                   <div className="flex flex-wrap items-center gap-4">
-                    <Button onClick={key.trim() ? activate : finish} loading={busy}>
-                      {key.trim() ? 'Ativar e concluir' : 'Concluir'}
+                    <Button onClick={key.trim() ? activate : getFreeTrial} loading={busy}>
+                      {key.trim() ? 'Ativar e concluir' : 'Obter teste gratuito e concluir'}
                     </Button>
-                    {key.trim() && (
-                      <button onClick={finish} className="text-sm text-neutral-400 hover:text-white">
-                        Concluir sem licença
-                      </button>
-                    )}
+                    <button onClick={finish} className="text-sm text-neutral-400 hover:text-white">
+                      Concluir sem licença
+                    </button>
                     <button onClick={() => setStep(4)} className="text-sm text-neutral-400 hover:text-white">
                       Voltar
                     </button>
                   </div>
+                  <details className="mt-2">
+                    <summary className="text-xs text-neutral-500 hover:text-white cursor-pointer">
+                      Tenho uma chave (ativar manualmente)
+                    </summary>
+                    <div className="mt-3">
+                      <Field label="Chave de licença">
+                        <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="WTR-..." />
+                      </Field>
+                    </div>
+                  </details>
                 </StepShell>
               )}
             </>

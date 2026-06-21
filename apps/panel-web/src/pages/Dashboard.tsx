@@ -45,14 +45,12 @@ const PROVIDER_LABEL: Record<string, string> = {
 const LIC_TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
   active: 'ok',
   warning: 'neutral',
-  grace: 'neutral',
   blocked: 'error',
   unactivated: 'neutral',
 };
 const LIC_LABEL: Record<string, string> = {
   active: 'Ativa',
   warning: 'Atenção',
-  grace: 'Carência',
   blocked: 'Bloqueada',
   unactivated: 'Não ativada',
   unknown: 'Desconhecida',
@@ -343,9 +341,11 @@ export default function Dashboard() {
               {license ? (LIC_LABEL[license.status] ?? license.status) : '…'}
             </p>
             <p className="mt-1 text-[11px] text-neutral-500">
-              {license?.tokenExpiresAt
-                ? `expira ${new Date(license.tokenExpiresAt).toLocaleDateString('pt-BR')}`
-                : 'não ativada'}
+              {license?.plan === 'paid'
+                ? 'vitalícia'
+                : license?.expiresAt
+                  ? `teste expira ${new Date(license.expiresAt).toLocaleDateString('pt-BR')}`
+                  : 'não ativada'}
             </p>
             <Link to="/license" className="mt-3 inline-block text-xs text-blue-400 hover:underline">
               Gerenciar →

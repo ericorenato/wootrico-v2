@@ -69,7 +69,9 @@ export default async function systemRoutes(app: FastifyInstance) {
         required: env.LICENSE_REQUIRED,
         instanceId: state.instanceId,
         serverUrl: process.env.LICENSE_SERVER_URL,
-        tokenExpiresAt: state.tokenExpiresAt,
+        plan: state.plan,
+        expiresAt: state.expiresAt,
+        lastValidatedAt: state.lastValidatedAt,
         lastHeartbeatAt: state.lastHeartbeatAt,
       };
     } catch {

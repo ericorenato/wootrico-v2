@@ -1,4 +1,4 @@
-import { logger, AMQP } from '@wootrico/config';
+import { logger, AMQP, LICENSE } from '@wootrico/config';
 import { prisma } from '@wootrico/db';
 import { applyConnectionOverrides } from '@wootrico/db/conn';
 import { consume, closeQueue } from '@wootrico/queue';
@@ -8,7 +8,7 @@ import { handleInbound } from './handlers/inbound.js';
 import { handleChatwootCallback } from './handlers/chatwoot-callback.js';
 import { runCleanup } from './jobs/cleanup.js';
 
-const HEARTBEAT_MS = 6 * 60 * 60 * 1000; // 6h
+const HEARTBEAT_MS = LICENSE.validateIntervalMs; // online license re-check cadence (30 min)
 const CLEANUP_MS = 60 * 60 * 1000; // 1h
 const RESTART_POLL_MS = 15 * 1000; // 15s — watch for a panel-triggered restart
 

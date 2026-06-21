@@ -71,8 +71,9 @@ export class ZapiProvider implements WhatsAppProvider {
         body = { ...body, image: media, caption: input.content ?? '' };
         break;
       case 'audio':
+        // Voice note — z-api's send-audio has no caption/message field.
         path = '/send-audio';
-        body = { ...body, audio: media, message: input.content ?? '' };
+        body = { ...body, audio: media };
         break;
       case 'video':
         path = '/send-video';
@@ -85,7 +86,7 @@ export class ZapiProvider implements WhatsAppProvider {
           ...body,
           document: media,
           fileName: input.media?.fileName ?? `file.${ext}`,
-          message: input.content ?? '',
+          caption: input.content ?? '',
         };
         break;
       }
@@ -110,6 +111,20 @@ export class ZapiProvider implements WhatsAppProvider {
 
   parseInbound(payload: unknown, ctx: ParseContext): NormalizedInboundMessage {
     return parseZapiInbound(payload, ctx);
+  }
+
+  async fetchProfilePictureUrl(recipient: string): Promise<string | null> {
+    try {
+      // GET /profile-picture?phone=... → { link: "https://..." } (valid ~48h).
+      const res = await this.http.get('/profile-picture', {
+        params: { phone: recipient },
+        timeout: 10000,
+      });
+      const out = (res.data ?? {}) as Record<string, any>;
+      return out.link ?? out.url ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async testConnection(): Promise<TestResult> {

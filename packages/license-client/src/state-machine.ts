@@ -2,41 +2,31 @@ import { LICENSE, type LicenseStatus, env } from '@wootrico/config';
 import type { LicenseState } from '@wootrico/db';
 import { getLicenseState, updateLicenseState } from './store.js';
 
-const DAY = 24 * 60 * 60 * 1000;
-
-/** Pure status computation from stored state + current time. */
+/**
+ * Pure status computation from stored state + current time. Validation is online:
+ * the server's last answer is cached in `status`/`lastValidatedAt`. `blocked` is
+ * sticky until a fresh successful validation flips it back to `active`.
+ */
 export function computeStatus(state: LicenseState, now = new Date()): LicenseStatus {
-  if (state.status === 'blocked') return 'blocked'; // sticky until reactivation
-  if (!state.signedToken || !state.tokenExpiresAt) return 'unactivated';
-
-  const exp = state.tokenExpiresAt.getTime();
-  if (now.getTime() <= exp) {
-    // token valid; warn if heartbeats have gone stale
-    const stale =
-      state.lastHeartbeatAt &&
-      now.getTime() - state.lastHeartbeatAt.getTime() > 2 * LICENSE.heartbeatIntervalMs;
-    return stale ? 'warning' : 'active';
+  if (state.status === 'blocked') return 'blocked'; // sticky until re-validated active
+  if (!state.licenseKey || !state.instanceId) return 'unactivated';
+  if (!state.lastValidatedAt) {
+    // A key exists but was never confirmed online (fresh migration / mid-rollout).
+    // Allow it briefly as 'warning' until the next validation runs.
+    return state.status === 'active' ? 'warning' : 'unactivated';
   }
 
-  // token expired → grace then blocked
-  const graceUntil = (state.graceUntil?.getTime() ?? exp + LICENSE.graceDays * DAY);
-  return now.getTime() < graceUntil ? 'grace' : 'blocked';
+  const since = now.getTime() - state.lastValidatedAt.getTime();
+  if (since <= LICENSE.validateIntervalMs) return 'active';
+  if (since <= LICENSE.cacheGraceMs) return 'warning'; // serving from cache during a blip
+  return 'blocked'; // cache window exceeded without a successful re-check
 }
 
-/** Recompute, persist (incl. graceUntil on first expiry), and return status. */
+/** Recompute, persist when it changes, and return the status. */
 export async function evaluateLicense(now = new Date()): Promise<LicenseStatus> {
   const state = await getLicenseState();
   const status = computeStatus(state, now);
-
-  const data: Record<string, unknown> = { status };
-  if (
-    status === 'grace' &&
-    !state.graceUntil &&
-    state.tokenExpiresAt
-  ) {
-    data.graceUntil = new Date(state.tokenExpiresAt.getTime() + LICENSE.graceDays * DAY);
-  }
-  if (status !== state.status || data.graceUntil) await updateLicenseState(data);
+  if (status !== state.status) await updateLicenseState({ status });
   return status;
 }
 
@@ -44,7 +34,7 @@ export async function evaluateLicense(now = new Date()): Promise<LicenseStatus> 
 export function isProcessingAllowed(status: LicenseStatus): boolean {
   if (status === 'blocked') return false;
   if (status === 'unactivated') return !env.LICENSE_REQUIRED;
-  return true; // active | warning | grace
+  return true; // active | warning
 }
 
 /** Convenience gate used by ingress + worker. */

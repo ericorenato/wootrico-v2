@@ -14,6 +14,7 @@ import { createProvider } from '@wootrico/providers';
 import { ChatwootClient } from '@wootrico/chatwoot-client';
 import { serializeIntegration } from '../lib/integration-serializer.js';
 import { buildWebhookUrls, getPublicBaseUrl } from '../lib/webhook-urls.js';
+import { canManageIntegrations } from '../lib/license-guard.js';
 
 export default async function integrationRoutes(app: FastifyInstance) {
   const guard = { onRequest: [app.authenticate] };
@@ -58,6 +59,10 @@ export default async function integrationRoutes(app: FastifyInstance) {
 
   // ── create ──
   app.post('/api/integrations', guard, async (req, reply) => {
+    const lic = await canManageIntegrations();
+    if (!lic.allowed) {
+      return reply.code(403).send({ error: 'license_inactive', status: lic.status });
+    }
     const parsed = CreateIntegrationSchema.safeParse(req.body);
     if (!parsed.success)
       return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
@@ -166,6 +171,15 @@ export default async function integrationRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
     const d = parsed.data;
+
+    // Enabling an integration requires an active license (disabling/editing is
+    // always allowed so customers can still clean up while unlicensed).
+    if (d.isEnabled === true && !existing.isEnabled) {
+      const lic = await canManageIntegrations();
+      if (!lic.allowed) {
+        return reply.code(403).send({ error: 'license_inactive', status: lic.status });
+      }
+    }
 
     const data: Record<string, unknown> = {};
     for (const k of [

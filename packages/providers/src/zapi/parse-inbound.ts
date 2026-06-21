@@ -68,6 +68,33 @@ export function parseZapiInbound(
     };
   }
 
+  // reaction: z-api delivers a `reaction` object. Chatwoot has no reaction type,
+  // so we mirror it as a short text threaded under the reacted message (same as
+  // evolution/uazapi). Empty value = the reaction was removed → ignore.
+  const reaction = (body.reaction ?? {}) as Record<string, any>;
+  if (body.reaction) {
+    const emoji = (reaction.value ?? '').toString().trim();
+    const isGroupR = body.isGroup === true;
+    if (!emoji || (isGroupR && ctx.ignoreGroups)) {
+      return { ...base, kind: 'ignored' };
+    }
+    const pnDigits =
+      !isGroupR && body.phone ? normalizePhone(body.phone, ctx.defaultCountry).digits : null;
+    return {
+      ...base,
+      phone: pnDigits,
+      jid: body.phone ?? null,
+      text: `reagiu com ${emoji}`,
+      name: body.senderName ?? body.chatName ?? null,
+      senderName: body.senderName ?? null,
+      senderPhoto: body.photo ?? body.senderPhoto ?? null,
+      isGroup: isGroupR,
+      groupId: isGroupR ? (body.phone ?? null) : null,
+      groupName: isGroupR ? (body.chatName ?? null) : null,
+      replyToProviderMessageId: reaction.referencedMessage?.messageId ?? null,
+    };
+  }
+
   const isGroup = body.isGroup === true;
   const media = mediaFromBody(body);
   const text = body.text?.message ?? media?.caption ?? '';

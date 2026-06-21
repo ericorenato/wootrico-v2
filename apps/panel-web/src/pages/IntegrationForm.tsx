@@ -235,7 +235,12 @@ export default function IntegrationForm() {
       setFlowDone(true);
       setResult({ inbox: saved.inbox, webhookUrls: saved.integration.webhookUrls });
     } catch (err) {
-      const msg = err instanceof ApiError ? `Erro: ${err.code}` : 'Falha ao criar.';
+      const msg =
+        err instanceof ApiError && err.code === 'license_inactive'
+          ? 'Licença inativa — não é possível criar integrações.'
+          : err instanceof ApiError
+            ? `Erro: ${err.code}`
+            : 'Falha ao criar.';
       set(2, { status: 'fail', detail: msg });
       setFlowDone(true);
     }
@@ -294,7 +299,9 @@ export default function IntegrationForm() {
       const saved = await updateIntegration(id, body);
       setResult({ inbox: saved.inbox, webhookUrls: saved.integration.webhookUrls });
     } catch (err) {
-      if (err instanceof ApiError) setError(`Erro: ${err.code}`);
+      if (err instanceof ApiError && err.code === 'license_inactive')
+        setError('Licença inativa — não é possível ativar integrações.');
+      else if (err instanceof ApiError) setError(`Erro: ${err.code}`);
       else setError('Falha ao salvar.');
     } finally {
       setSaving(false);

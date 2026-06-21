@@ -1,11 +1,12 @@
 import { api } from './api-client';
 
 export interface LicenseStatus {
-  status: 'unactivated' | 'active' | 'warning' | 'grace' | 'blocked';
+  status: 'unactivated' | 'active' | 'warning' | 'blocked';
   instanceId: string | null;
+  plan: 'trial' | 'paid' | null;
+  expiresAt: string | null;
   features: Record<string, unknown>;
-  tokenExpiresAt: string | null;
-  graceUntil: string | null;
+  lastValidatedAt: string | null;
   lastHeartbeatAt: string | null;
   lastError: string | null;
   serverUrl?: string;
@@ -24,6 +25,9 @@ export const provisionLicense = () =>
     '/api/license/provision',
     { method: 'POST' },
   );
+
+export const purchaseLicense = () =>
+  api<{ checkoutUrl: string | null }>('/api/license/purchase', { method: 'POST' });
 
 export const deactivateLicense = () =>
   api<void>('/api/license/deactivate', { method: 'POST' });

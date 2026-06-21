@@ -13,12 +13,16 @@ datasource db {
 model LicenseKey {
   id             String       @id @default(uuid())
   keyHash        String       @unique @map("key_hash")
-  plan           String       @default("pro")
+  // 'trial' (free, time-limited) or 'paid' (lifetime). Legacy rows ('pro' etc.)
+  // are migrated to 'paid' so existing customers never expire.
+  plan           String       @default("trial")
   email          String?
   name           String?
   provisionedBy  String       @default("admin") @map("provisioned_by")
   features       Json?
   maxActivations Int          @default(1) @map("max_activations")
+  // Trial keys expire at this instant; paid (lifetime) keys leave it null.
+  expiresAt      DateTime?    @map("expires_at")
   revokedAt      DateTime?    @map("revoked_at")
   createdAt      DateTime     @default(now()) @map("created_at")
   activations    Activation[]
@@ -43,6 +47,39 @@ model Activation {
   @@unique([licenseKeyId, instanceId])
   @@index([instanceId])
   @@map("activations")
+}
+
+/// Webhook authentication keys (payment provider → license server).
+/// The vendor creates/rotates/revokes these in the admin panel; the raw key is
+/// shown once and stored only as a SHA256 hash.
+model WebhookKey {
+  id         String    @id @default(uuid())
+  keyHash    String    @unique @map("key_hash")
+  name       String?
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("webhook_keys")
+}
+
+/// A pending/settled purchase tied to a specific installation. Created when the
+/// customer clicks "buy" (we record which instanceId is buying); settled by the
+/// payment webhook, which mints a paid key and delivers it back to that instance.
+model PurchaseIntent {
+  id           String    @id @default(uuid())
+  instanceId   String    @map("instance_id")
+  email        String?
+  status       String    @default("pending") // pending | paid | cancelled
+  licenseKeyId String?   @map("license_key_id")
+  issuedKey    String?   @map("issued_key") // raw paid key, delivered to the client once
+  paymentRef   String?   @map("payment_ref") // external id, for idempotency
+  createdAt    DateTime  @default(now()) @map("created_at")
+  paidAt       DateTime? @map("paid_at")
+
+  @@index([email, status, createdAt])
+  @@index([instanceId])
+  @@map("purchase_intents")
 }
 
 model HeartbeatLog {

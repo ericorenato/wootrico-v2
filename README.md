@@ -161,6 +161,21 @@ Chatwoot     ─▶ /webhook/:token/chatwoot ─┤ panel-api (ingress)
 Hospedado **separadamente** dos clientes, em uma **imagem própria** (`runtime-license`)
 que **nunca** é embarcada na imagem do cliente (`runtime-app`):
 
+Validação **100% online**: o cliente pergunta periodicamente ao servidor "minha chave
+está ativa?" — não há par de chaves nem chave pública a embarcar.
+
+**Instalação na VPS (recomendado):** use o instalador dedicado, que detecta SO/Docker/Swarm,
+pergunta a rede overlay e o **subdomínio**, **reaproveita um Postgres existente** (ou sobe um
+embarcado), gera os segredos e sobe atrás do Traefik (TLS automático):
+
+```bash
+sudo bash install-license.sh            # instalar
+sudo bash install-license.sh update     # repull da imagem + redeploy (preserva o .env)
+sudo bash install-license.sh uninstall  # remover a stack
+```
+
+**Manual (Compose):**
+
 ```bash
 # duas imagens a partir do mesmo Dockerfile:
 docker build --target runtime-app     -t ericoautomacao/wootrico-v2:latest .       # CLIENTE
@@ -168,29 +183,40 @@ docker build --target runtime-license -t ericoautomacao/wootrico-license:latest 
 docker push ericoautomacao/wootrico-v2:latest
 docker push ericoautomacao/wootrico-license:latest
 
-node scripts/gen-license-keys.mjs                              # par Ed25519
-cp apps/license-server/.env.example apps/license-server/.env   # cole as chaves + ADMIN_TOKEN
-#   defina também LICENSE_ADMIN_EMAIL / LICENSE_ADMIN_PASSWORD (login do painel)
+cp apps/license-server/.env.example apps/license-server/.env   # ADMIN_TOKEN + login do painel
+#   defina LICENSE_ADMIN_EMAIL / LICENSE_ADMIN_PASSWORD (login do painel)
 docker compose -f docker-compose.license-server.yml up -d
 ```
 
-Fluxo de chaves:
+**Tipos de licença:**
 
-- **Autosserviço (padrão):** o cliente se cadastra no Wootrico (nome + e-mail) e clica
-  **“Obter licença”** — o servidor gera e vincula a chave à instância, registrando o IP
-  da máquina. Regra de uma chave ativa por instância.
-- **Manual:** crie uma chave pelo painel admin (`http://<host>:4000/`, login com
-  `LICENSE_ADMIN_EMAIL`/`PASSWORD`) ou via API:
+- **Teste gratuito (`trial`):** dura 7 dias (`LICENSE_TRIAL_DAYS`). Ao expirar, o cliente
+  solicita um novo teste pelo painel (self-service). Gerado quando o cliente clica
+  **“Obter teste gratuito”** no wizard/página de licença.
+- **Paga (`paid`):** vitalícia, sem expiração — ainda validada periodicamente e revogável.
+
+**Compra / upgrade:** quando o cliente clica em comprar, o app registra uma **intenção de
+compra** com seu `instanceId` no servidor. Ao receber o pagamento, o sistema externo chama
+o **webhook** `POST /webhook/payment` (autenticado por uma **chave de webhook** `WHK-…`
+criada no painel) com o e-mail; o servidor cunha uma **chave paga** para a última intenção
+pendente daquele e-mail e a entrega à instância, que se atualiza sozinha. O admin também
+pode fazer **upgrade** manual (`/admin/keys/:id/upgrade`).
+
+**Antifraude:** o servidor **alerta** (persistente, no painel admin) quando a mesma chave é
+usada a partir de **IPs diferentes** — possível compartilhamento / uso em várias máquinas.
+
+**Manual:** crie uma chave pelo painel admin (`http://<host>:4000/`) ou via API:
 
 ```bash
 curl -XPOST https://license.seudominio/admin/keys \
   -H "authorization: Bearer SEU_ADMIN_TOKEN" -H 'content-type: application/json' \
-  -d '{"plan":"pro","email":"cliente@x.com","name":"Cliente X"}'
+  -d '{"plan":"paid","email":"cliente@x.com","name":"Cliente X"}'
 ```
 
-O **painel admin** (mesmo design do painel do cliente) lista chaves, ativa/desativa e
-mostra os **eventos de acesso/uso** (apenas metadados — IP, instância, versão; sem dados
-de conversa, em conformidade com a LGPD).
+O **painel admin** (mesmo design do painel do cliente) lista chaves (plano, expiração,
+alertas de IP), ativa/desativa/faz upgrade, gerencia chaves de webhook e mostra os
+**eventos de acesso/uso** (apenas metadados — IP, instância, versão; sem dados de
+conversa, em conformidade com a LGPD).
 
 ## 🛠️ Desenvolvimento
 

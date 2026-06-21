@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Plug, Pencil } from 'lucide-react';
+import { Plus, Trash2, Plug, Pencil, AlertTriangle } from 'lucide-react';
 import { Badge, Button, Card, CopyButton, Eyebrow } from '../components/ui';
 import {
   deleteIntegration,
@@ -8,6 +8,7 @@ import {
   updateIntegration,
   type IntegrationDTO,
 } from '../lib/integrations-api';
+import { getLicenseStatus, type LicenseStatus } from '../lib/license-api';
 
 const PROVIDER_LABEL: Record<string, string> = {
   evolution: 'Evolution',
@@ -31,11 +32,16 @@ function UrlRow({ label, value }: { label: string; value: string }) {
 export default function Integrations() {
   const [items, setItems] = useState<IntegrationDTO[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [license, setLicense] = useState<LicenseStatus | null>(null);
 
   const load = () => listIntegrations().then(setItems).catch(() => setItems([]));
   useEffect(() => {
     load();
+    getLicenseStatus().then(setLicense).catch(() => {});
   }, []);
+
+  // Active license required to create or enable integrations (option 1 gating).
+  const licensed = license ? license.status === 'active' || license.status === 'warning' : true;
 
   async function remove(id: string) {
     if (!confirm('Remover esta integração?')) return;
@@ -45,16 +51,25 @@ export default function Integrations() {
 
   async function toggleEnabled(it: IntegrationDTO) {
     const next = !it.isEnabled;
+    if (next && !licensed) {
+      alert('Licença inativa — não é possível ativar integrações. Regularize a licença primeiro.');
+      return;
+    }
     setBusy(it.id);
     // optimistic update; revert on failure.
     setItems((prev) => prev?.map((x) => (x.id === it.id ? { ...x, isEnabled: next } : x)) ?? prev);
     try {
       await updateIntegration(it.id, { isEnabled: next });
-    } catch {
+    } catch (err) {
       setItems((prev) =>
         prev?.map((x) => (x.id === it.id ? { ...x, isEnabled: it.isEnabled } : x)) ?? prev,
       );
-      alert('Não foi possível alterar o status da integração.');
+      const code = (err as { code?: string }).code;
+      alert(
+        code === 'license_inactive'
+          ? 'Licença inativa — não é possível ativar integrações.'
+          : 'Não foi possível alterar o status da integração.',
+      );
     } finally {
       setBusy(null);
     }
@@ -70,12 +85,35 @@ export default function Integrations() {
             Cada integração liga uma conta/inbox do Chatwoot a uma instância de API não-oficial.
           </p>
         </div>
-        <Link to="/integrations/new">
-          <Button>
+        {licensed ? (
+          <Link to="/integrations/new">
+            <Button>
+              <Plus size={16} /> Nova
+            </Button>
+          </Link>
+        ) : (
+          <Button disabled title="Licença inativa">
             <Plus size={16} /> Nova
           </Button>
-        </Link>
+        )}
       </div>
+
+      {!licensed && (
+        <div className="mb-8 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-300" />
+          <div className="text-sm text-amber-100">
+            <p className="font-medium">Licença inativa</p>
+            <p className="text-amber-200/80">
+              As integrações estão pausadas e não é possível criar nem ativar novas. Seus dados
+              continuam acessíveis.{' '}
+              <Link to="/license" className="underline hover:text-white">
+                Regularizar licença
+              </Link>
+              .
+            </p>
+          </div>
+        </div>
+      )}
 
       {items === null ? (
         <p className="text-sm text-neutral-500">Carregando…</p>
@@ -131,8 +169,8 @@ export default function Integrations() {
                         }`}
                       />
                     </span>
-                    <span className="text-xs text-neutral-400 w-12 text-left">
-                      {it.isEnabled ? 'Ativa' : 'Inativa'}
+                    <span className="text-xs text-neutral-400 w-16 text-left">
+                      {it.isEnabled ? (!licensed ? 'Pausada' : 'Ativa') : 'Inativa'}
                     </span>
                   </button>
                   <Link

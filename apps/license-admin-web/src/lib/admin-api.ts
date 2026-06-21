@@ -14,7 +14,9 @@ export interface Binding {
 
 export interface LicenseKeyRow {
   id: string;
-  plan: string;
+  plan: 'trial' | 'paid' | string;
+  expiresAt: string | null;
+  expired: boolean;
   email: string | null;
   name: string | null;
   provisionedBy: string;
@@ -22,11 +24,20 @@ export interface LicenseKeyRow {
   activations: number;
   activeInstances: number;
   distinctIps: number;
+  alerts: number;
   warning: boolean;
   lastIp: string | null;
   lastHeartbeatAt: string | null;
   createdAt: string;
   bindings: Binding[];
+}
+
+export interface WebhookKeyRow {
+  id: string;
+  name: string | null;
+  revoked: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
 }
 
 export interface LicenseEvent {
@@ -55,7 +66,12 @@ export const getKeys = (params: { q?: string; from?: string; to?: string } = {})
   return api<{ keys: LicenseKeyRow[] }>(`/admin/keys${qs ? `?${qs}` : ''}`);
 };
 
-export const createKey = (body: { name?: string; email?: string; maxActivations?: number }) =>
+export const createKey = (body: {
+  name?: string;
+  email?: string;
+  plan?: 'trial' | 'paid';
+  maxActivations?: number;
+}) =>
   api<{ id: string; key: string }>('/admin/keys', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -66,6 +82,20 @@ export const revokeKey = (id: string) =>
 
 export const activateKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/activate`, { method: 'POST' });
+
+export const upgradeKey = (id: string) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}/upgrade`, { method: 'POST' });
+
+export const getWebhookKeys = () => api<{ keys: WebhookKeyRow[] }>('/admin/webhook-keys');
+
+export const createWebhookKey = (name?: string) =>
+  api<{ id: string; key: string }>('/admin/webhook-keys', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+
+export const revokeWebhookKey = (id: string) =>
+  api<{ ok: boolean }>(`/admin/webhook-keys/${id}/revoke`, { method: 'POST' });
 
 export const getEvents = (
   params: {

@@ -23,6 +23,23 @@ function splitTarget(target: string, isGroup: boolean) {
 
 const MEDIA_THROTTLE_MS = 1000;
 
+/**
+ * Best-effort file name for a Chatwoot attachment. Chatwoot often omits
+ * `filename` on the webhook payload, so derive it from the storage URL's
+ * basename (decoding %20 etc). Without a name WhatsApp shows documents as
+ * "Sem título". Falls back to `arquivo.<ext>` when the URL has no usable name.
+ */
+function attachmentFileName(att: any): string | undefined {
+  if (att.filename) return att.filename;
+  try {
+    const base = decodeURIComponent(new URL(att.data_url).pathname.split('/').pop() ?? '');
+    if (base) return base.includes('.') || !att.extension ? base : `${base}.${att.extension}`;
+  } catch {
+    /* not a parseable URL — fall through */
+  }
+  return att.extension ? `arquivo.${att.extension}` : undefined;
+}
+
 /** Chatwoot webhook → provider (the outbound pipeline + dedup case 2). */
 export async function handleChatwootCallback(
   rawPayload: unknown,
@@ -151,11 +168,11 @@ export async function handleChatwootCallback(
           media = {
             base64: fetched.base64,
             mimeType: fetched.mimeType ?? att.content_type ?? undefined,
-            fileName: att.filename ?? undefined,
+            fileName: attachmentFileName(att),
           };
         } catch (err) {
           logger.warn({ integrationId, err }, 'callback: media download failed, falling back to URL');
-          media = { url: att.data_url };
+          media = { url: att.data_url, fileName: attachmentFileName(att) };
         }
         const r = await provider.sendMessage({
           recipient: sendTarget,

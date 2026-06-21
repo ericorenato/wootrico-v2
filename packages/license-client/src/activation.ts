@@ -1,7 +1,6 @@
 import { env, LICENSE } from '@wootrico/config';
 import { prisma } from '@wootrico/db';
 import { getOrCreateInstanceId } from './fingerprint.js';
-import { verifyLicenseToken } from './verify.js';
 import { encryptLicenseKey, getLicenseState, updateLicenseState, decryptLicenseKey } from './store.js';
 
 export class LicenseError extends Error {}
@@ -13,15 +12,57 @@ async function resolvePublicBaseUrl(): Promise<string> {
 
 export interface ActivationResult {
   status: 'active';
+  plan: string | null;
+  expiresAt: Date | null;
   features: Record<string, unknown>;
   instanceId: string;
+}
+
+interface LicenseResponse {
+  key?: string;
+  active?: boolean;
+  plan?: string | null;
+  expiresAt?: string | null;
+  reason?: string;
+  error?: string;
+  features?: Record<string, unknown>;
+  reused?: boolean;
+}
+
+/** Persist a successful provision/activate response and return the result. */
+async function applyLicenseResponse(
+  data: LicenseResponse,
+  instanceId: string,
+  opts: { storeKey?: string },
+): Promise<ActivationResult> {
+  const now = new Date();
+  const expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+  await updateLicenseState({
+    ...(opts.storeKey ? { licenseKey: encryptLicenseKey(opts.storeKey) } : {}),
+    instanceId,
+    plan: data.plan ?? null,
+    expiresAt,
+    status: 'active',
+    features: (data.features ?? {}) as object,
+    lastHeartbeatAt: now,
+    lastValidatedAt: now,
+    nextHeartbeatAt: new Date(now.getTime() + LICENSE.validateIntervalMs),
+    lastError: null,
+  });
+  return {
+    status: 'active',
+    plan: data.plan ?? null,
+    expiresAt,
+    features: (data.features ?? {}) as Record<string, unknown>,
+    instanceId,
+  };
 }
 
 /**
  * Self-service provisioning: ask the license server to mint AND bind a key for
  * this instance in one online call, identified by the user's name/email. The
- * raw key is returned once and stored encrypted locally for later heartbeats.
- * The server enforces one active key per instanceId.
+ * raw key is returned once (omitted on reuse) and stored encrypted locally.
+ * After a trial expires, calling this again mints a fresh trial.
  */
 export async function provisionLicense(owner: {
   name?: string | null;
@@ -46,36 +87,15 @@ export async function provisionLicense(owner: {
     throw new LicenseError(`license server unreachable: ${(err as Error).message}`);
   }
 
-  const data = (await res.json().catch(() => ({}))) as {
-    key?: string;
-    token?: string;
-    error?: string;
-    features?: Record<string, unknown>;
-  };
-  if (!res.ok || !data.token) {
-    throw new LicenseError(data.error ?? `provision_failed_${res.status}`);
+  const data = (await res.json().catch(() => ({}))) as LicenseResponse;
+  if (!res.ok || !data.active) {
+    throw new LicenseError(data.error ?? data.reason ?? `provision_failed_${res.status}`);
   }
-
-  const claims = await verifyLicenseToken(data.token);
-  const now = new Date();
-  await updateLicenseState({
-    // On reuse the server omits `key`; keep whatever is already stored.
-    ...(data.key ? { licenseKey: encryptLicenseKey(data.key) } : {}),
-    instanceId,
-    signedToken: data.token,
-    tokenExpiresAt: new Date((claims.exp ?? 0) * 1000),
-    status: 'active',
-    features: (claims.feat ?? data.features ?? {}) as object,
-    lastHeartbeatAt: now,
-    nextHeartbeatAt: new Date(now.getTime() + LICENSE.heartbeatIntervalMs),
-    graceUntil: null,
-    lastError: null,
-  });
-
-  return { status: 'active', features: (claims.feat ?? {}) as Record<string, unknown>, instanceId };
+  // On reuse the server omits `key`; keep whatever is already stored.
+  return applyLicenseResponse(data, instanceId, { storeKey: data.key });
 }
 
-/** Activate a license key against the central server (online, once). */
+/** Activate an existing license key against the central server (online, once). */
 export async function activateLicense(licenseKey: string): Promise<ActivationResult> {
   const instanceId = await getOrCreateInstanceId();
 
@@ -95,27 +115,38 @@ export async function activateLicense(licenseKey: string): Promise<ActivationRes
     throw new LicenseError(`license server unreachable: ${(err as Error).message}`);
   }
 
-  const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string; features?: Record<string, unknown> };
-  if (!res.ok || !data.token) {
-    throw new LicenseError(data.error ?? `activation_failed_${res.status}`);
+  const data = (await res.json().catch(() => ({}))) as LicenseResponse;
+  if (!res.ok || !data.active) {
+    throw new LicenseError(data.error ?? data.reason ?? `activation_failed_${res.status}`);
   }
+  return applyLicenseResponse(data, instanceId, { storeKey: licenseKey });
+}
 
-  const claims = await verifyLicenseToken(data.token);
-  const now = new Date();
-  await updateLicenseState({
-    licenseKey: encryptLicenseKey(licenseKey),
-    instanceId,
-    signedToken: data.token,
-    tokenExpiresAt: new Date((claims.exp ?? 0) * 1000),
-    status: 'active',
-    features: (claims.feat ?? data.features ?? {}) as object,
-    lastHeartbeatAt: now,
-    nextHeartbeatAt: new Date(now.getTime() + LICENSE.heartbeatIntervalMs),
-    graceUntil: null,
-    lastError: null,
-  });
+/**
+ * Register a purchase intent for this installation and return the external
+ * checkout URL (if configured). The payment webhook later settles the most
+ * recent pending intent for the buyer's email and delivers a lifetime key.
+ */
+export async function requestPurchase(email?: string | null): Promise<{ checkoutUrl: string | null }> {
+  const state = await getLicenseState();
+  const key = decryptLicenseKey(state);
+  if (!key || !state.instanceId) throw new LicenseError('no_license_to_upgrade');
 
-  return { status: 'active', features: (claims.feat ?? {}) as Record<string, unknown>, instanceId };
+  let res: Response;
+  try {
+    res = await fetch(`${env.LICENSE_SERVER_URL}/purchase-intent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key, instanceId: state.instanceId, email: email ?? undefined }),
+    });
+  } catch (err) {
+    throw new LicenseError(`license server unreachable: ${(err as Error).message}`);
+  }
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new LicenseError(data.error ?? `purchase_intent_failed_${res.status}`);
+  }
+  return { checkoutUrl: env.LICENSE_CHECKOUT_URL ?? null };
 }
 
 /** Release the binding so the key can be moved to another instance. */
@@ -131,10 +162,10 @@ export async function deactivateLicense(): Promise<void> {
   }
   await updateLicenseState({
     licenseKey: null,
-    signedToken: null,
-    tokenExpiresAt: null,
+    plan: null,
+    expiresAt: null,
     status: 'unactivated',
-    graceUntil: null,
+    lastValidatedAt: null,
     lastError: null,
   });
 }

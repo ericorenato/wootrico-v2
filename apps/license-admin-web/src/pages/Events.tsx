@@ -3,21 +3,39 @@ import { Search } from 'lucide-react';
 import { Eyebrow, Badge, Button, Field, Input } from '../components/ui';
 import { getEvents, type LicenseEvent } from '../lib/admin-api';
 
-const WARN_TYPES = new Set(['activation_blocked', 'activate_revoked', 'ip_changed']);
-const ADMIN_TYPES = new Set(['admin_create', 'admin_revoke', 'admin_activate']);
+const WARN_TYPES = new Set([
+  'activation_blocked',
+  'activate_revoked',
+  'activate_expired',
+  'ip_changed',
+  'ip_alert',
+]);
+const ADMIN_TYPES = new Set([
+  'admin_create',
+  'admin_revoke',
+  'admin_activate',
+  'admin_upgrade',
+  'payment_confirmed',
+]);
 
 const LABEL: Record<string, string> = {
   provision: 'Provisionamento',
   provision_reused: 'Provisionamento (reuso)',
   activate: 'Ativação',
   activate_revoked: 'Ativação negada (chave bloqueada)',
+  activate_expired: 'Ativação negada (teste expirado)',
   activation_blocked: 'Ativação bloqueada (limite)',
   ip_changed: 'IP alterado',
+  ip_alert: 'Alerta de IP (possível compartilhamento)',
   heartbeat: 'Heartbeat',
+  validate: 'Validação',
   deactivate: 'Desativação',
+  purchase_intent: 'Intenção de compra',
+  payment_confirmed: 'Pagamento confirmado',
   admin_create: 'Admin: chave criada',
   admin_revoke: 'Admin: chave bloqueada',
   admin_activate: 'Admin: chave desbloqueada',
+  admin_upgrade: 'Admin: upgrade para vitalícia',
 };
 
 function fmtClock(ts: string) {
