@@ -8,5 +8,13 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   noExternal: [/@wootrico\//],
-  external: ['@prisma/client', '.prisma/client', 'pino', 'pino-pretty', 'thread-stream'],
+  external: [
+    '@prisma/client',
+    '.prisma/client',
+    'pino',
+    'pino-pretty',
+    'thread-stream',
+    '@aws-sdk/client-s3',
+    '@aws-sdk/s3-request-presigner',
+  ],
 });

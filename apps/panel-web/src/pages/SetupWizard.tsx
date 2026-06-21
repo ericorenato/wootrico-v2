@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Boxes, Check, Database, Eye, EyeOff, Globe, KeyRound, Loader2, Network } from 'lucide-react';
+import { Activity, Boxes, Check, Database, Eye, EyeOff, Globe, Images, KeyRound, Loader2, Network } from 'lucide-react';
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
+import MediaStorageEditor from '../components/MediaStorageEditor';
 import { completeSetup, setBaseUrl } from '../lib/setup-api';
 import { activateLicense, getLicenseStatus, type LicenseStatus } from '../lib/license-api';
 import {
@@ -24,7 +25,7 @@ import {
 } from '../lib/connection-fields';
 import { ApiError } from '../lib/api-client';
 
-const STEPS = ['Banco', 'Fila', 'Cache', 'Domínio', 'Licença'] as const;
+const STEPS = ['Banco', 'Fila', 'Cache', 'Domínio', 'Mídias', 'Licença'] as const;
 
 type Service = 'postgres' | 'rabbitmq' | 'redis';
 type TestState = { state: 'idle' | 'testing' | 'ok' | 'fail'; detail?: string };
@@ -107,7 +108,7 @@ export default function SetupWizard() {
   }, []);
 
   useEffect(() => {
-    if (step === 4) getLicenseStatus().then(setLicense).catch(() => {});
+    if (step === 5) getLicenseStatus().then(setLicense).catch(() => {});
   }, [step]);
 
   // ── restart screen: poll /api/health until the container is back, then go ──
@@ -365,8 +366,29 @@ export default function SetupWizard() {
                 </StepShell>
               )}
 
-              {/* ── 4 · License + finish ── */}
+              {/* ── 4 · Media library (optional) ── */}
               {step === 4 && (
+                <StepShell
+                  icon={<Images size={16} className="text-blue-400" />}
+                  title="Biblioteca de Mídias (opcional)"
+                  desc="Guarde as mídias que passam pelas integrações para consulta. Configure o armazenamento agora ou pule e ajuste depois em Sistema."
+                >
+                  <MediaStorageEditor heading={false} />
+                  <div className="flex items-center gap-4">
+                    <Button onClick={() => setStep(5)}>Continuar</Button>
+                    <button onClick={() => setStep(3)} className="text-sm text-neutral-400 hover:text-white">
+                      Voltar
+                    </button>
+                  </div>
+                  <p className="text-xs text-neutral-500">
+                    Salve a configuração acima se quiser ativar o S3 ou definir retenção. Por padrão, a
+                    biblioteca fica ativada com armazenamento local.
+                  </p>
+                </StepShell>
+              )}
+
+              {/* ── 5 · License + finish ── */}
+              {step === 5 && (
                 <StepShell
                   icon={<KeyRound size={16} className="text-blue-400" />}
                   title="Licença"
@@ -390,7 +412,7 @@ export default function SetupWizard() {
                         Concluir sem licença
                       </button>
                     )}
-                    <button onClick={() => setStep(3)} className="text-sm text-neutral-400 hover:text-white">
+                    <button onClick={() => setStep(4)} className="text-sm text-neutral-400 hover:text-white">
                       Voltar
                     </button>
                   </div>

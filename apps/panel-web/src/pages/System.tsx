@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, Eyebrow } from '../components/ui';
 import ConnectionsEditor from '../components/ConnectionsEditor';
+import MediaStorageEditor from '../components/MediaStorageEditor';
 import {
   getSystemInfo,
   runDiagnostics,
@@ -156,6 +157,9 @@ export default function System() {
 
           {/* Configuração de conexões (editável) */}
           <ConnectionsEditor />
+
+          {/* Biblioteca de mídias (armazenamento local/S3) */}
+          <MediaStorageEditor />
 
           {/* Licença */}
           <Card>

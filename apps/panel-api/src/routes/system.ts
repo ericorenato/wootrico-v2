@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
-import { env, encrypt, decrypt } from '@wootrico/config';
+import { env, encrypt, decrypt, encryptJson, decryptJson } from '@wootrico/config';
 import { evaluateLicense, getLicenseState } from '@wootrico/license-client';
 import { pingRabbit, testRabbitUrl } from '@wootrico/queue';
 import { pingRedis, testRedisUrl } from '@wootrico/cache';
 import { PrismaClient } from '@wootrico/db';
 import { getConnSnapshot } from '@wootrico/db/conn';
+import { testS3, type S3Config } from '@wootrico/storage';
+import { MediaConfigSchema, S3ConfigSchema } from '@wootrico/types';
 import { getPublicBaseUrl } from '../lib/webhook-urls.js';
 
 /** Hide the password component of a connection URL for display. */
@@ -243,6 +245,103 @@ export default async function systemRoutes(app: FastifyInstance) {
             : null;
     if (!tester) return { ok: false, detail: 'serviço inválido' };
     return tester(url);
+  });
+
+  // ── media library configuration ──
+  // Returns the current settings; the S3 secret is NEVER returned (only whether
+  // one is set). PII note: enabling this stores message media + numbers at rest.
+  app.get('/api/system/media', guard, async () => {
+    const s = await app.prisma.appSettings.findUnique({ where: { id: 'singleton' } });
+    let s3: Partial<S3Config> & { secretSet?: boolean } = { secretSet: false };
+    if (s?.mediaS3Config) {
+      try {
+        const cfg = decryptJson<S3Config>(s.mediaS3Config);
+        s3 = {
+          endpoint: cfg.endpoint,
+          region: cfg.region,
+          bucket: cfg.bucket,
+          accessKeyId: cfg.accessKeyId,
+          forcePathStyle: cfg.forcePathStyle,
+          secretSet: Boolean(cfg.secretAccessKey),
+        };
+      } catch {
+        s3 = { secretSet: false };
+      }
+    }
+    return {
+      enabled: s?.mediaLibraryEnabled ?? true,
+      driver: (s?.mediaStorageDriver as 'local' | 's3') ?? 'local',
+      retentionDays: s?.mediaRetentionDays ?? null,
+      s3,
+    };
+  });
+
+  // Persist media settings. When driver=s3 the credentials are TESTED before
+  // saving (test-before-apply); a missing secret reuses the stored one.
+  app.put('/api/system/media', guard, async (req, reply) => {
+    const parsed = MediaConfigSchema.safeParse(req.body);
+    if (!parsed.success)
+      return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
+    const d = parsed.data;
+
+    const data: Record<string, unknown> = {
+      mediaLibraryEnabled: d.enabled,
+      mediaStorageDriver: d.driver,
+      mediaRetentionDays: d.retentionDays,
+    };
+
+    if (d.driver === 's3') {
+      const existing = await app.prisma.appSettings.findUnique({ where: { id: 'singleton' } });
+      let prev: Partial<S3Config> = {};
+      if (existing?.mediaS3Config) {
+        try {
+          prev = decryptJson<S3Config>(existing.mediaS3Config);
+        } catch {
+          prev = {};
+        }
+      }
+      // Merge: a missing secret keeps the stored one.
+      const merged = {
+        endpoint: d.s3?.endpoint ?? prev.endpoint,
+        region: d.s3?.region ?? prev.region,
+        bucket: d.s3?.bucket ?? prev.bucket,
+        accessKeyId: d.s3?.accessKeyId ?? prev.accessKeyId,
+        secretAccessKey: d.s3?.secretAccessKey ?? prev.secretAccessKey,
+        forcePathStyle: d.s3?.forcePathStyle ?? prev.forcePathStyle ?? false,
+      };
+      const full = S3ConfigSchema.safeParse(merged);
+      if (!full.success)
+        return reply.code(400).send({ error: 'validation', issues: full.error.issues });
+
+      const test = await testS3(full.data);
+      if (!test.ok) return reply.code(400).send({ error: 's3_test_failed', detail: test.detail });
+      data.mediaS3Config = encryptJson(full.data);
+    }
+
+    await app.prisma.appSettings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', ...data },
+      update: data,
+    });
+    await app.prisma.auditLog
+      .create({
+        data: {
+          adminUserId: req.user.sub,
+          action: 'media.config.updated',
+          entityType: 'app_settings',
+          entityId: 'singleton',
+        },
+      })
+      .catch(() => undefined);
+    return { ok: true };
+  });
+
+  // Test an S3 config without persisting (powers the wizard/System test button).
+  app.post('/api/system/media/test', guard, async (req, reply) => {
+    const parsed = S3ConfigSchema.safeParse(req.body);
+    if (!parsed.success)
+      return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
+    return testS3(parsed.data);
   });
 
   // ── system logs (console) ──

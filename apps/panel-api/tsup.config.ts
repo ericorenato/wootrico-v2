@@ -10,5 +10,14 @@ export default defineConfig({
   // Bundle our TS workspace packages; keep node_modules libs external
   // (pino uses worker threads / dynamic require and must not be bundled).
   noExternal: [/@wootrico\//],
-  external: ['@prisma/client', '.prisma/client', 'argon2', 'pino', 'pino-pretty', 'thread-stream'],
+  external: [
+    '@prisma/client',
+    '.prisma/client',
+    'argon2',
+    'pino',
+    'pino-pretty',
+    'thread-stream',
+    '@aws-sdk/client-s3',
+    '@aws-sdk/s3-request-presigner',
+  ],
 });

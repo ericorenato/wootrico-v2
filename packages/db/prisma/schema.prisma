@@ -51,6 +51,11 @@ enum MessageType {
   document
 }
 
+enum MediaDirection {
+  incoming
+  outgoing
+}
+
 enum DedupDirection {
   phone_origin
   api_origin
@@ -133,6 +138,7 @@ model Integration {
   messageMappings MessageMapping[]
   dedupTickets    DedupTicket[]
   webhookEvents   WebhookEvent[]
+  mediaAssets     MediaAsset[]
 
   @@map("integrations")
 }
@@ -208,6 +214,53 @@ model MessageMapping {
   @@unique([integrationId, providerMessageId])
   @@index([expiresAt])
   @@map("message_mappings")
+}
+
+// Media library — every image/audio/video/document that flows through a
+// provider (sent or received) is persisted here, one row PER OCCURRENCE. The
+// binary itself lives in the configured storage (local fs or S3); only the
+// `storageKey` points to it. The binary is deduplicated by `sha256` at the
+// storage layer (same file → same key, written once), but each send/receive is
+// still its own row so the library shows who/when/which-number for each event.
+// PII note: phone/jid/lid/senderName are stored in cleartext (search requires
+// it; consistent with ContactIdentity). All access is authenticated.
+model MediaAsset {
+  id                String         @id @default(uuid())
+  integrationId     String         @map("integration_id")
+  integration       Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  direction         MediaDirection
+  messageType       MessageType    @map("message_type")
+  mimeType          String         @map("mime_type")
+  fileName          String?        @map("file_name")
+  size              Int
+  sha256            String
+  storageDriver     String         @map("storage_driver") // 'local' | 's3'
+  storageKey        String         @map("storage_key")
+
+  // counterparty identifiers (the other side of the conversation)
+  phone      String?
+  jid        String?
+  lid        String?
+  senderName String? @map("sender_name")
+  isGroup    Boolean @default(false) @map("is_group")
+  groupId    String? @map("group_id")
+
+  providerType      ProviderType @map("provider_type")
+  providerMessageId String?      @map("provider_message_id")
+  caption           String?
+  sentAt            DateTime?    @map("sent_at")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  // Set only when a retention period is configured; the cleanup sweep deletes
+  // the binary + row once past this. Null = keep indefinitely.
+  expiresAt         DateTime?    @map("expires_at")
+
+  @@index([integrationId, createdAt])
+  @@index([messageType])
+  @@index([direction])
+  @@index([phone])
+  @@index([jid])
+  @@index([expiresAt])
+  @@map("media_assets")
 }
 
 model DedupTicket {
@@ -295,6 +348,13 @@ model AppSettings {
   // Bumped by the panel's "restart" action; the worker polls this to self-exit
   // (Swarm restart_policy brings both back, re-reading the overrides above).
   restartRequestedAt DateTime? @map("restart_requested_at")
+
+  // Media library configuration.
+  mediaLibraryEnabled Boolean @default(true) @map("media_library_enabled")
+  mediaStorageDriver  String  @default("local") @map("media_storage_driver") // 'local' | 's3'
+  mediaRetentionDays  Int?    @map("media_retention_days") // null = keep forever
+  mediaS3Config       String? @map("media_s3_config") // encrypted JSON (S3 credentials)
+
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

@@ -7,6 +7,7 @@ import { resolveIdentity, ingestDirectoryHints } from '../engine/identity.js';
 import { syncContactMeta } from '../engine/contact-sync.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
+import { storeMediaAsset } from '../lib/media-store.js';
 
 const CONTACT_TTL = 3600; // seconds
 
@@ -145,6 +146,27 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         mime = dl.mimeType ?? mime;
       }
       mime = mime ?? 'application/octet-stream';
+      // Media library (best-effort, never blocks the mirror). Capture the
+      // counterparty number/jid/lid + who sent it for later search/filter.
+      if (base64 && norm.media.type !== 'text') {
+        void storeMediaAsset({
+          integrationId,
+          direction,
+          messageType: norm.media.type,
+          mimeType: mime,
+          fileName: norm.media.fileName,
+          buffer: Buffer.from(base64, 'base64'),
+          caption: norm.media.caption,
+          providerType,
+          providerMessageId: norm.providerMessageId,
+          phone: discoveredPhone ?? norm.phone,
+          jid: norm.jid,
+          lid: norm.lid,
+          senderName: senderLabel,
+          isGroup,
+          groupId: norm.groupId,
+        });
+      }
       created = await chatwoot.createMessageWithAttachment({
         conversationId,
         content: body,

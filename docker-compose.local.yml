@@ -58,6 +58,10 @@ services:
              node apps/panel-api/dist/server.cjs"
     ports:
       - '${PANEL_PORT:-8789}:3000' # porta do host configurável (padrão pouco comum)
+    # Biblioteca de mídias (driver local): app (leitor) e worker (escritor)
+    # compartilham este volume. Para multi-nó/produção, prefira o driver S3.
+    volumes:
+      - media_data:/data/media
     depends_on:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
@@ -70,6 +74,8 @@ services:
     restart: unless-stopped
     env_file: .env
     command: node apps/worker/dist/main.cjs
+    volumes:
+      - media_data:/data/media
     depends_on:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
@@ -78,3 +84,4 @@ services:
 
 volumes:
   pgdata:
+  media_data:

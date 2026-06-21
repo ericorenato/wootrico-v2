@@ -14,6 +14,7 @@ import integrationRoutes from './routes/integrations.js';
 import contactRoutes from './routes/contacts.js';
 import licenseRoutes from './routes/license.js';
 import systemRoutes from './routes/system.js';
+import mediaRoutes from './routes/media.js';
 import webhookRoutes from './routes/webhooks.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -60,6 +61,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(contactRoutes);
   await app.register(licenseRoutes);
   await app.register(systemRoutes);
+  await app.register(mediaRoutes);
   await app.register(webhookRoutes);
 
   // SPA (must be last; owns the not-found fallback)

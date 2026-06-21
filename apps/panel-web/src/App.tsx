@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard';
 import Integrations from './pages/Integrations';
 import IntegrationForm from './pages/IntegrationForm';
 import Contacts from './pages/Contacts';
+import MediaLibrary from './pages/MediaLibrary';
 import License from './pages/License';
 import System from './pages/System';
 import SetupWizard from './pages/SetupWizard';
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/integrations/new" element={<Protected><IntegrationForm /></Protected>} />
           <Route path="/integrations/:id" element={<Protected><IntegrationForm /></Protected>} />
           <Route path="/contacts" element={<Protected><Contacts /></Protected>} />
+          <Route path="/media" element={<Protected><MediaLibrary /></Protected>} />
           <Route path="/license" element={<Protected><License /></Protected>} />
           <Route path="/system" element={<Protected><System /></Protected>} />
           <Route path="/logs" element={<Protected><Logs /></Protected>} />

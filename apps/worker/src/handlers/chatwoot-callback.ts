@@ -10,6 +10,15 @@ import {
 import { resolveIdentity, getIdentityById } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { chatwootAttachmentType } from '../lib/message-type.js';
+import { storeMediaAsset } from '../lib/media-store.js';
+
+/** Split a provider send target into the (phone, jid, lid) the library indexes. */
+function splitTarget(target: string, isGroup: boolean) {
+  if (isGroup) return { phone: null, jid: null, lid: null };
+  if (target.endsWith('@lid')) return { phone: null, jid: target, lid: target.replace(/@lid$/, '') };
+  if (target.includes('@')) return { phone: target.replace(/@.*$/, ''), jid: target, lid: null };
+  return { phone: target, jid: `${target}@s.whatsapp.net`, lid: null };
+}
 
 const MEDIA_THROTTLE_MS = 1000;
 
@@ -144,6 +153,30 @@ export async function handleChatwootCallback(
           replyToParticipant,
         });
         providerMessageIds.push(...r.providerMessageIds);
+
+        // Media library (best-effort). Only when we actually fetched the bytes
+        // (the URL fallback above carries no buffer to store).
+        if (media.base64) {
+          const t = splitTarget(sendTarget, isGroup);
+          void storeMediaAsset({
+            integrationId,
+            direction: 'outgoing',
+            messageType: chatwootAttachmentType(att.file_type),
+            mimeType: media.mimeType ?? att.content_type ?? 'application/octet-stream',
+            fileName: media.fileName,
+            buffer: Buffer.from(media.base64, 'base64'),
+            caption: payload.content || undefined,
+            providerType,
+            providerMessageId: r.providerMessageIds[0],
+            phone: t.phone,
+            jid: t.jid,
+            lid: t.lid,
+            senderName: sender?.name ?? null,
+            isGroup,
+            groupId: isGroup ? sendTarget : null,
+          });
+        }
+
         content = ''; // caption only on the first attachment
       }
     } else {
