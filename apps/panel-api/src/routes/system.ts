@@ -395,6 +395,8 @@ export default async function systemRoutes(app: FastifyInstance) {
         'integration.deleted': 'Integração removida',
         'system.restart': 'Aplicação reiniciada',
         'system.connections.updated': 'Conexões (banco/fila/cache) atualizadas',
+        'media.deleted': 'Mídia removida da biblioteca',
+        'media.config.updated': 'Biblioteca de mídias configurada',
         'auth.login': 'Login no painel',
         'admin.login': 'Login no painel',
         'license.updated': 'Licença atualizada',
@@ -501,6 +503,11 @@ export default async function systemRoutes(app: FastifyInstance) {
         }${reason ? ` (${reason})` : ''}`,
       });
     }
+    const KIND_LABEL: Record<string, string> = {
+      created: 'criada',
+      edited: 'editada',
+      deleted: 'apagada',
+    };
     for (const m of messages) {
       entries.push({
         id: `m_${m.id}`,
@@ -512,11 +519,11 @@ export default async function systemRoutes(app: FastifyInstance) {
         title: messageTitle(m),
         detail: [
           m.direction === 'incoming' ? 'recebida' : 'enviada',
-          m.messageType,
-          m.hasMedia ? 'mídia' : null,
+          (TYPE_LABEL[m.messageType] ?? m.messageType).toLowerCase(),
+          m.hasMedia ? 'com mídia' : null,
           m.isReply ? 'resposta' : null,
           m.isGroup ? 'grupo' : null,
-          m.kind,
+          KIND_LABEL[m.kind] ?? m.kind,
           m.provider,
         ]
           .filter(Boolean)
