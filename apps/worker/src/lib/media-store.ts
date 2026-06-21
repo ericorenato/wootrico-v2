@@ -73,7 +73,7 @@ export async function storeMediaAsset(input: StoreMediaInput): Promise<void> {
     const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
     const key = `${input.integrationId}/${yyyy}/${mm}/${sha256}.${extFor(input.mimeType, input.fileName)}`;
 
-    const driver = getStorageDriver(cfg);
+    const driver = getStorageDriver(cfg, prisma.mediaBlob);
     // Dedup the binary: identical content (same sha256) is written once.
     if (!(await driver.exists(key))) {
       await driver.put(key, input.buffer, {

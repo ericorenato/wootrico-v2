@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, HardDrive, Cloud, ShieldAlert } from 'lucide-react';
+import { Eye, EyeOff, Database, Cloud, ShieldAlert } from 'lucide-react';
 import { Badge, Button, Checkbox, ErrorText, Field, Input, Select } from './ui';
 import {
   getMediaConfig,
@@ -182,17 +182,17 @@ export default function MediaStorageEditor({ heading = true }: { heading?: boole
 
         <Field label="Onde armazenar">
           <Select value={driver} onChange={(e) => setDriver(e.target.value as 'local' | 's3')}>
-            <option value="local">Local (disco do servidor)</option>
+            <option value="local">Local (no banco de dados)</option>
             <option value="s3">S3 / compatível (MinIO, R2, AWS)</option>
           </Select>
         </Field>
 
         {driver === 'local' ? (
           <div className="flex items-start gap-2 text-xs text-neutral-500">
-            <HardDrive size={14} className="mt-0.5 shrink-0" />
+            <Database size={14} className="mt-0.5 shrink-0" />
             <span>
-              Os arquivos ficam no disco do servidor. Em ambiente com múltiplos containers (Swarm), o
-              painel e o worker precisam compartilhar o mesmo volume; do contrário, prefira o S3.
+              As mídias ficam no próprio banco de dados da instância — funciona sem configuração extra.
+              Para grande volume de mídias, prefira o S3 (evita inchar o banco).
             </span>
           </div>
         ) : (

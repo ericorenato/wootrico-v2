@@ -68,11 +68,6 @@ services:
       sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
              node apps/panel-api/dist/server.cjs"
     networks: [wootrico]
-    # Media library (local driver) — app (reader) and worker (writer) share this
-    # volume so the panel can serve what the worker stored. On multi-node Swarm a
-    # local volume isn't shared across nodes: use the S3 driver instead.
-    volumes:
-      - media_data:/data/media
     deploy:
       replicas: 1
       restart_policy: { condition: any, delay: 5s }
@@ -92,8 +87,6 @@ services:
     env_file: .env
     command: node apps/worker/dist/main.cjs
     networks: [wootrico]
-    volumes:
-      - media_data:/data/media
     deploy:
       replicas: 1
       restart_policy: { condition: any, delay: 5s }
@@ -110,4 +103,3 @@ volumes:
   pgdata:
   rabbitmq_data:
   redis_data:
-  media_data:

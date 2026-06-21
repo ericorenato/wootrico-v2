@@ -1,6 +1,6 @@
 import { prisma } from '@wootrico/db';
 import { logger } from '@wootrico/config';
-import { LocalDriver, S3Driver, localBaseDir, parseMediaConfig } from '@wootrico/storage';
+import { driverForStored, parseMediaConfig } from '@wootrico/storage';
 
 /**
  * Delete media-library assets past their retention window. Done OUTSIDE the
@@ -21,8 +21,7 @@ async function sweepMedia(now: Date): Promise<{ rows: number; blobs: number }> {
   });
 
   const cfg = parseMediaConfig(await prisma.appSettings.findUnique({ where: { id: 'singleton' } }));
-  const driverFor = (kind: string) =>
-    kind === 's3' && cfg.s3 ? new S3Driver(cfg.s3) : new LocalDriver(localBaseDir());
+  const driverFor = (kind: string) => driverForStored(kind, cfg, prisma.mediaBlob);
 
   // Distinct keys among the deleted rows; drop the binary only if nothing else
   // still points at it (another occurrence with the same content).

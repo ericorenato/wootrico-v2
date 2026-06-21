@@ -263,6 +263,19 @@ model MediaAsset {
   @@map("media_assets")
 }
 
+// Binary store for the "local" media driver. Kept in Postgres (which the panel
+// and worker already share) so the library works with no shared filesystem
+// volume between containers. Deduplicated by storageKey (which embeds the
+// sha256). For large media volumes, configure the S3 driver instead.
+model MediaBlob {
+  storageKey String   @id @map("storage_key")
+  data       Bytes
+  size       Int
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("media_blobs")
+}
+
 model DedupTicket {
   id            String         @id @default(uuid())
   integrationId String         @map("integration_id")

@@ -1,32 +1,37 @@
 import type { StorageDriver } from './driver.js';
 import type { ResolvedMediaConfig } from './config.js';
-import { LocalDriver } from './local-driver.js';
+import { DbDriver, type MediaBlobStore } from './db-driver.js';
 import { S3Driver, type S3Config } from './s3-driver.js';
 
-/** Filesystem base dir for the local driver (shared volume in Swarm). */
-export function localBaseDir(): string {
-  return process.env.MEDIA_LOCAL_PATH || '/data/media';
+// Cache one S3 driver instance per process, keyed by a signature of its config
+// so a reconfiguration rebuilds it. The local (DB) driver is cheap to build.
+let cachedS3: { sig: string; driver: S3Driver } | undefined;
+
+function s3Signature(s: S3Config): string {
+  return `s3:${s.endpoint ?? ''}:${s.region}:${s.bucket}:${s.accessKeyId}:${s.forcePathStyle ? 1 : 0}`;
 }
 
-// Cache one driver instance per process, keyed by a signature of its config so
-// a reconfiguration (e.g. switching to S3) rebuilds it.
-let cached: { sig: string; driver: StorageDriver } | undefined;
-
-function signature(cfg: ResolvedMediaConfig): string {
-  if (cfg.driver === 's3' && cfg.s3) {
-    const s = cfg.s3;
-    return `s3:${s.endpoint ?? ''}:${s.region}:${s.bucket}:${s.accessKeyId}:${s.forcePathStyle ? 1 : 0}`;
-  }
-  return `local:${localBaseDir()}`;
-}
-
-export function getStorageDriver(cfg: ResolvedMediaConfig): StorageDriver {
-  const sig = signature(cfg);
-  if (cached?.sig === sig) return cached.driver;
-  const driver: StorageDriver =
-    cfg.driver === 's3' && cfg.s3 ? new S3Driver(cfg.s3) : new LocalDriver(localBaseDir());
-  cached = { sig, driver };
+function s3Driver(s: S3Config): S3Driver {
+  const sig = s3Signature(s);
+  if (cachedS3?.sig === sig) return cachedS3.driver;
+  const driver = new S3Driver(s);
+  cachedS3 = { sig, driver };
   return driver;
+}
+
+/** Driver for WRITING new media (chooses by the configured driver). */
+export function getStorageDriver(cfg: ResolvedMediaConfig, blobStore: MediaBlobStore): StorageDriver {
+  return cfg.driver === 's3' && cfg.s3 ? s3Driver(cfg.s3) : new DbDriver(blobStore);
+}
+
+/** Driver for READING/deleting an already-stored asset (chooses by where it
+ *  was stored). Falls back to the DB driver for local/legacy values. */
+export function driverForStored(
+  storageDriver: string,
+  cfg: ResolvedMediaConfig,
+  blobStore: MediaBlobStore,
+): StorageDriver {
+  return storageDriver === 's3' && cfg.s3 ? s3Driver(cfg.s3) : new DbDriver(blobStore);
 }
 
 /** Validate an S3 config (HeadBucket) before persisting it. */

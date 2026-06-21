@@ -1,13 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Prisma } from '@wootrico/db';
 import { MediaQuerySchema } from '@wootrico/types';
-import {
-  LocalDriver,
-  S3Driver,
-  localBaseDir,
-  parseMediaConfig,
-  type StorageDriver,
-} from '@wootrico/storage';
+import { driverForStored, parseMediaConfig, type StorageDriver } from '@wootrico/storage';
 
 /** Build the Prisma filter from the validated query. */
 function buildWhere(q: ReturnType<typeof MediaQuerySchema.parse>): Prisma.MediaAssetWhereInput {
@@ -58,7 +52,7 @@ export default async function mediaRoutes(app: FastifyInstance) {
   async function driverFor(storageDriver: string): Promise<StorageDriver> {
     const settings = await app.prisma.appSettings.findUnique({ where: { id: 'singleton' } });
     const cfg = parseMediaConfig(settings);
-    return storageDriver === 's3' && cfg.s3 ? new S3Driver(cfg.s3) : new LocalDriver(localBaseDir());
+    return driverForStored(storageDriver, cfg, app.prisma.mediaBlob);
   }
 
   // ── listing with filters + pagination ──
