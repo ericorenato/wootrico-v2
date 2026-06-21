@@ -10,6 +10,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   X,
+  Trash2,
   Images,
 } from 'lucide-react';
 import { Badge, Button, Eyebrow, Field, Input, Select } from '../components/ui';
@@ -17,6 +18,7 @@ import {
   listMedia,
   fetchMediaBlobUrl,
   downloadMedia,
+  deleteMedia,
   type MediaAssetDTO,
   type MediaFilters,
   type MediaType,
@@ -96,9 +98,28 @@ function Thumb({ media }: { media: MediaAssetDTO }) {
 }
 
 /** Full preview modal: renders inline per media type via an auth'd blob URL. */
-function PreviewModal({ media, onClose }: { media: MediaAssetDTO; onClose: () => void }) {
+function PreviewModal({
+  media,
+  onClose,
+  onDelete,
+}: {
+  media: MediaAssetDTO;
+  onClose: () => void;
+  onDelete: () => Promise<void>;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function confirmDelete() {
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
     let revoked: string | null = null;
@@ -169,6 +190,44 @@ function PreviewModal({ media, onClose }: { media: MediaAssetDTO; onClose: () =>
             {media.caption}
           </p>
         )}
+
+        {/* actions */}
+        <div className="mt-5 flex items-center gap-3 border-t border-white/5 pt-4">
+          <button
+            onClick={() => void downloadMedia(media.id, fileNameOf(media))}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-xs text-neutral-300 hover:bg-white/5"
+          >
+            <Download size={14} /> Baixar
+          </button>
+          {confirming ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400">
+                Excluir {storageLabel(media.storageDriver)}?
+              </span>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/90 px-3 py-2 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                <Trash2 size={14} /> {deleting ? 'Excluindo…' : 'Confirmar'}
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                disabled={deleting}
+                className="rounded-lg border border-white/15 px-3 py-2 text-xs text-neutral-300 hover:bg-white/5"
+              >
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10"
+            >
+              <Trash2 size={14} /> Excluir
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -186,8 +245,23 @@ function DirectionBadge({ direction }: { direction: MediaAssetDTO['direction'] }
   );
 }
 
-function Card({ media, onView }: { media: MediaAssetDTO; onView: () => void }) {
+/** Human label for where the binary lives (used in the delete confirmation). */
+function storageLabel(driver: 'local' | 's3'): string {
+  return driver === 's3' ? 'no repositório S3' : 'no banco de dados';
+}
+
+function Card({
+  media,
+  onView,
+  onDelete,
+}: {
+  media: MediaAssetDTO;
+  onView: () => void;
+  onDelete: () => Promise<void>;
+}) {
   const [downloading, setDownloading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const who = media.senderName ?? media.phone ?? media.jid ?? media.lid ?? '—';
 
   async function onDownload() {
@@ -201,21 +275,62 @@ function Card({ media, onView }: { media: MediaAssetDTO; onView: () => void }) {
     }
   }
 
+  async function confirmDelete() {
+    setDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setDeleting(false);
+      setConfirming(false);
+    }
+  }
+
   return (
     <div className="group rounded-2xl border border-white/5 bg-[#0B0B0D] overflow-hidden flex flex-col">
-      <button
-        onClick={onView}
-        className="relative aspect-square bg-black/40 overflow-hidden"
-        title="Visualizar"
-      >
-        <Thumb media={media} />
-        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Eye size={22} className="text-white" />
-        </span>
-        <span className="absolute top-2 left-2">
+      <div className="relative aspect-square bg-black/40 overflow-hidden">
+        <button onClick={onView} className="absolute inset-0 w-full h-full" title="Visualizar">
+          <Thumb media={media} />
+          <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+            <Eye size={22} className="text-white" />
+          </span>
+        </button>
+        <span className="absolute top-2 left-2 pointer-events-none">
           <Badge tone="neutral">{TYPE_LABEL[media.messageType]}</Badge>
         </span>
-      </button>
+        {/* delete trigger (top-right, on hover) */}
+        <button
+          onClick={() => setConfirming(true)}
+          title="Excluir mídia"
+          className="absolute top-2 right-2 inline-flex items-center justify-center w-7 h-7 rounded-lg bg-black/50 text-neutral-300 hover:bg-red-500/80 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+        >
+          <Trash2 size={14} />
+        </button>
+
+        {/* inline confirmation overlay */}
+        {confirming && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/85 p-3 text-center">
+            <p className="text-xs text-neutral-200">
+              Excluir esta mídia <span className="text-neutral-400">({storageLabel(media.storageDriver)})</span>?
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-red-500/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                <Trash2 size={13} /> {deleting ? 'Excluindo…' : 'Excluir'}
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                disabled={deleting}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-neutral-300 hover:bg-white/5"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="p-3 flex flex-col gap-1.5 flex-1">
         <p className="text-sm text-neutral-100 truncate" title={who}>
@@ -329,6 +444,13 @@ export default function MediaLibrary() {
 
   const hasMore = items.length < total;
 
+  async function handleDelete(id: string) {
+    await deleteMedia(id);
+    setItems((prev) => prev.filter((m) => m.id !== id));
+    setTotal((t) => Math.max(0, t - 1));
+    setPreview((p) => (p?.id === id ? null : p));
+  }
+
   return (
     <div className="max-w-6xl">
       <div className="mb-8">
@@ -412,7 +534,12 @@ export default function MediaLibrary() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {items.map((m) => (
-            <Card key={m.id} media={m} onView={() => setPreview(m)} />
+            <Card
+              key={m.id}
+              media={m}
+              onView={() => setPreview(m)}
+              onDelete={() => handleDelete(m.id)}
+            />
           ))}
         </div>
       )}
@@ -425,7 +552,13 @@ export default function MediaLibrary() {
         </div>
       )}
 
-      {preview && <PreviewModal media={preview} onClose={() => setPreview(null)} />}
+      {preview && (
+        <PreviewModal
+          media={preview}
+          onClose={() => setPreview(null)}
+          onDelete={() => handleDelete(preview.id)}
+        />
+      )}
     </div>
   );
 }

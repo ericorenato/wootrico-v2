@@ -139,6 +139,7 @@ model Integration {
   dedupTickets    DedupTicket[]
   webhookEvents   WebhookEvent[]
   mediaAssets     MediaAsset[]
+  messageLogs     MessageLog[]
 
   @@map("integrations")
 }
@@ -274,6 +275,32 @@ model MediaBlob {
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@map("media_blobs")
+}
+
+// Semantic, content-FREE log of each message the engine processed — written by
+// the worker after parsing (where the message type/media/reply is known). Unlike
+// WebhookEvent (recorded at raw receipt, before parsing), this carries the
+// message metadata the panel shows: direction, type, whether it had media, and
+// whether it was a reply/quote. Never any content. Short TTL.
+model MessageLog {
+  id            String         @id @default(uuid())
+  integrationId String         @map("integration_id")
+  integration   Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  provider      ProviderType
+  direction     MediaDirection // incoming | outgoing
+  messageType   MessageType    @map("message_type") // text | image | audio | video | document
+  kind          String // created | edited | deleted
+  hasMedia      Boolean        @map("has_media")
+  isReply       Boolean        @map("is_reply") // reply/quote of another message
+  isGroup       Boolean        @map("is_group")
+  providerMessageId String?    @map("provider_message_id")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  expiresAt     DateTime       @map("expires_at")
+
+  @@index([integrationId, createdAt])
+  @@index([createdAt])
+  @@index([expiresAt])
+  @@map("message_logs")
 }
 
 model DedupTicket {

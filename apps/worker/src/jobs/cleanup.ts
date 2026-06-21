@@ -45,11 +45,12 @@ async function sweepMedia(now: Date): Promise<{ rows: number; blobs: number }> {
 /** Delete rows past their TTL. Scheduled hourly. */
 export async function runCleanup(): Promise<void> {
   const now = new Date();
-  const [dedup, mappings, webhooks, sessions] = await prisma.$transaction([
+  const [dedup, mappings, webhooks, sessions, messageLogs] = await prisma.$transaction([
     prisma.dedupTicket.deleteMany({ where: { expiresAt: { lt: now } } }),
     prisma.messageMapping.deleteMany({ where: { expiresAt: { lt: now } } }),
     prisma.webhookEvent.deleteMany({ where: { expiresAt: { lt: now } } }),
     prisma.session.deleteMany({ where: { expiresAt: { lt: now } } }),
+    prisma.messageLog.deleteMany({ where: { expiresAt: { lt: now } } }),
   ]);
   const media = await sweepMedia(now).catch((err) => {
     logger.warn({ err }, 'media retention sweep failed');
@@ -61,6 +62,7 @@ export async function runCleanup(): Promise<void> {
       messageMappings: mappings.count,
       webhookEvents: webhooks.count,
       sessions: sessions.count,
+      messageLogs: messageLogs.count,
       mediaAssets: media.rows,
       mediaBlobs: media.blobs,
     },

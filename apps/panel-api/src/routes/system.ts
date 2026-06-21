@@ -352,12 +352,14 @@ export default async function systemRoutes(app: FastifyInstance) {
     const q = req.query as { limit?: string; before?: string; kind?: string };
     const limit = Math.min(Math.max(parseInt(q.limit ?? '120', 10) || 120, 1), 500);
     const before = q.before ? new Date(q.before) : undefined;
-    const kind = q.kind === 'audit' || q.kind === 'webhook' ? q.kind : undefined;
+    const kind =
+      q.kind === 'audit' || q.kind === 'webhook' || q.kind === 'message' ? q.kind : undefined;
 
-    const wantAudit = kind !== 'webhook';
-    const wantWebhook = kind !== 'audit';
+    const wantAudit = kind === undefined || kind === 'audit';
+    const wantWebhook = kind === undefined || kind === 'webhook';
+    const wantMessage = kind === undefined || kind === 'message';
 
-    const [audits, webhooks] = await Promise.all([
+    const [audits, webhooks, messages] = await Promise.all([
       wantAudit
         ? app.prisma.auditLog.findMany({
             where: before ? { createdAt: { lt: before } } : undefined,
@@ -370,6 +372,14 @@ export default async function systemRoutes(app: FastifyInstance) {
         ? app.prisma.webhookEvent.findMany({
             where: before ? { receivedAt: { lt: before } } : undefined,
             orderBy: { receivedAt: 'desc' },
+            take: limit,
+            include: { integration: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+      wantMessage
+        ? app.prisma.messageLog.findMany({
+            where: before ? { createdAt: { lt: before } } : undefined,
+            orderBy: { createdAt: 'desc' },
             take: limit,
             include: { integration: { select: { name: true } } },
           })
@@ -420,10 +430,42 @@ export default async function systemRoutes(app: FastifyInstance) {
       return map[eventType ?? ''] ?? 'Evento do WhatsApp';
     };
 
+    // Rich, content-free description of a processed message.
+    const TYPE_LABEL: Record<string, string> = {
+      text: 'Mensagem de texto',
+      image: 'Imagem',
+      audio: 'Áudio',
+      video: 'Vídeo',
+      document: 'Documento',
+    };
+    const messageTitle = (m: {
+      direction: string;
+      messageType: string;
+      kind: string;
+      isReply: boolean;
+      isGroup: boolean;
+    }): string => {
+      const noun = TYPE_LABEL[m.messageType] ?? 'Mensagem';
+      const verb =
+        m.kind === 'deleted'
+          ? m.direction === 'incoming'
+            ? 'apagada pelo contato'
+            : 'apagada'
+          : m.kind === 'edited'
+            ? m.direction === 'incoming'
+              ? 'editada pelo contato'
+              : 'editada'
+            : m.direction === 'incoming'
+              ? 'recebida do WhatsApp'
+              : 'enviada ao WhatsApp';
+      const extras = [m.isReply ? 'resposta' : null, m.isGroup ? 'grupo' : null].filter(Boolean);
+      return `${noun} ${verb}${extras.length ? ` (${extras.join(', ')})` : ''}`;
+    };
+
     type Entry = {
       id: string;
       at: string;
-      kind: 'audit' | 'webhook';
+      kind: 'audit' | 'webhook' | 'message';
       level: 'info' | 'warn';
       source: string;
       actor: string | null;
@@ -457,6 +499,28 @@ export default async function systemRoutes(app: FastifyInstance) {
         detail: `${[w.source, w.originDetected, w.eventType].filter(Boolean).join(' · ')} · ${
           w.accepted ? 'aceito' : 'descartado'
         }${reason ? ` (${reason})` : ''}`,
+      });
+    }
+    for (const m of messages) {
+      entries.push({
+        id: `m_${m.id}`,
+        at: m.createdAt.toISOString(),
+        kind: 'message',
+        level: 'info',
+        source: m.direction === 'incoming' ? 'provider' : 'chatwoot',
+        actor: m.integration?.name ?? null,
+        title: messageTitle(m),
+        detail: [
+          m.direction === 'incoming' ? 'recebida' : 'enviada',
+          m.messageType,
+          m.hasMedia ? 'mídia' : null,
+          m.isReply ? 'resposta' : null,
+          m.isGroup ? 'grupo' : null,
+          m.kind,
+          m.provider,
+        ]
+          .filter(Boolean)
+          .join(' · '),
       });
     }
     entries.sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0));

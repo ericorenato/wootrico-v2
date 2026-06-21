@@ -11,6 +11,7 @@ import { resolveIdentity, getIdentityById } from '../engine/identity.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { chatwootAttachmentType } from '../lib/message-type.js';
 import { storeMediaAsset } from '../lib/media-store.js';
+import { logMessage } from '../lib/message-log.js';
 
 /** Split a provider send target into the (phone, jid, lid) the library indexes. */
 function splitTarget(target: string, isGroup: boolean) {
@@ -46,6 +47,18 @@ export async function handleChatwootCallback(
           .catch(() => undefined);
         await removeByChatwootId(integrationId, cwId);
       }
+      const delSender = payload?.conversation?.meta?.sender ?? {};
+      void logMessage({
+        integrationId,
+        provider: providerType,
+        direction: 'outgoing',
+        messageType: 'text',
+        kind: 'deleted',
+        isReply: false,
+        isGroup:
+          typeof delSender.identifier === 'string' && delSender.identifier.endsWith('@g.us'),
+        providerMessageId: map?.providerMessageId ?? null,
+      });
     }
     return;
   }
@@ -203,5 +216,16 @@ export async function handleChatwootCallback(
         provider: providerType,
       });
     }
+
+    void logMessage({
+      integrationId,
+      provider: providerType,
+      direction: 'outgoing',
+      messageType: attachments.length > 0 ? chatwootAttachmentType(attachments[0].file_type) : 'text',
+      kind: 'created',
+      isReply: Boolean(inReplyTo),
+      isGroup,
+      providerMessageId: providerMessageIds[0] ?? null,
+    });
   });
 }

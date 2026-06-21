@@ -8,6 +8,7 @@ import { syncContactMeta } from '../engine/contact-sync.js';
 import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 import { storeMediaAsset } from '../lib/media-store.js';
+import { logMessage } from '../lib/message-log.js';
 
 const CONTACT_TTL = 3600; // seconds
 
@@ -34,6 +35,16 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         await removeByChatwootId(integrationId, map.chatwootMessageId);
       }
     }
+    void logMessage({
+      integrationId,
+      provider: providerType,
+      direction: norm.fromMe ? 'outgoing' : 'incoming',
+      messageType: 'text',
+      kind: 'deleted',
+      isReply: false,
+      isGroup: norm.isGroup,
+      providerMessageId: norm.deletedProviderMessageIds?.[0] ?? null,
+    });
     return;
   }
 
@@ -256,6 +267,16 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         inReplyToOverride: origCwId,
         mappingProviderId: editKey,
       });
+      void logMessage({
+        integrationId,
+        provider: providerType,
+        direction: norm.fromMe ? 'outgoing' : 'incoming',
+        messageType: norm.media?.type ?? 'text',
+        kind: 'edited',
+        isReply: Boolean(norm.replyToProviderMessageId || norm.editedProviderMessageId),
+        isGroup: norm.isGroup,
+        providerMessageId: norm.providerMessageId,
+      });
       return;
     }
     // Idempotency guard — if this provider message was already mirrored (queue
@@ -265,14 +286,28 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       const already = await getMappingByProviderId(integrationId, norm.providerMessageId);
       if (already) return;
     }
+    const logCreated = (direction: 'incoming' | 'outgoing') =>
+      void logMessage({
+        integrationId,
+        provider: providerType,
+        direction,
+        messageType: norm.media?.type ?? 'text',
+        kind: 'created',
+        isReply: Boolean(norm.replyToProviderMessageId),
+        isGroup: norm.isGroup,
+        providerMessageId: norm.providerMessageId,
+      });
+
     // CASE 1 — customer message in
     if (!norm.fromMe) {
       await mirror('incoming');
+      logCreated('incoming');
       return;
     }
     // fromMe — either our own API-send echoing back (already short-circuited by the
     // idempotency guard above, which matches it by providerMessageId), or the owner
     // typing on the phone, which we mirror into Chatwoot as an outgoing message.
     await mirror('outgoing');
+    logCreated('outgoing');
   });
 }

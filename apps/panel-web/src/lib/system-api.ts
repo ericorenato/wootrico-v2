@@ -97,7 +97,7 @@ export const testConnection = (service: 'postgres' | 'rabbitmq' | 'redis', url: 
 export interface LogEntry {
   id: string;
   at: string;
-  kind: 'audit' | 'webhook';
+  kind: 'audit' | 'webhook' | 'message';
   level: 'info' | 'warn';
   source: string;
   actor: string | null;
@@ -151,7 +151,9 @@ export const getSystemStats = (
   return api<SystemStats>(`/api/system/stats?${p.toString()}`);
 };
 
-export const getLogs = (opts: { limit?: number; before?: string; kind?: 'audit' | 'webhook' } = {}) => {
+export const getLogs = (
+  opts: { limit?: number; before?: string; kind?: 'audit' | 'webhook' | 'message' } = {},
+) => {
   const p = new URLSearchParams();
   if (opts.limit) p.set('limit', String(opts.limit));
   if (opts.before) p.set('before', opts.before);

@@ -87,6 +87,7 @@ export default async function mediaRoutes(app: FastifyInstance) {
           caption: true,
           sentAt: true,
           createdAt: true,
+          storageDriver: true,
           integration: { select: { name: true } },
         },
       }),
@@ -111,6 +112,7 @@ export default async function mediaRoutes(app: FastifyInstance) {
       caption: r.caption,
       sentAt: r.sentAt ? r.sentAt.toISOString() : null,
       createdAt: r.createdAt.toISOString(),
+      storageDriver: r.storageDriver,
     }));
 
     return { items, total, page: q.page, pageSize: q.pageSize };

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge, Button, CopyButton, Eyebrow } from '../components/ui';
 import { getLogs, type LogEntry } from '../lib/system-api';
 
-type KindFilter = 'all' | 'audit' | 'webhook';
+type KindFilter = 'all' | 'message' | 'audit' | 'webhook';
 
 const REFRESH_MS = 5000;
 
@@ -44,7 +44,7 @@ export default function Logs() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const apiKind = kind === 'all' ? undefined : kind;
+  const apiKind: 'audit' | 'webhook' | 'message' | undefined = kind === 'all' ? undefined : kind;
 
   const loadLatest = useCallback(async () => {
     setLoading(true);
@@ -106,6 +106,7 @@ export default function Logs() {
 
   const FILTERS: { key: KindFilter; label: string }[] = [
     { key: 'all', label: 'Tudo' },
+    { key: 'message', label: 'Mensagens' },
     { key: 'audit', label: 'Ações' },
     { key: 'webhook', label: 'Webhooks' },
   ];

@@ -22,6 +22,8 @@ export interface MediaAssetDTO {
   caption: string | null;
   sentAt: string | null;
   createdAt: string;
+  /** Onde o binário está guardado: 'local' (banco) ou 's3'. */
+  storageDriver: 'local' | 's3';
 }
 
 export interface MediaPage {
