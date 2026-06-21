@@ -21,7 +21,7 @@ const TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
 const LABEL: Record<string, string> = {
   active: 'Ativa',
   warning: 'Atenção',
-  blocked: 'Bloqueada',
+  blocked: 'Inativa',
   unactivated: 'Não ativada',
 };
 
@@ -45,7 +45,7 @@ export default function License() {
       await provisionLicense();
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao obter licença.');
+      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao ativar a licença.');
     } finally {
       setBusy(false);
     }
@@ -58,10 +58,7 @@ export default function License() {
       const { checkoutUrl } = await purchaseLicense();
       await load();
       if (checkoutUrl) window.open(checkoutUrl, '_blank', 'noopener');
-      else
-        setError(
-          'Solicitação registrada. O checkout ainda não está configurado — fale com o suporte.',
-        );
+      else setError('Solicitação registrada. Em breve entraremos em contato para concluir a compra.');
     } catch (err) {
       setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao iniciar a compra.');
     } finally {
@@ -94,8 +91,8 @@ export default function License() {
 
   const activated = info && info.status !== 'unactivated';
   const isPaid = info?.plan === 'paid';
-  const isTrial = info?.plan === 'trial';
-  const trialExpired = info?.status === 'blocked' && isTrial;
+  const isActive = info?.status === 'active' || info?.status === 'warning';
+  const isBlocked = info?.status === 'blocked';
 
   return (
     <div className="max-w-2xl">
@@ -103,8 +100,7 @@ export default function License() {
         <Eyebrow>Licença</Eyebrow>
         <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Licença</h1>
         <p className="mt-2 text-sm text-neutral-400">
-          Obtenha um teste gratuito de 7 dias com um clique, ou adquira uma licença vitalícia. A
-          licença é validada periodicamente para liberar o processamento de mensagens.
+          Gerencie a licença desta instância do Wootrico.
         </p>
       </div>
 
@@ -113,11 +109,7 @@ export default function License() {
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-sm font-medium text-white">Status</h3>
             <div className="flex items-center gap-2">
-              {info.plan && (
-                <Badge tone={isPaid ? 'ok' : 'neutral'}>
-                  {isPaid ? 'Vitalícia' : 'Teste gratuito'}
-                </Badge>
-              )}
+              {isPaid && isActive && <Badge tone="ok">Definitiva</Badge>}
               <Badge tone={TONE[info.status] ?? 'neutral'}>{LABEL[info.status] ?? info.status}</Badge>
             </div>
           </div>
@@ -128,79 +120,84 @@ export default function License() {
             </dd>
             <dt className="text-neutral-500">Seu ID de instalação</dt>
             <dd className="text-neutral-300 font-mono text-xs truncate">{info.instanceId ?? '—'}</dd>
-            {isTrial && (
-              <>
-                <dt className="text-neutral-500">Teste expira</dt>
-                <dd className={trialExpired ? 'text-red-300' : 'text-neutral-300'}>
-                  {info.expiresAt ? new Date(info.expiresAt).toLocaleString() : '—'}
-                </dd>
-              </>
-            )}
             <dt className="text-neutral-500">Última validação</dt>
             <dd className="text-neutral-300">
               {info.lastValidatedAt ? new Date(info.lastValidatedAt).toLocaleString() : '—'}
             </dd>
-            {info.lastError && (
-              <>
-                <dt className="text-neutral-500">Último erro</dt>
-                <dd className="text-red-300 text-xs">{info.lastError}</dd>
-              </>
-            )}
           </dl>
 
-          {info.status === 'blocked' && (
-            <p className="mt-5 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
-              {trialExpired
-                ? 'Seu teste gratuito expirou. Obtenha um novo teste ou adquira uma licença vitalícia para retomar o processamento e as integrações.'
-                : 'Licença inativa — processamento de mensagens pausado e integrações desabilitadas. Reative para retomar.'}
-            </p>
+          {/* Renovação/compra só aparecem quando a licença está inativa/expirada. */}
+          {isBlocked && (
+            <div className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-3">
+              <p className="text-xs text-red-200">
+                Sua licença está inativa. Renove para continuar usando o Wootrico, ou adquira uma
+                licença definitiva para não precisar renovar.
+              </p>
+            </div>
           )}
         </Card>
       )}
 
       <Card>
-        <h3 className="text-sm font-medium text-white mb-2">
-          {activated ? 'Sua licença' : 'Obter teste gratuito'}
-        </h3>
-        <p className="text-sm text-neutral-400 mb-5">
-          {isPaid
-            ? 'Sua instância tem uma licença vitalícia ativa.'
-            : isTrial
-              ? 'Você está no teste gratuito. Adquira uma licença vitalícia quando quiser.'
-              : 'Gera automaticamente um teste gratuito de 7 dias vinculado a esta instância.'}
-        </p>
-        <ErrorText>{error}</ErrorText>
-        <div className="flex flex-wrap items-center gap-4">
-          {!isPaid && (
-            <Button onClick={buy} loading={busy}>
-              Adquirir licença vitalícia
+        {/* Não ativada → ativar. Inativa → renovar/adquirir. Ativa → apenas gerenciar. */}
+        {!activated && (
+          <>
+            <h3 className="text-sm font-medium text-white mb-2">Ativar</h3>
+            <p className="text-sm text-neutral-400 mb-5">
+              Ative o Wootrico para esta instância e comece a usar.
+            </p>
+            <ErrorText>{error}</ErrorText>
+            <Button onClick={provision} loading={busy}>
+              Ativar
             </Button>
-          )}
-          {!isPaid && (
-            <Button onClick={provision} variant="ghost" loading={busy}>
-              {trialExpired || !activated ? 'Obter teste gratuito' : 'Renovar teste'}
-            </Button>
-          )}
-          {activated && (
+          </>
+        )}
+
+        {isBlocked && (
+          <>
+            <h3 className="text-sm font-medium text-white mb-2">Renovar ou adquirir</h3>
+            <p className="text-sm text-neutral-400 mb-5">
+              Renove a licença desta instância ou adquira uma licença definitiva.
+            </p>
+            <ErrorText>{error}</ErrorText>
+            <div className="flex flex-wrap items-center gap-4">
+              <Button onClick={buy} loading={busy}>
+                Adquirir licença definitiva
+              </Button>
+              <Button onClick={provision} variant="ghost" loading={busy}>
+                Renovar
+              </Button>
+            </div>
+          </>
+        )}
+
+        {activated && isActive && (
+          <>
+            <h3 className="text-sm font-medium text-white mb-2">Licença ativa</h3>
+            <p className="text-sm text-neutral-400 mb-5">
+              Sua instância está ativa e funcionando normalmente.
+            </p>
+            <ErrorText>{error}</ErrorText>
             <button
               type="button"
               onClick={deactivate}
               className="text-sm text-neutral-400 hover:text-red-300"
             >
-              Desativar
+              Desativar nesta instância
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setManual((v) => !v)}
-            className="ml-auto text-xs text-neutral-500 hover:text-white"
-          >
-            {manual ? 'Ocultar ativação manual' : 'Tenho uma chave (ativar manualmente)'}
-          </button>
-        </div>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setManual((v) => !v)}
+          className="mt-6 block text-xs text-neutral-500 hover:text-white"
+        >
+          {manual ? 'Ocultar ativação manual' : 'Tenho uma chave (ativar manualmente)'}
+        </button>
 
         {manual && (
-          <form onSubmit={activate} className="mt-6 space-y-4 border-t border-white/5 pt-6">
+          <form onSubmit={activate} className="mt-4 space-y-4 border-t border-white/5 pt-6">
             <Field label="Chave de licença" hint="Formato WTR-…">
               <Input
                 value={key}

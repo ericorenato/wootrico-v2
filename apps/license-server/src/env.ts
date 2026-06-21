@@ -10,7 +10,7 @@ export const cfg = {
   adminToken: required('ADMIN_TOKEN'),
   // Free-trial lifetime in days. After it elapses the key is inactive and the
   // customer must self-service a new trial.
-  trialDays: Number(process.env.LICENSE_TRIAL_DAYS ?? 7),
+  trialDays: Number(process.env.LICENSE_TRIAL_DAYS ?? 14),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   // Admin web panel credentials (optional). When set, /admin/login issues a JWT;
   // when unset, the panel login is disabled and only ADMIN_TOKEN (Bearer) works.

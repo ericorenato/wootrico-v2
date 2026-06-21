@@ -190,10 +190,10 @@ docker compose -f docker-compose.license-server.yml up -d
 
 **Tipos de licença:**
 
-- **Teste gratuito (`trial`):** dura 7 dias (`LICENSE_TRIAL_DAYS`). Ao expirar, o cliente
-  solicita um novo teste pelo painel (self-service). Gerado quando o cliente clica
-  **“Obter teste gratuito”** no wizard/página de licença.
-- **Paga (`paid`):** vitalícia, sem expiração — ainda validada periodicamente e revogável.
+- **Inicial (`trial`):** dura 14 dias (`LICENSE_TRIAL_DAYS`). O cliente **ativa com um clique**
+  no wizard de 1º acesso (sem mencionar prazo/preço — captura apenas o cadastro). Só ao
+  **expirar** o cliente vê que precisa renovar (self-service) ou adquirir uma licença definitiva.
+- **Definitiva (`paid`):** vitalícia, sem expiração — ainda validada periodicamente e revogável.
 
 **Compra / upgrade:** quando o cliente clica em comprar, o app registra uma **intenção de
 compra** com seu `instanceId` no servidor. Ao receber o pagamento, o sistema externo chama

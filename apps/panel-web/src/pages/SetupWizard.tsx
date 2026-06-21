@@ -223,7 +223,7 @@ export default function SetupWizard() {
     }
   }
 
-  async function getFreeTrial() {
+  async function activateAndFinish() {
     setError('');
     setBusy(true);
     try {
@@ -232,7 +232,7 @@ export default function SetupWizard() {
       await finish();
     } catch (e) {
       setBusy(false);
-      setError(e instanceof ApiError ? `Falha na licença: ${e.code}` : 'Falha ao obter o teste.');
+      setError(e instanceof ApiError ? `Falha na licença: ${e.code}` : 'Falha ao ativar a licença.');
     }
   }
 
@@ -409,9 +409,15 @@ export default function SetupWizard() {
               {step === 5 && (
                 <StepShell
                   icon={<KeyRound size={16} className="text-blue-400" />}
-                  title="Licença"
-                  desc="Obtenha um teste gratuito de 7 dias com um clique, ou informe uma chave já adquirida (WTR-…)."
-                  badge={license ? <Badge tone={license.status === 'active' ? 'ok' : 'neutral'}>{license.status}</Badge> : undefined}
+                  title="Ativação"
+                  desc="Ative o Wootrico para começar a usar."
+                  badge={
+                    license ? (
+                      <Badge tone={license.status === 'active' ? 'ok' : 'neutral'}>
+                        {license.status === 'active' ? 'Ativo' : 'Pendente'}
+                      </Badge>
+                    ) : undefined
+                  }
                 >
                   <ErrorText>{error}</ErrorText>
                   <p className="text-xs text-neutral-500">
@@ -419,11 +425,11 @@ export default function SetupWizard() {
                     leva alguns segundos.
                   </p>
                   <div className="flex flex-wrap items-center gap-4">
-                    <Button onClick={key.trim() ? activate : getFreeTrial} loading={busy}>
-                      {key.trim() ? 'Ativar e concluir' : 'Obter teste gratuito e concluir'}
+                    <Button onClick={key.trim() ? activate : activateAndFinish} loading={busy}>
+                      Ativar e concluir
                     </Button>
                     <button onClick={finish} className="text-sm text-neutral-400 hover:text-white">
-                      Concluir sem licença
+                      Concluir sem ativar
                     </button>
                     <button onClick={() => setStep(4)} className="text-sm text-neutral-400 hover:text-white">
                       Voltar

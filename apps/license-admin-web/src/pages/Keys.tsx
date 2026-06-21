@@ -205,7 +205,7 @@ export default function Keys() {
                 className="w-full rounded-lg border border-white/10 bg-[#121212] px-3 py-2 text-sm text-white outline-none focus:border-blue-500/50"
               >
                 <option value="paid">Paga (vitalícia)</option>
-                <option value="trial">Teste (7 dias)</option>
+                <option value="trial">Inicial (14 dias)</option>
               </select>
             </Field>
             <div className="sm:col-span-2">

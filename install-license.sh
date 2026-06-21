@@ -273,8 +273,8 @@ configure_env() {
     if [ -n "$p1" ]; then LIC_ADMIN_PASS="$p1"; else LIC_ADMIN_PASS="$(gen 18)"; note "Senha do painel: gerada automaticamente (veja o resumo)"; fi
   fi
 
-  # Período do teste gratuito.
-  TRIAL_DAYS="$(ask "Dias do teste gratuito (trial)" "$(keep_or LICENSE_TRIAL_DAYS 7)")"
+  # Validade da licença inicial (antes de expirar e exigir renovação/compra).
+  TRIAL_DAYS="$(ask "Dias de validade da licença inicial" "$(keep_or LICENSE_TRIAL_DAYS 14)")"
 
   # Segredos automáticos (preserva existentes).
   ADMIN_TOKEN="$(get_env ADMIN_TOKEN)"; [ -z "$ADMIN_TOKEN" ] && { ADMIN_TOKEN="$(gen 36)"; note "ADMIN_TOKEN: gerado automaticamente"; }

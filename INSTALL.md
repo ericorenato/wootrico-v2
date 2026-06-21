@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/instal
 ```
 
 O instalador pergunta: rede overlay, **subdomínio**, e-mail do TLS, reaproveitamento do
-**Postgres**, login do **painel admin** e os **dias do teste gratuito**. Ao final mostra a
+**Postgres**, login do **painel admin** e os **dias de validade da licença inicial**. Ao final mostra a
 URL do painel (`https://SEU_SUBDOMINIO/`), a URL do **webhook de pagamento**
 (`/webhook/payment`) e os segredos gerados.
 
@@ -61,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/instal
 
 Pergunta a rede, o **domínio**, o TLS e a infra (Postgres/RabbitMQ/Redis — reaproveita ou
 sobe embarcados). No 1º acesso (`https://SEU_DOMINIO`) o **setup wizard** cria o admin e
-oferece o **teste gratuito de 7 dias**. Aponte o cliente ao seu servidor de licença com
+**ativa a licença** com um clique. Aponte o cliente ao seu servidor de licença com
 `LICENSE_SERVER_URL` no `.env` (e, opcionalmente, `LICENSE_CHECKOUT_URL` para o botão de
 compra).
 

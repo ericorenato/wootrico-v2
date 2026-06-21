@@ -341,10 +341,12 @@ export default function Dashboard() {
               {license ? (LIC_LABEL[license.status] ?? license.status) : '…'}
             </p>
             <p className="mt-1 text-[11px] text-neutral-500">
-              {license?.plan === 'paid'
-                ? 'vitalícia'
-                : license?.expiresAt
-                  ? `teste expira ${new Date(license.expiresAt).toLocaleDateString('pt-BR')}`
+              {license?.status === 'active' || license?.status === 'warning'
+                ? license?.plan === 'paid'
+                  ? 'definitiva'
+                  : 'ativa'
+                : license?.status === 'blocked'
+                  ? 'inativa'
                   : 'não ativada'}
             </p>
             <Link to="/license" className="mt-3 inline-block text-xs text-blue-400 hover:underline">
