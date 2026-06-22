@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import {
   activateLicense,
   provisionLicense,
-  purchaseLicense,
   deactivateLicense,
   getLicenseStatus,
   type LicenseStatus,
@@ -21,9 +21,16 @@ const TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
 const LABEL: Record<string, string> = {
   active: 'Ativa',
   warning: 'Atenção',
-  blocked: 'Inativa',
+  blocked: 'Expirada',
   unactivated: 'Não ativada',
 };
+
+/** Whole days remaining until the given ISO date (0 when past). */
+function daysLeft(iso: string | null): number | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  return ms <= 0 ? 0 : Math.ceil(ms / (24 * 60 * 60 * 1000));
+}
 
 export default function License() {
   const { user } = useAuth();
@@ -46,21 +53,6 @@ export default function License() {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao ativar a licença.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function buy() {
-    setError('');
-    setBusy(true);
-    try {
-      const { checkoutUrl } = await purchaseLicense();
-      await load();
-      if (checkoutUrl) window.open(checkoutUrl, '_blank', 'noopener');
-      else setError('Solicitação registrada. Em breve entraremos em contato para concluir a compra.');
-    } catch (err) {
-      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao iniciar a compra.');
     } finally {
       setBusy(false);
     }
@@ -90,9 +82,9 @@ export default function License() {
   }
 
   const activated = info && info.status !== 'unactivated';
-  const isPaid = info?.plan === 'paid';
   const isActive = info?.status === 'active' || info?.status === 'warning';
   const isBlocked = info?.status === 'blocked';
+  const remaining = isActive ? daysLeft(info?.expiresAt ?? null) : null;
 
   return (
     <div className="max-w-2xl">
@@ -108,11 +100,32 @@ export default function License() {
         <Card className="mb-6">
           <div className="flex items-center justify-between mb-5">
             <h3 className="text-sm font-medium text-white">Status</h3>
-            <div className="flex items-center gap-2">
-              {isPaid && isActive && <Badge tone="ok">Definitiva</Badge>}
-              <Badge tone={TONE[info.status] ?? 'neutral'}>{LABEL[info.status] ?? info.status}</Badge>
-            </div>
+            <Badge tone={TONE[info.status] ?? 'neutral'}>{LABEL[info.status] ?? info.status}</Badge>
           </div>
+
+          {/* Dias restantes (quando ativa e há prazo). Sem detalhar a renovação. */}
+          {isActive && remaining !== null && (
+            <div className="mb-5 rounded-lg border border-white/5 bg-white/[0.03] px-4 py-3">
+              <p className="text-2xl font-semibold text-white">
+                {remaining} {remaining === 1 ? 'dia restante' : 'dias restantes'}
+              </p>
+            </div>
+          )}
+
+          {/* Banner de licença expirada. */}
+          {isBlocked && (
+            <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-300" />
+              <div className="text-sm">
+                <p className="font-medium text-red-200">Licença expirada</p>
+                <p className="text-red-200/80">
+                  O processamento de mensagens está pausado e as integrações foram desativadas.
+                  Seus dados continuam acessíveis.
+                </p>
+              </div>
+            </div>
+          )}
+
           <dl className="grid grid-cols-2 gap-y-3 text-sm">
             <dt className="text-neutral-500">Titular</dt>
             <dd className="text-neutral-300 truncate">
@@ -125,21 +138,10 @@ export default function License() {
               {info.lastValidatedAt ? new Date(info.lastValidatedAt).toLocaleString() : '—'}
             </dd>
           </dl>
-
-          {/* Renovação/compra só aparecem quando a licença está inativa/expirada. */}
-          {isBlocked && (
-            <div className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-3">
-              <p className="text-xs text-red-200">
-                Sua licença está inativa. Renove para continuar usando o Wootrico, ou adquira uma
-                licença definitiva para não precisar renovar.
-              </p>
-            </div>
-          )}
         </Card>
       )}
 
       <Card>
-        {/* Não ativada → ativar. Inativa → renovar/adquirir. Ativa → apenas gerenciar. */}
         {!activated && (
           <>
             <h3 className="text-sm font-medium text-white mb-2">Ativar</h3>
@@ -150,24 +152,6 @@ export default function License() {
             <Button onClick={provision} loading={busy}>
               Ativar
             </Button>
-          </>
-        )}
-
-        {isBlocked && (
-          <>
-            <h3 className="text-sm font-medium text-white mb-2">Renovar ou adquirir</h3>
-            <p className="text-sm text-neutral-400 mb-5">
-              Renove a licença desta instância ou adquira uma licença definitiva.
-            </p>
-            <ErrorText>{error}</ErrorText>
-            <div className="flex flex-wrap items-center gap-4">
-              <Button onClick={buy} loading={busy}>
-                Adquirir licença definitiva
-              </Button>
-              <Button onClick={provision} variant="ghost" loading={busy}>
-                Renovar
-              </Button>
-            </div>
           </>
         )}
 
@@ -187,6 +171,8 @@ export default function License() {
             </button>
           </>
         )}
+
+        {isBlocked && <ErrorText>{error}</ErrorText>}
 
         <button
           type="button"

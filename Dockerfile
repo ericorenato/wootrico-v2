@@ -41,6 +41,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 RUN corepack enable
 WORKDIR /app
 
+# License server URL baked into the CUSTOMER image so clients never configure it
+# (validation is online — the instance must know where the vendor server lives).
+# Set per build: docker buildx build --build-arg LICENSE_SERVER_URL=https://license.suaempresa.com ...
+ARG LICENSE_SERVER_URL=https://license.example.com
+ENV LICENSE_SERVER_URL=${LICENSE_SERVER_URL}
+
 COPY --from=builder /app /app
 
 # Strip the vendor-only license system so it can never run from the customer image.

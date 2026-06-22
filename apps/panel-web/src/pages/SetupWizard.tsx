@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Activity, Boxes, Check, Database, Eye, EyeOff, Globe, Images, KeyRound, Loader2, Network } from 'lucide-react';
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import MediaStorageEditor from '../components/MediaStorageEditor';
@@ -74,7 +73,6 @@ function useAutoTest(service: Service, url: string) {
 }
 
 export default function SetupWizard() {
-  const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -133,7 +131,8 @@ export default function SetupWizard() {
           const res = await fetch('/api/health', { cache: 'no-store' });
           if (res.ok && (await res.json())?.status === 'ok') {
             cancelled = true;
-            navigate('/');
+            // Reload completo: novo bundle + status/auth frescos após o restart.
+            window.location.assign('/');
             return;
           }
         } catch {
@@ -147,7 +146,7 @@ export default function SetupWizard() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [restarting, navigate]);
+  }, [restarting]);
 
   /** Advance only after the current service connects (auto-tested or on click). */
   async function advanceAfterTest(t: { test: TestState; runTest: () => Promise<boolean> }, next: number) {
@@ -190,11 +189,19 @@ export default function SetupWizard() {
         needRestart = true;
       }
 
-      // 2) Public base URL + 3) mark setup complete.
-      await setBaseUrl(baseUrl.trim());
+      // 2) Public base URL (non-fatal — ajustável depois em Sistema) + 3) marcar
+      //    o setup como concluído. Um erro ao salvar a base URL NÃO pode impedir
+      //    a conclusão, senão o gate de 1º acesso prende o usuário no wizard.
+      try {
+        await setBaseUrl(baseUrl.trim());
+      } catch {
+        /* segue — a base URL pode ser corrigida depois */
+      }
       await completeSetup();
 
       // 4) Apply via restart (RabbitMQ/Redis take effect on boot) or go straight.
+      //    Reload COMPLETO (não navegação SPA) para buscar status/auth e o bundle
+      //    frescos — evita ficar preso no wizard por estado obsoleto.
       if (needRestart) {
         setBusy(false);
         setRestarting(true);
@@ -202,7 +209,7 @@ export default function SetupWizard() {
           /* the server is going down — expected */
         });
       } else {
-        navigate('/');
+        window.location.assign('/');
       }
     } catch {
       setError('Falha ao concluir a configuração.');
