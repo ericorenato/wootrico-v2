@@ -25,24 +25,34 @@ export async function loadIntegrationRuntime(
   if (!integration || !integration.providerConfig) return null;
 
   // Credentials are license-sealed: try every secret the instance has had (the
-  // seal secret rotates on reactivation). Fetch on demand if we have none yet.
+  // seal secret rotates on reactivation). On failure, re-validate once to pull a
+  // newer/complete secret list, then retry before giving up.
+  const tryDecrypt = (secrets: string[]): { pc: ProviderConfig; token: string } | null => {
+    try {
+      return {
+        pc: JSON.parse(decryptSecretAny(integration.providerConfig!.config, secrets)) as ProviderConfig,
+        token: decryptSecretAny(integration.chatwootApiToken, secrets),
+      };
+    } catch {
+      return null;
+    }
+  };
   let secrets = await getLicenseSecrets();
-  if (secrets.length === 0) {
-    await ensureLicenseSecret().catch(() => undefined);
+  let creds = secrets.length ? tryDecrypt(secrets) : null;
+  if (!creds) {
+    await ensureLicenseSecret().catch(() => undefined); // force a fresh validate
     secrets = await getLicenseSecrets();
+    creds = secrets.length ? tryDecrypt(secrets) : null;
   }
-  let providerConfig: ProviderConfig;
-  let chatwootApiToken: string;
-  try {
-    providerConfig = JSON.parse(decryptSecretAny(integration.providerConfig.config, secrets)) as ProviderConfig;
-    chatwootApiToken = decryptSecretAny(integration.chatwootApiToken, secrets);
-  } catch {
+  if (!creds) {
     logger.warn(
       { integrationId, secrets: secrets.length },
       'integration credentials could not be decrypted (license secret mismatch) — message dropped',
     );
     return null;
   }
+  const providerConfig = creds.pc;
+  const chatwootApiToken = creds.token;
   const provider = createProvider(providerConfig);
 
   const chatwoot = new ChatwootClient({
