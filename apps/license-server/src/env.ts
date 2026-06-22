@@ -8,8 +8,9 @@ export const cfg = {
   port: Number(process.env.PORT ?? 4000),
   host: process.env.HOST ?? '0.0.0.0',
   adminToken: required('ADMIN_TOKEN'),
-  // Free-trial lifetime in days. After it elapses the key is inactive and the
-  // customer must self-service a new trial.
+  // Free-trial lifetime in days. Granted ONCE per instance — after it elapses
+  // the key is inactive and the customer must buy a definitive license (no free
+  // renewal).
   trialDays: Number(process.env.LICENSE_TRIAL_DAYS ?? 14),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   // Admin web panel credentials (optional). When set, /admin/login issues a JWT;

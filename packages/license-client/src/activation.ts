@@ -66,7 +66,8 @@ async function applyLicenseResponse(
  * Self-service provisioning: ask the license server to mint AND bind a key for
  * this instance in one online call, identified by the user's name/email. The
  * raw key is returned once (omitted on reuse) and stored encrypted locally.
- * After a trial expires, calling this again mints a fresh trial.
+ * A trial is granted only ONCE per instance — after it expires the server
+ * refuses (reason `trial_expired`) and the user must buy a definitive license.
  */
 export async function provisionLicense(owner: {
   name?: string | null;

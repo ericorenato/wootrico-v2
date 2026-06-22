@@ -48,6 +48,7 @@ function eventsToTxt(events: LicenseEvent[]): string {
 const EVENT_LABEL: Record<string, string> = {
   provision: 'Provisionamento',
   provision_reused: 'Provisionamento (reuso)',
+  provision_denied: 'Provisionamento negado (teste já usado)',
   activate: 'Ativação',
   activate_revoked: 'Ativação negada (revogada)',
   activate_expired: 'Ativação negada (expirada)',

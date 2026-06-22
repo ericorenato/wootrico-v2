@@ -226,8 +226,6 @@ app.post('/provision', async (req, reply) => {
 
   // One live key per instanceId. If this instance already has a live activation
   // (paid, or a still-valid trial), reuse it instead of minting a second key.
-  // An EXPIRED trial does not count as live — so this same call re-mints a fresh
-  // trial after expiry (the "manually request a new trial" flow).
   const existing = await prisma.activation.findFirst({
     where: { instanceId, revokedAt: null, licenseKey: liveKeyFilter(now) },
     include: { licenseKey: true },
@@ -261,6 +259,32 @@ app.post('/provision', async (req, reply) => {
       secrets: await instanceSecrets(instanceId),
       reused: true,
     };
+  }
+
+  // No free renewal: a trial is granted ONCE per instance. If this instance has
+  // ever bound a key before (its trial expired or was revoked, and no live key
+  // remains), refuse to mint a fresh trial — the only way forward is to buy a
+  // definitive license. Brand-new instances (no prior activation) fall through
+  // and get their single initial trial.
+  const prior = await prisma.activation.findFirst({
+    where: { instanceId },
+    include: { licenseKey: true },
+    orderBy: { boundAt: 'desc' },
+  });
+  if (prior) {
+    await recordEvent({
+      type: 'provision_denied',
+      licenseKeyId: prior.licenseKeyId,
+      instanceId,
+      ip,
+      appVersion,
+    });
+    return reply.code(403).send({
+      active: false,
+      plan: prior.licenseKey.plan,
+      expiresAt: prior.licenseKey.expiresAt,
+      reason: 'trial_expired',
+    });
   }
 
   const raw = generateKey();

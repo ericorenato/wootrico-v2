@@ -294,33 +294,16 @@ export default function License() {
 
         {isBlocked && (
           <>
-            <h3 className="text-sm font-medium text-white mb-2">Renovar ou adquirir</h3>
+            <h3 className="text-sm font-medium text-white mb-2">Adquirir licença</h3>
             <p className="text-sm text-neutral-400 mb-5">
-              Sua licença expirou. Reative gratuitamente para continuar usando, ou adquira uma
-              licença definitiva.
+              Seu período de teste terminou e as integrações estão pausadas. Para voltar a processar
+              mensagens, adquira uma licença definitiva. Seus dados continuam acessíveis. Já comprou
+              uma chave? Use <span className="text-neutral-300">“Tenho uma chave”</span> abaixo.
             </p>
-            {(!licName.trim() || !licEmail.trim()) && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-                <Field label="Nome">
-                  <Input value={licName} onChange={(e) => setLicName(e.target.value)} placeholder="Seu nome" />
-                </Field>
-                <Field label="E-mail">
-                  <Input value={licEmail} onChange={(e) => setLicEmail(e.target.value)} placeholder="voce@exemplo.com" />
-                </Field>
-              </div>
-            )}
-            {googleEnabled && (
-              <div className="mb-4">
-                <GoogleButton onClick={loginWithGoogle} label="Reativar com Google" />
-              </div>
-            )}
             <ErrorText>{error}</ErrorText>
             <div className="flex flex-wrap items-center gap-4">
               <Button onClick={buy} loading={busy}>
                 Adquirir licença definitiva
-              </Button>
-              <Button onClick={provision} variant="ghost" loading={busy}>
-                Reativar gratuitamente
               </Button>
             </div>
           </>
