@@ -27,6 +27,7 @@ interface LicenseResponse {
   error?: string;
   features?: Record<string, unknown>;
   secret?: string | null;
+  secrets?: string[] | null;
   reused?: boolean;
 }
 
@@ -41,6 +42,7 @@ async function applyLicenseResponse(
   await updateLicenseState({
     ...(opts.storeKey ? { licenseKey: encryptLicenseKey(opts.storeKey) } : {}),
     ...(data.secret ? { dataKey: encrypt(data.secret) } : {}),
+    ...(data.secrets?.length ? { dataKeys: encrypt(JSON.stringify(data.secrets)) } : {}),
     instanceId,
     plan: data.plan ?? null,
     expiresAt,

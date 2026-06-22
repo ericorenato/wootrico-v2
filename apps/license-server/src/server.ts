@@ -98,6 +98,25 @@ async function ensureSecret(lk: { id: string; secret: string | null }): Promise<
   return secret;
 }
 
+/**
+ * All distinct per-license secrets ever bound to this instance (most recent
+ * first). Integration credentials may be sealed with any of them (the secret
+ * rotates on reactivation), so the client tries all when decrypting.
+ */
+async function instanceSecrets(instanceId: string): Promise<string[]> {
+  const acts = await prisma.activation.findMany({
+    where: { instanceId },
+    include: { licenseKey: { select: { secret: true } } },
+    orderBy: { boundAt: 'desc' },
+  });
+  const out: string[] = [];
+  for (const a of acts) {
+    const s = a.licenseKey.secret;
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
 /** Prisma filter: keys that are still valid (not revoked, trial not expired). */
 function liveKeyFilter(
   now: Date,
@@ -239,6 +258,7 @@ app.post('/provision', async (req, reply) => {
       expiresAt: existing.licenseKey.expiresAt,
       features: existing.licenseKey.features ?? {},
       secret: await ensureSecret(existing.licenseKey),
+      secrets: await instanceSecrets(instanceId),
       reused: true,
     };
   }
@@ -277,6 +297,7 @@ app.post('/provision', async (req, reply) => {
     expiresAt: lk.expiresAt,
     features: lk.features ?? {},
     secret: lk.secret,
+    secrets: await instanceSecrets(instanceId),
   };
 });
 
@@ -331,6 +352,7 @@ app.post('/activate', async (req, reply) => {
     expiresAt: lk.expiresAt,
     features: lk.features ?? {},
     secret: await ensureSecret(lk),
+    secrets: await instanceSecrets(instanceId),
   };
 });
 
@@ -408,6 +430,7 @@ const validateHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     expiresAt: lk.expiresAt,
     features: lk.features ?? {},
     secret: await ensureSecret(lk),
+    secrets: await instanceSecrets(instanceId),
     ...(deliveredKey ? { key: deliveredKey } : {}),
   };
 };

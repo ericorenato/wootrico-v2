@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { encryptSecret, decryptSecret, randomToken } from '@wootrico/config';
-import { getLicenseSecret, ensureLicenseSecret } from '@wootrico/license-client';
+import { encryptSecret, decryptSecretAny, randomToken } from '@wootrico/config';
+import { getLicenseSecret, getLicenseSecrets, ensureLicenseSecret } from '@wootrico/license-client';
 import {
   CreateIntegrationSchema,
   UpdateIntegrationSchema,
@@ -35,19 +35,19 @@ export default async function integrationRoutes(app: FastifyInstance) {
     });
     if (!row) return reply.code(404).send({ error: 'not_found' });
     const base = await getPublicBaseUrl(app.prisma);
-    const secret = await getLicenseSecret();
+    const secrets = await getLicenseSecrets();
 
     let providerConfig: ProviderConfig | null = null;
     if (row.providerConfig) {
       try {
-        providerConfig = JSON.parse(decryptSecret(row.providerConfig.config, secret)) as ProviderConfig;
+        providerConfig = JSON.parse(decryptSecretAny(row.providerConfig.config, secrets)) as ProviderConfig;
       } catch {
         providerConfig = null;
       }
     }
     let chatwootApiToken = '';
     try {
-      chatwootApiToken = decryptSecret(row.chatwootApiToken, secret);
+      chatwootApiToken = decryptSecretAny(row.chatwootApiToken, secrets);
     } catch {
       chatwootApiToken = '';
     }
@@ -236,7 +236,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
     try {
       const cw = new ChatwootClient({
         baseUrl: updated.chatwootBaseUrl,
-        apiToken: d.chatwootApiToken ?? decryptSecret(existing.chatwootApiToken, secret),
+        apiToken: d.chatwootApiToken ?? decryptSecretAny(existing.chatwootApiToken, await getLicenseSecrets()),
         accountId: updated.chatwootAccountId,
       });
       const setup = await cw.setupInbox({

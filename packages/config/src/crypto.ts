@@ -108,6 +108,26 @@ export function decryptSecret(payload: string, licenseSecret: string | null): st
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
 }
 
+/**
+ * Decrypt a sealed secret trying SEVERAL candidate license secrets — the data
+ * may have been sealed with any of the instance's historical secrets (the seal
+ * secret changes when a license is reactivated). Legacy (unsealed) values use
+ * the local key. Throws if none of the candidates work.
+ */
+export function decryptSecretAny(payload: string, licenseSecrets: (string | null | undefined)[]): string {
+  if (!isLicenseSealed(payload)) return decrypt(payload); // legacy (local key only)
+  const candidates = licenseSecrets.filter((s): s is string => !!s);
+  let lastErr: unknown;
+  for (const s of candidates) {
+    try {
+      return decryptSecret(payload, s);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error('license_secret_required');
+}
+
 /** URL-safe random token (used for per-integration webhook tokens). */
 export function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString('base64url');

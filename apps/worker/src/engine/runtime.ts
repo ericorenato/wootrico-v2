@@ -1,6 +1,6 @@
 import { prisma } from '@wootrico/db';
-import { decryptSecret } from '@wootrico/config';
-import { ensureLicenseSecret } from '@wootrico/license-client';
+import { decryptSecretAny, logger } from '@wootrico/config';
+import { ensureLicenseSecret, getLicenseSecrets } from '@wootrico/license-client';
 import type { ProviderConfig } from '@wootrico/types';
 import { createProvider, type WhatsAppProvider } from '@wootrico/providers';
 import { ChatwootClient } from '@wootrico/chatwoot-client';
@@ -24,15 +24,23 @@ export async function loadIntegrationRuntime(
   });
   if (!integration || !integration.providerConfig) return null;
 
-  // Credentials are license-sealed: without the per-license secret they cannot be
-  // decrypted. Fail closed (drop the job) — a fake/absent license can't operate.
-  const secret = await ensureLicenseSecret();
+  // Credentials are license-sealed: try every secret the instance has had (the
+  // seal secret rotates on reactivation). Fetch on demand if we have none yet.
+  let secrets = await getLicenseSecrets();
+  if (secrets.length === 0) {
+    await ensureLicenseSecret().catch(() => undefined);
+    secrets = await getLicenseSecrets();
+  }
   let providerConfig: ProviderConfig;
   let chatwootApiToken: string;
   try {
-    providerConfig = JSON.parse(decryptSecret(integration.providerConfig.config, secret)) as ProviderConfig;
-    chatwootApiToken = decryptSecret(integration.chatwootApiToken, secret);
+    providerConfig = JSON.parse(decryptSecretAny(integration.providerConfig.config, secrets)) as ProviderConfig;
+    chatwootApiToken = decryptSecretAny(integration.chatwootApiToken, secrets);
   } catch {
+    logger.warn(
+      { integrationId, secrets: secrets.length },
+      'integration credentials could not be decrypted (license secret mismatch) — message dropped',
+    );
     return null;
   }
   const provider = createProvider(providerConfig);

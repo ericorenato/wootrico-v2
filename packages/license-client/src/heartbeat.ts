@@ -35,6 +35,7 @@ interface ValidateResponse {
   key?: string; // server delivers a newly minted key (e.g. paid upgrade) to swap in
   features?: Record<string, unknown>;
   secret?: string | null;
+  secrets?: string[] | null;
   error?: string;
 }
 
@@ -65,6 +66,7 @@ export async function runHeartbeat(): Promise<{ status: string }> {
         // Server delivered a new key (paid upgrade) → swap it in.
         ...(data.key ? { licenseKey: encryptLicenseKey(data.key) } : {}),
         ...(data.secret ? { dataKey: encrypt(data.secret) } : {}),
+        ...(data.secrets?.length ? { dataKeys: encrypt(JSON.stringify(data.secrets)) } : {}),
         plan: data.plan ?? state.plan ?? null,
         expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
         status: 'active',
