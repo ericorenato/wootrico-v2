@@ -7,7 +7,16 @@ imagens publicadas no Docker Hub — **não** clonam o repositório.
 Pré-requisitos: VPS **Linux** (Ubuntu/Debian recomendado), acesso **root** (ou `sudo`),
 e um **domínio/subdomínio** com registro **A** apontando para o IP da VPS (para o TLS).
 
-> Dica: rode cada instalador em uma pasta própria (ele grava o `.env` e o compose ali).
+> **Sempre baixe o `.sh` e rode a partir de uma pasta própria** (não use `curl | bash`).
+> O script fica salvo nessa pasta — é dele que você roda `update` e `uninstall` depois.
+> O instalador também grava ali o `.env` e o `docker-compose` gerado.
+
+## URLs dos instaladores (copie para a VPS)
+
+| O que | URL para baixar |
+|---|---|
+| Servidor de licença (você) | `https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install-license.sh` |
+| Cliente Wootrico | `https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh` |
 
 ---
 
@@ -16,36 +25,40 @@ e um **domínio/subdomínio** com registro **A** apontando para o IP da VPS (par
 Hospede **separado** dos clientes, num subdomínio próprio (ex.: `license.suaempresa.com`).
 Só precisa de um **Postgres** (reaproveita um existente ou sobe um dedicado).
 
+**Instalar:**
+
 ```bash
 mkdir -p /opt/wootrico-license && cd /opt/wootrico-license
 curl -fsSL -O https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install-license.sh
 sudo bash install-license.sh
 ```
 
-Ou em uma linha:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install-license.sh | sudo bash
-```
-
 O instalador pergunta: rede overlay, **subdomínio**, e-mail do TLS, reaproveitamento do
-**Postgres**, login do **painel admin** e os **dias de validade da licença inicial**. Ao final mostra a
-URL do painel (`https://SEU_SUBDOMINIO/`), a URL do **webhook de pagamento**
+**Postgres**, login do **painel admin** e os **dias de validade da licença inicial**. Ao final
+mostra a URL do painel (`https://SEU_SUBDOMINIO/`), a URL do **webhook de pagamento**
 (`/webhook/payment`) e os segredos gerados.
 
-Manutenção (rode da mesma pasta):
+**Atualizar / desinstalar** (rode da MESMA pasta `/opt/wootrico-license`):
 
 ```bash
+cd /opt/wootrico-license
 sudo bash install-license.sh update      # repull da imagem + redeploy (preserva o .env.license)
 sudo bash install-license.sh uninstall   # remove a stack (pergunta se apaga o banco)
 ```
 
 Depois de no ar, no painel admin abra **Webhooks** para criar a chave `WHK-…` usada pelo
-seu provedor de pagamento, e veja o **payload** que o webhook espera.
+seu provedor de pagamento (e ver o **payload** que o webhook espera), e a aba **Saúde**
+para acompanhar instâncias que pararam de validar e alertas de IP.
 
 ---
 
 ## 2. Cliente Wootrico (quem usa o produto)
+
+A URL do seu servidor de licença **já vem embutida na imagem** — o cliente não configura nada
+disso. O licenciamento é **obrigatório**: no 1º acesso o cliente ativa a licença e, sem ela, o
+produto não processa nem cria integrações.
+
+**Instalar:**
 
 ```bash
 mkdir -p /opt/wootrico && cd /opt/wootrico
@@ -53,25 +66,19 @@ curl -fsSL -O https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/ins
 sudo bash install.sh
 ```
 
-Ou em uma linha:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh | sudo bash
-```
-
 Pergunta a rede, o **domínio**, o TLS e a infra (Postgres/RabbitMQ/Redis — reaproveita ou
-sobe embarcados). No 1º acesso (`https://SEU_DOMINIO`) o **setup wizard** cria o admin e
-**ativa a licença** com um clique. Aponte o cliente ao seu servidor de licença com
-`LICENSE_SERVER_URL` no `.env` (e, opcionalmente, `LICENSE_CHECKOUT_URL` para o botão de
-compra).
+sobe embarcados). No 1º acesso (`https://SEU_DOMINIO`) o **setup wizard** cria o admin
+(nome + e-mail) e **ativa a licença**.
 
-Manutenção:
+**Atualizar / desinstalar** (rode da MESMA pasta `/opt/wootrico`):
 
 ```bash
-sudo bash install.sh update       # atualizar
-sudo bash install.sh uninstall    # remover
-bash install.sh local             # rodar local (Docker Desktop, sem Swarm)
+cd /opt/wootrico
+sudo bash install.sh update       # repull da imagem + redeploy (preserva o .env)
+sudo bash install.sh uninstall    # remove a stack (pergunta se apaga os volumes)
 ```
+
+> Rodar local (Docker Desktop, sem Swarm), só para testes: `bash install.sh local`.
 
 ---
 
@@ -82,4 +89,5 @@ bash install.sh local             # rodar local (Docker Desktop, sem Swarm)
 | `ericoautomacao/wootrico-v2:latest` | cliente (painel + worker) | seu cliente |
 | `ericoautomacao/wootrico-license:latest` | servidor de licença + painel admin | você (fornecedor) |
 
-Ambas são `linux/amd64`. Os instaladores sempre puxam a tag `:latest` mais recente.
+Ambas são `linux/amd64`. Os instaladores sempre puxam a tag `:latest` mais recente, então
+`update` traz a versão publicada mais nova. Migrações de banco rodam sozinhas no boot.

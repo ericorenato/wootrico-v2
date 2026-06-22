@@ -15,6 +15,10 @@
   <code>Docker Swarm</code>
 </p>
 
+<p align="center">
+  📦 <b>Instalar na VPS (servidor de licença + cliente):</b> veja <a href="./INSTALL.md">INSTALL.md</a>
+</p>
+
 ---
 
 ## ✨ O que é
