@@ -292,3 +292,12 @@ export const getEvents = (
 
 export const getKeyEvents = (id: string) =>
   api<{ events: LicenseEvent[] }>(`/admin/keys/${id}/events`);
+
+export interface ServerSettings {
+  logRetentionDays: number | null;
+}
+
+export const getSettings = () => api<ServerSettings>('/admin/settings');
+
+export const updateSettings = (body: ServerSettings) =>
+  api<{ ok: boolean }>('/admin/settings', { method: 'PUT', body: JSON.stringify(body) });

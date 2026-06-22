@@ -1,4 +1,4 @@
-import { logger, TTL, type MessageType, type ProviderType } from '@wootrico/config';
+import { logger, type MessageType, type ProviderType } from '@wootrico/config';
 import { prisma } from '@wootrico/db';
 
 export interface MessageLogInput {
@@ -31,7 +31,9 @@ export async function logMessage(input: MessageLogInput): Promise<void> {
         isReply: input.isReply,
         isGroup: input.isGroup,
         providerMessageId: input.providerMessageId ?? null,
-        expiresAt: new Date(Date.now() + TTL.webhookEventDays * 86_400_000),
+        // Retention is governed by AppSettings.logRetentionDays (createdAt-based
+        // sweep in the cleanup job), not a fixed per-row TTL.
+        expiresAt: null,
       },
     });
   } catch (err) {

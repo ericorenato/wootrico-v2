@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { KeyRound, Terminal, LogOut, Webhook, Activity, LayoutDashboard, Users } from 'lucide-react';
+import { KeyRound, Terminal, LogOut, Webhook, Activity, LayoutDashboard, Users, Settings } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 
 const NAV = [
@@ -10,6 +10,7 @@ const NAV = [
   { to: '/health', label: 'Saúde', icon: Activity },
   { to: '/logs', label: 'Logs', icon: Terminal },
   { to: '/webhook-keys', label: 'Webhooks', icon: Webhook },
+  { to: '/settings', label: 'Configurações', icon: Settings },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {

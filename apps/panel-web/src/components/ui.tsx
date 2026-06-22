@@ -4,7 +4,7 @@ import type {
   ReactNode,
   SelectHTMLAttributes,
 } from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, Copy, Info } from 'lucide-react';
 
 /**
@@ -140,6 +140,64 @@ export function CopyButton({
     >
       {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
     </button>
+  );
+}
+
+/**
+ * Truncated text that reveals its full value in a hover popover. The popover is
+ * positioned `fixed` (anchored to the element's bounding rect) so it escapes any
+ * `overflow-hidden` ancestor such as a table card. Its content is selectable
+ * (highlight/copy by hand) and carries a {@link CopyButton}; the transparent
+ * top bridge keeps it reachable across the small gap below the anchor. Falls
+ * back to `fallback` when there's no value.
+ */
+export function CopyableText({
+  value,
+  fallback = null,
+  className = '',
+}: {
+  value: string | null | undefined;
+  fallback?: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  if (value == null || value === '') return <>{fallback}</>;
+  const open = () => {
+    // Only reveal when the text is actually clipped — no popover for short names.
+    const t = textRef.current;
+    if (t && t.scrollWidth <= t.clientWidth) return;
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setPos({ left: r.left, top: r.bottom });
+  };
+  const close = () => setPos(null);
+  return (
+    <span
+      ref={ref}
+      className={`block min-w-0 ${className}`}
+      onMouseEnter={open}
+      onMouseLeave={close}
+    >
+      <span ref={textRef} className="block truncate cursor-default">
+        {value}
+      </span>
+      {pos && (
+        <span
+          className="fixed z-50 pt-1.5"
+          style={{ left: pos.left, top: pos.top }}
+          onMouseEnter={open}
+          onMouseLeave={close}
+        >
+          <span className="inline-flex max-w-[min(22rem,80vw)] items-start gap-2 rounded-lg border border-white/10 bg-[#16161a] px-3 py-2 shadow-xl shadow-black/40">
+            <span className="select-text whitespace-normal break-words text-sm leading-snug text-neutral-100">
+              {value}
+            </span>
+            <CopyButton value={value} className="mt-0.5 shrink-0" />
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
 

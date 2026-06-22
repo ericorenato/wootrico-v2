@@ -42,16 +42,46 @@ async function sweepMedia(now: Date): Promise<{ rows: number; blobs: number }> {
   return { rows: del.count, blobs };
 }
 
+/**
+ * Delete system logs older than the configured retention window. Unlike the
+ * operational TTLs below, this is keyed on `createdAt` and driven by
+ * `AppSettings.logRetentionDays`, so changing the setting applies retroactively.
+ * `days == null` means "keep forever" — nothing is deleted.
+ */
+async function sweepLogs(
+  now: Date,
+  days: number | null,
+): Promise<{ messageLogs: number; webhookEvents: number; auditLogs: number }> {
+  if (days == null || days <= 0) return { messageLogs: 0, webhookEvents: 0, auditLogs: 0 };
+  const cutoff = new Date(now.getTime() - days * 86_400_000);
+  const [messageLogs, webhookEvents, auditLogs] = await prisma.$transaction([
+    prisma.messageLog.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.webhookEvent.deleteMany({ where: { receivedAt: { lt: cutoff } } }),
+    prisma.auditLog.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+  ]);
+  return {
+    messageLogs: messageLogs.count,
+    webhookEvents: webhookEvents.count,
+    auditLogs: auditLogs.count,
+  };
+}
+
 /** Delete rows past their TTL. Scheduled hourly. */
 export async function runCleanup(): Promise<void> {
   const now = new Date();
-  const [dedup, mappings, webhooks, sessions, messageLogs] = await prisma.$transaction([
+  // Operational TTLs (createdAt-independent) — unchanged.
+  const [dedup, mappings, sessions] = await prisma.$transaction([
     prisma.dedupTicket.deleteMany({ where: { expiresAt: { lt: now } } }),
     prisma.messageMapping.deleteMany({ where: { expiresAt: { lt: now } } }),
-    prisma.webhookEvent.deleteMany({ where: { expiresAt: { lt: now } } }),
     prisma.session.deleteMany({ where: { expiresAt: { lt: now } } }),
-    prisma.messageLog.deleteMany({ where: { expiresAt: { lt: now } } }),
   ]);
+
+  const settings = await prisma.appSettings.findUnique({ where: { id: 'singleton' } });
+  const logs = await sweepLogs(now, settings?.logRetentionDays ?? null).catch((err) => {
+    logger.warn({ err }, 'log retention sweep failed');
+    return { messageLogs: 0, webhookEvents: 0, auditLogs: 0 };
+  });
+
   const media = await sweepMedia(now).catch((err) => {
     logger.warn({ err }, 'media retention sweep failed');
     return { rows: 0, blobs: 0 };
@@ -60,9 +90,10 @@ export async function runCleanup(): Promise<void> {
     {
       dedupTickets: dedup.count,
       messageMappings: mappings.count,
-      webhookEvents: webhooks.count,
       sessions: sessions.count,
-      messageLogs: messageLogs.count,
+      messageLogs: logs.messageLogs,
+      webhookEvents: logs.webhookEvents,
+      auditLogs: logs.auditLogs,
       mediaAssets: media.rows,
       mediaBlobs: media.blobs,
     },

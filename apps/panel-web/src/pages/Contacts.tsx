@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Download, Search, User, Users } from 'lucide-react';
-import { Button, CopyButton, Eyebrow, InfoTip } from '../components/ui';
+import { Button, CopyButton, CopyableText, Eyebrow, InfoTip } from '../components/ui';
 import { exportContacts, listContacts, type ContactDTO } from '../lib/contacts-api';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
@@ -315,9 +315,11 @@ export default function Contacts() {
                 <div className="flex items-center gap-3 min-w-0">
                   <Avatar contact={c} />
                   <div className="min-w-0">
-                    <p className="text-sm text-neutral-100 truncate">
-                      {c.pushName ?? <span className="text-neutral-500">sem nome</span>}
-                    </p>
+                    <CopyableText
+                      value={c.pushName}
+                      fallback={<span className="text-sm text-neutral-500">sem nome</span>}
+                      className="text-sm text-neutral-100"
+                    />
                     <p className="md:hidden text-[11px] text-neutral-600">
                       {fmtDateTime(c.createdAt)}
                     </p>

@@ -11,6 +11,7 @@ import KeyDetail from './pages/KeyDetail';
 import Logs from './pages/Logs';
 import WebhookKeys from './pages/WebhookKeys';
 import Health from './pages/Health';
+import Settings from './pages/Settings';
 
 function Spinner() {
   return (
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/logs" element={<Protected><Logs /></Protected>} />
           <Route path="/health" element={<Protected><Health /></Protected>} />
           <Route path="/webhook-keys" element={<Protected><WebhookKeys /></Protected>} />
+          <Route path="/settings" element={<Protected><Settings /></Protected>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

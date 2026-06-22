@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { addDays } from '../lib/time.js';
 import { detectPayloadOrigin } from '@wootrico/providers';
 import { publishWebhook } from '@wootrico/queue';
-import { TTL } from '@wootrico/config';
 import { assertLicenseActive } from '@wootrico/license-client';
 
 function eventTypeOf(source: 'provider' | 'chatwoot', payload: any): string | undefined {
@@ -62,7 +60,9 @@ export default async function webhookRoutes(app: FastifyInstance) {
         eventType,
         accepted,
         reason,
-        expiresAt: addDays(new Date(), TTL.webhookEventDays),
+        // Retention is governed by AppSettings.logRetentionDays (createdAt-based
+        // sweep in the cleanup job), not a fixed per-row TTL.
+        expiresAt: null,
       },
     });
 

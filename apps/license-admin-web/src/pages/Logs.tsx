@@ -3,6 +3,47 @@ import { Eyebrow } from '../components/ui';
 import { getServerLogs, getEvents, type ServerLogEntry, type LicenseEvent } from '../lib/admin-api';
 
 const REFRESH_MS = 5000;
+const PAGE_SIZES = [50, 100, 250, 500] as const;
+
+/** Trigger a client-side download of `content` as a .txt file. */
+function downloadTxt(filename: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function serverLogsToTxt(entries: ServerLogEntry[]): string {
+  return entries
+    .map(
+      (e) =>
+        `${new Date(e.at).toLocaleString()} [${e.levelLabel}] ${e.msg}${
+          e.meta ? ` ${JSON.stringify(e.meta)}` : ''
+        }`,
+    )
+    .join('\n');
+}
+
+function eventsToTxt(events: LicenseEvent[]): string {
+  return events
+    .map(
+      (e) =>
+        `${new Date(e.createdAt).toLocaleString()} — ${EVENT_LABEL[e.type] ?? e.type} — [${[
+          e.ip,
+          e.appVersion,
+          e.licenseKeyId,
+          e.meta ? JSON.stringify(e.meta) : null,
+        ]
+          .filter(Boolean)
+          .join(' · ')}]`,
+    )
+    .join('\n');
+}
 
 const EVENT_LABEL: Record<string, string> = {
   provision: 'Provisionamento',
@@ -37,14 +78,24 @@ const LEVEL_DOT: Record<string, string> = {
 export default function Logs() {
   const [tab, setTab] = useState<'server' | 'events'>('server');
   const [auto, setAuto] = useState(true);
+  const [pageSize, setPageSize] = useState<number>(100);
   const [serverLogs, setServerLogs] = useState<ServerLogEntry[]>([]);
   const [events, setEvents] = useState<LicenseEvent[]>([]);
+  const [nextBefore, setNextBefore] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval>>();
 
   const refresh = useCallback(() => {
-    if (tab === 'server') getServerLogs({ limit: 300 }).then((r) => setServerLogs(r.entries)).catch(() => {});
-    else getEvents({ limit: 100 }).then((r) => setEvents(r.events)).catch(() => {});
-  }, [tab]);
+    if (tab === 'server')
+      getServerLogs({ limit: pageSize }).then((r) => setServerLogs(r.entries)).catch(() => {});
+    else
+      getEvents({ limit: pageSize })
+        .then((r) => {
+          setEvents(r.events);
+          setNextBefore(r.nextBefore);
+        })
+        .catch(() => {});
+  }, [tab, pageSize]);
 
   useEffect(() => {
     refresh();
@@ -56,6 +107,29 @@ export default function Logs() {
     return () => clearInterval(timer.current);
   }, [auto, refresh]);
 
+  async function loadMoreEvents() {
+    if (!nextBefore) return;
+    setLoading(true);
+    try {
+      const r = await getEvents({ limit: pageSize, before: nextBefore });
+      setEvents((prev) => {
+        const seen = new Set(prev.map((e) => e.id));
+        return [...prev, ...r.events.filter((e) => !seen.has(e.id))];
+      });
+      setNextBefore(r.nextBefore);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onExport() {
+    const stamp = new Date().toISOString().slice(0, 10);
+    if (tab === 'server') downloadTxt(`server-logs-${stamp}.txt`, serverLogsToTxt(serverLogs));
+    else downloadTxt(`license-events-${stamp}.txt`, eventsToTxt(events));
+  }
+
+  const exportDisabled = tab === 'server' ? serverLogs.length === 0 : events.length === 0;
+
   return (
     <div>
       <div className="flex items-start justify-between mb-8">
@@ -66,9 +140,33 @@ export default function Logs() {
             Logs do servidor e eventos de chaves/clientes (provisão, validação, IPs, pagamentos, admin).
           </p>
         </div>
-        <label className="flex items-center gap-2 text-xs text-neutral-400">
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Atualizar
-        </label>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            Exibir
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="bg-[#121212] border border-white/5 rounded-lg px-2 py-1 text-xs text-neutral-200 focus:outline-none focus:border-blue-500/30"
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={exportDisabled}
+            className="text-xs text-neutral-400 hover:text-white disabled:opacity-40"
+          >
+            Exportar (.txt)
+          </button>
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Atualizar
+          </label>
+        </div>
       </div>
 
       <div className="flex gap-2 mb-5">
@@ -120,7 +218,26 @@ export default function Logs() {
             );
           })
         )}
+
+        {tab === 'events' && nextBefore && (
+          <div className="px-4 py-3 text-center">
+            <button
+              onClick={loadMoreEvents}
+              disabled={loading}
+              className="text-sm text-neutral-400 hover:text-white disabled:opacity-50"
+            >
+              Carregar mais antigos
+            </button>
+          </div>
+        )}
       </div>
+
+      {tab === 'server' && (
+        <p className="mt-3 text-[11px] text-neutral-600">
+          Os logs do servidor vêm de um buffer em memória (limitado aos mais recentes). Para histórico
+          completo, use a aba Eventos.
+        </p>
+      )}
     </div>
   );
 }

@@ -294,11 +294,12 @@ model MessageLog {
   isGroup       Boolean        @map("is_group")
   providerMessageId String?    @map("provider_message_id")
   createdAt     DateTime       @default(now()) @map("created_at")
-  expiresAt     DateTime       @map("expires_at")
+  // Retention is driven by AppSettings.logRetentionDays (createdAt-based sweep);
+  // kept nullable for legacy rows and no longer populated on insert.
+  expiresAt     DateTime?      @map("expires_at")
 
   @@index([integrationId, createdAt])
   @@index([createdAt])
-  @@index([expiresAt])
   @@map("message_logs")
 }
 
@@ -332,10 +333,12 @@ model WebhookEvent {
   accepted       Boolean       @default(true)
   reason         String?
   receivedAt     DateTime      @default(now()) @map("received_at")
-  expiresAt      DateTime      @map("expires_at")
+  // Retention is driven by AppSettings.logRetentionDays (receivedAt-based sweep);
+  // kept nullable for legacy rows and no longer populated on insert.
+  expiresAt      DateTime?     @map("expires_at")
 
   @@index([integrationId, receivedAt])
-  @@index([expiresAt])
+  @@index([receivedAt])
   @@map("webhook_events")
 }
 
@@ -395,6 +398,10 @@ model AppSettings {
   mediaStorageDriver  String  @default("local") @map("media_storage_driver") // 'local' | 's3'
   mediaRetentionDays  Int?    @map("media_retention_days") // null = keep forever
   mediaS3Config       String? @map("media_s3_config") // encrypted JSON (S3 credentials)
+
+  // System-log retention. Drives the worker's createdAt-based sweep of
+  // message_logs / webhook_events / audit_logs. null = keep forever; default 14.
+  logRetentionDays    Int?    @default(14) @map("log_retention_days")
 
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")

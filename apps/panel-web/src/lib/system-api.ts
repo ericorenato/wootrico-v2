@@ -163,3 +163,13 @@ export const getLogs = (
   const qs = p.toString();
   return api<LogsPage>(`/api/system/logs${qs ? `?${qs}` : ''}`);
 };
+
+/** System-log retention (days); null = keep forever. */
+export const getLogsConfig = () =>
+  api<{ retentionDays: number | null }>('/api/system/logs-config');
+
+export const saveLogsConfig = (retentionDays: number | null) =>
+  api<{ ok: boolean }>('/api/system/logs-config', {
+    method: 'PUT',
+    body: JSON.stringify({ retentionDays }),
+  });

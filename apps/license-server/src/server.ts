@@ -1129,6 +1129,31 @@ app.get('/admin/events', async (req, reply) => {
   };
 });
 
+// ── admin: server settings (singleton) ──
+// Vendor-configurable settings edited from the admin panel. Currently holds the
+// log-retention window that drives the periodic purge (null = keep forever).
+const SettingsSchema = z.object({
+  logRetentionDays: z.number().int().positive().nullable(),
+});
+
+app.get('/admin/settings', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const s = await prisma.serverSettings.findUnique({ where: { id: 'singleton' } });
+  return { logRetentionDays: s?.logRetentionDays ?? null };
+});
+
+app.put('/admin/settings', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const body = SettingsSchema.safeParse(req.body ?? {});
+  if (!body.success) return reply.code(400).send({ error: 'validation' });
+  await prisma.serverSettings.upsert({
+    where: { id: 'singleton' },
+    create: { id: 'singleton', logRetentionDays: body.data.logRetentionDays },
+    update: { logRetentionDays: body.data.logRetentionDays },
+  });
+  return { ok: true };
+});
+
 app.get('/admin/keys/:id/events', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const { id } = req.params as { id: string };
@@ -1450,10 +1475,37 @@ async function registerAdminSpa(): Promise<void> {
   });
 }
 
+// ── periodic log purge ──
+// Deletes license_events and heartbeat_log older than the configured retention
+// window. null = keep forever (no deletion). Runs hourly and once at startup.
+const LOG_PURGE_MS = 60 * 60 * 1000;
+
+async function runLogPurge(): Promise<void> {
+  const s = await prisma.serverSettings.findUnique({ where: { id: 'singleton' } });
+  const days = s?.logRetentionDays ?? null;
+  if (days == null || days <= 0) return;
+  const cutoff = new Date(Date.now() - days * 86_400_000);
+  const [events, heartbeats] = await prisma.$transaction([
+    prisma.licenseEvent.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+    prisma.heartbeatLog.deleteMany({ where: { createdAt: { lt: cutoff } } }),
+  ]);
+  if (events.count || heartbeats.count)
+    logger.info(
+      { licenseEvents: events.count, heartbeats: heartbeats.count, days },
+      'log retention purge complete',
+    );
+}
+
 async function main() {
   try {
     await registerAdminSpa();
     await app.listen({ port: cfg.port, host: cfg.host });
+    void runLogPurge().catch((err) => logger.warn(err, 'log purge failed'));
+    const purgeTimer = setInterval(
+      () => void runLogPurge().catch((err) => logger.warn(err, 'log purge failed')),
+      LOG_PURGE_MS,
+    );
+    purgeTimer.unref?.();
   } catch (err) {
     logger.error(err, 'license-server failed to start');
     process.exit(1);

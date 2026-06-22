@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { env, encrypt, decrypt, encryptJson, decryptJson } from '@wootrico/config';
 import { evaluateLicense, getLicenseState } from '@wootrico/license-client';
 import { pingRabbit, testRabbitUrl } from '@wootrico/queue';
@@ -8,6 +9,11 @@ import { getConnSnapshot } from '@wootrico/db/conn';
 import { testS3, type S3Config } from '@wootrico/storage';
 import { MediaConfigSchema, S3ConfigSchema } from '@wootrico/types';
 import { getPublicBaseUrl } from '../lib/webhook-urls.js';
+
+/** System-log retention: positive day count or null ("keep forever"). */
+const LogConfigSchema = z.object({
+  retentionDays: z.number().int().positive().nullable(),
+});
 
 /** Hide the password component of a connection URL for display. */
 function maskUrl(url: string): string {
@@ -344,6 +350,36 @@ export default async function systemRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
     return testS3(parsed.data);
+  });
+
+  // ── system-log retention ──
+  // How many days of system logs (messages/webhooks/admin actions) to keep.
+  // null = keep forever. Drives the worker's createdAt-based cleanup sweep.
+  app.get('/api/system/logs-config', guard, async () => {
+    const s = await app.prisma.appSettings.findUnique({ where: { id: 'singleton' } });
+    return { retentionDays: s?.logRetentionDays ?? null };
+  });
+
+  app.put('/api/system/logs-config', guard, async (req, reply) => {
+    const parsed = LogConfigSchema.safeParse(req.body);
+    if (!parsed.success)
+      return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
+    await app.prisma.appSettings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', logRetentionDays: parsed.data.retentionDays },
+      update: { logRetentionDays: parsed.data.retentionDays },
+    });
+    await app.prisma.auditLog
+      .create({
+        data: {
+          adminUserId: req.user.sub,
+          action: 'logs.config.updated',
+          entityType: 'app_settings',
+          entityId: 'singleton',
+        },
+      })
+      .catch(() => undefined);
+    return { ok: true };
   });
 
   // ── system logs (console) ──

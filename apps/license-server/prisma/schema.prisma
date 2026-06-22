@@ -114,3 +114,14 @@ model LicenseEvent {
   @@index([createdAt])
   @@map("license_events")
 }
+
+/// Singleton row holding vendor-configurable server settings (edited from the
+/// admin panel). `logRetentionDays` drives the periodic purge of license_events
+/// and heartbeat_log; null = keep forever (default).
+model ServerSettings {
+  id               String   @id @default("singleton")
+  logRetentionDays Int?     @map("log_retention_days")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("server_settings")
+}
