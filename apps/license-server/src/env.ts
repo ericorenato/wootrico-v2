@@ -17,4 +17,9 @@ export const cfg = {
   adminEmail: process.env.LICENSE_ADMIN_EMAIL,
   adminPassword: process.env.LICENSE_ADMIN_PASSWORD,
   adminJwtSecret: process.env.LICENSE_ADMIN_JWT_SECRET ?? required('ADMIN_TOKEN'),
+  // Google OAuth (optional) — when both are set, the license server brokers
+  // "Sign in with Google" for customer instances (single redirect URI on this
+  // server's domain). Customers never configure Google themselves.
+  googleClientId: process.env.GOOGLE_CLIENT_ID,
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
 };

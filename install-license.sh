@@ -276,6 +276,17 @@ configure_env() {
   # Validade da licença inicial (antes de expirar e exigir renovação/compra).
   TRIAL_DAYS="$(ask "Dias de validade da licença inicial" "$(keep_or LICENSE_TRIAL_DAYS 14)")"
 
+  # Login com Google (opcional). Crie um OAuth 2.0 Client (Web) no Google Cloud
+  # com redirect URI https://${DOMAIN}/auth/google/callback. Enter em branco pula.
+  echo
+  info "Login com Google (opcional). Redirect URI a cadastrar no Google Cloud:"
+  info "  https://${DOMAIN}/auth/google/callback"
+  GOOGLE_ID="$(ask "GOOGLE_CLIENT_ID (enter = pular)" "$(get_env GOOGLE_CLIENT_ID)")"
+  GOOGLE_SECRET="$(get_env GOOGLE_CLIENT_SECRET)"
+  if [ -n "$GOOGLE_ID" ] && [ -z "$GOOGLE_SECRET" ]; then
+    GOOGLE_SECRET="$(ask_pass "GOOGLE_CLIENT_SECRET")"
+  fi
+
   # Segredos automáticos (preserva existentes).
   ADMIN_TOKEN="$(get_env ADMIN_TOKEN)"; [ -z "$ADMIN_TOKEN" ] && { ADMIN_TOKEN="$(gen 36)"; note "ADMIN_TOKEN: gerado automaticamente"; }
   ADMIN_JWT="$(get_env LICENSE_ADMIN_JWT_SECRET)"; [ -z "$ADMIN_JWT" ] && ADMIN_JWT="$(gen 36)"
@@ -296,6 +307,8 @@ configure_env() {
   set_env LICENSE_ADMIN_PASSWORD "$LIC_ADMIN_PASS"
   set_env LICENSE_ADMIN_JWT_SECRET "$ADMIN_JWT"
   set_env LICENSE_TRIAL_DAYS "$TRIAL_DAYS"
+  set_env GOOGLE_CLIENT_ID "$GOOGLE_ID"
+  set_env GOOGLE_CLIENT_SECRET "$GOOGLE_SECRET"
   set_env NODE_ENV "$(keep_or NODE_ENV production)"
   set_env PORT "$(keep_or PORT 4000)"; set_env HOST "$(keep_or HOST 0.0.0.0)"
   chmod 600 "$ENV_FILE"; ok "${ENV_FILE} atualizado (preservando valores existentes)"

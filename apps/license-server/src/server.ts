@@ -1281,6 +1281,82 @@ app.get('/admin/server-logs', async (req, reply) => {
   return { entries: recentLogs(q.data.limit ?? 200, q.data.level) };
 });
 
+// ── Google identity broker (optional) ──
+// A single OAuth client lives here (vendor domain). Customer instances open a
+// popup to /auth/google; after consent we return the verified email+name to the
+// instance via postMessage, which then provisions/registers the license.
+const googleEnabled = (): boolean => !!(cfg.googleClientId && cfg.googleClientSecret);
+const htmlPage = (body: string) =>
+  `<!doctype html><meta charset="utf-8"><body style="background:#0a0a0a;color:#aaa;font-family:system-ui,sans-serif;padding:40px">${body}</body>`;
+
+app.get('/auth/google/config', async (_req, reply) => {
+  // Public boolean — readable cross-origin so customer panels can feature-detect.
+  reply.header('access-control-allow-origin', '*');
+  return { enabled: googleEnabled() };
+});
+
+app.get('/auth/google', async (req, reply) => {
+  if (!googleEnabled()) {
+    return reply.type('text/html').send(htmlPage('Login com Google não está configurado neste servidor.'));
+  }
+  const origin = (req.query as { origin?: string }).origin ?? '';
+  const redirectUri = `https://${req.headers.host}/auth/google/callback`;
+  const state = Buffer.from(JSON.stringify({ origin })).toString('base64url');
+  const params = new URLSearchParams({
+    client_id: cfg.googleClientId as string,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    access_type: 'online',
+    prompt: 'select_account',
+  });
+  return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get('/auth/google/callback', async (req, reply) => {
+  reply.type('text/html');
+  if (!googleEnabled()) return reply.send(htmlPage('Login com Google não está configurado.'));
+  const { code, state } = req.query as { code?: string; state?: string };
+  if (!code) return reply.send(htmlPage('Login cancelado. Pode fechar esta janela.'));
+  let origin = '';
+  try {
+    origin = (JSON.parse(Buffer.from(state ?? '', 'base64url').toString()) as { origin?: string }).origin ?? '';
+  } catch {
+    /* ignore */
+  }
+  const redirectUri = `https://${req.headers.host}/auth/google/callback`;
+  try {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: cfg.googleClientId as string,
+        client_secret: cfg.googleClientSecret as string,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tok = (await tokenRes.json()) as { access_token?: string };
+    if (!tok.access_token) return reply.send(htmlPage('Falha na autenticação com o Google.'));
+    const uiRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { authorization: `Bearer ${tok.access_token}` },
+    });
+    const ui = (await uiRes.json()) as { email?: string; name?: string; email_verified?: boolean };
+    if (!ui.email) return reply.send(htmlPage('Não foi possível obter o e-mail da conta Google.'));
+    const payload = JSON.stringify({ source: 'wootrico-google', email: ui.email, name: ui.name ?? '' });
+    const target = JSON.stringify(origin || '*');
+    return reply.send(
+      htmlPage(
+        `Autenticado. Pode fechar esta janela.<script>try{window.opener&&window.opener.postMessage(${payload},${target});}catch(e){}window.close();</script>`,
+      ),
+    );
+  } catch {
+    return reply.send(htmlPage('Erro ao autenticar com o Google.'));
+  }
+});
+
 // ── admin SPA (license-admin-web build) ──
 // Registered LAST so API routes take precedence. No-op in dev (the admin SPA
 // runs on its own Vite dev server). Resolved from process.cwd() to work in both

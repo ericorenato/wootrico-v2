@@ -4,6 +4,7 @@ import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../compon
 import {
   activateLicense,
   provisionLicense,
+  purchaseLicense,
   deactivateLicense,
   getLicenseStatus,
   type LicenseStatus,
@@ -41,6 +42,7 @@ export default function License() {
   const [manual, setManual] = useState(false);
   const [licName, setLicName] = useState('');
   const [licEmail, setLicEmail] = useState('');
+  const [googleEnabled, setGoogleEnabled] = useState(false);
 
   const load = () => getLicenseStatus().then(setInfo).catch(() => {});
   useEffect(() => {
@@ -53,9 +55,18 @@ export default function License() {
     if (user?.email) setLicEmail((v) => v || user.email);
   }, [user]);
 
-  async function provision() {
-    const name = licName.trim();
-    const email = licEmail.trim();
+  const serverBase = info?.serverUrl ? info.serverUrl.replace(/\/$/, '') : null;
+
+  // Feature-detect Google login on the (vendor) license server.
+  useEffect(() => {
+    if (!serverBase) return;
+    fetch(`${serverBase}/auth/google/config`)
+      .then((r) => r.json())
+      .then((d) => setGoogleEnabled(!!d.enabled))
+      .catch(() => {});
+  }, [serverBase]);
+
+  async function provisionWith(name: string, email: string) {
     if (!name || !email) {
       setError('Informe nome e e-mail para ativar a licença.');
       return;
@@ -67,6 +78,58 @@ export default function License() {
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao ativar a licença.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function provision() {
+    await provisionWith(licName.trim(), licEmail.trim());
+  }
+
+  function loginWithGoogle() {
+    if (!serverBase) return;
+    window.open(
+      `${serverBase}/auth/google?origin=${encodeURIComponent(window.location.origin)}`,
+      'wootrico-google',
+      'width=480,height=640',
+    );
+  }
+
+  // Receive the verified Google identity from the license server popup, then
+  // register/activate with it.
+  useEffect(() => {
+    if (!serverBase) return;
+    let allowed = '';
+    try {
+      allowed = new URL(serverBase).origin;
+    } catch {
+      /* ignore */
+    }
+    const onMsg = (e: MessageEvent) => {
+      if (allowed && e.origin !== allowed) return;
+      const d = e.data as { source?: string; email?: string; name?: string } | null;
+      if (d && d.source === 'wootrico-google' && d.email) {
+        setLicName(d.name || '');
+        setLicEmail(d.email);
+        void provisionWith(d.name || d.email, d.email);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverBase]);
+
+  async function buy() {
+    setError('');
+    setBusy(true);
+    try {
+      const { checkoutUrl } = await purchaseLicense();
+      await load();
+      if (checkoutUrl) window.open(checkoutUrl, '_blank', 'noopener');
+      else setError('Solicitação registrada. Em breve entraremos em contato para concluir a compra.');
+    } catch (err) {
+      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao iniciar a compra.');
     } finally {
       setBusy(false);
     }
@@ -160,8 +223,14 @@ export default function License() {
           <>
             <h3 className="text-sm font-medium text-white mb-2">Ativar</h3>
             <p className="text-sm text-neutral-400 mb-5">
-              Confirme seu nome e e-mail para registrar e ativar esta instância.
+              Cadastre-se com o Google ou confirme seu nome e e-mail para registrar esta instância.
             </p>
+            {googleEnabled && (
+              <div className="mb-5">
+                <GoogleButton onClick={loginWithGoogle} />
+                <p className="mt-3 text-xs text-neutral-500">ou preencha manualmente:</p>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <Field label="Nome">
                 <Input value={licName} onChange={(e) => setLicName(e.target.value)} placeholder="Seu nome" />
@@ -194,7 +263,39 @@ export default function License() {
           </>
         )}
 
-        {isBlocked && <ErrorText>{error}</ErrorText>}
+        {isBlocked && (
+          <>
+            <h3 className="text-sm font-medium text-white mb-2">Renovar ou adquirir</h3>
+            <p className="text-sm text-neutral-400 mb-5">
+              Sua licença expirou. Reative gratuitamente para continuar usando, ou adquira uma
+              licença definitiva.
+            </p>
+            {(!licName.trim() || !licEmail.trim()) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <Field label="Nome">
+                  <Input value={licName} onChange={(e) => setLicName(e.target.value)} placeholder="Seu nome" />
+                </Field>
+                <Field label="E-mail">
+                  <Input value={licEmail} onChange={(e) => setLicEmail(e.target.value)} placeholder="voce@exemplo.com" />
+                </Field>
+              </div>
+            )}
+            {googleEnabled && (
+              <div className="mb-4">
+                <GoogleButton onClick={loginWithGoogle} label="Reativar com Google" />
+              </div>
+            )}
+            <ErrorText>{error}</ErrorText>
+            <div className="flex flex-wrap items-center gap-4">
+              <Button onClick={buy} loading={busy}>
+                Adquirir licença definitiva
+              </Button>
+              <Button onClick={provision} variant="ghost" loading={busy}>
+                Reativar gratuitamente
+              </Button>
+            </div>
+          </>
+        )}
 
         <button
           type="button"
@@ -221,5 +322,24 @@ export default function License() {
         )}
       </Card>
     </div>
+  );
+}
+
+/** "Sign in with Google" button (broker flow via the license server popup). */
+function GoogleButton({ onClick, label = 'Entrar com Google' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-3 rounded-lg border border-white/15 bg-white px-4 py-2.5 text-sm font-medium text-neutral-800 hover:bg-neutral-100 transition-colors"
+    >
+      <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+      </svg>
+      {label}
+    </button>
   );
 }
