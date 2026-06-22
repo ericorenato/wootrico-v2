@@ -89,11 +89,40 @@ export default function License() {
 
   function loginWithGoogle() {
     if (!serverBase) return;
-    window.open(
-      `${serverBase}/auth/google?origin=${encodeURIComponent(window.location.origin)}`,
+    const nonce =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : String(Math.random()).slice(2) + Date.now();
+    const popup = window.open(
+      `${serverBase}/auth/google?origin=${encodeURIComponent(window.location.origin)}&nonce=${nonce}`,
       'wootrico-google',
       'width=480,height=640',
     );
+    // Poll the result (robust even when the popup's window.opener is severed by COOP).
+    const started = Date.now();
+    const poll = setInterval(async () => {
+      if (Date.now() - started > 120000) {
+        clearInterval(poll);
+        return;
+      }
+      try {
+        const r = await fetch(`${serverBase}/auth/google/result?nonce=${nonce}`, { cache: 'no-store' });
+        const d = (await r.json()) as { email?: string; name?: string };
+        if (d && d.email) {
+          clearInterval(poll);
+          try {
+            popup?.close();
+          } catch {
+            /* ignore */
+          }
+          setLicName(d.name || '');
+          setLicEmail(d.email);
+          void provisionWith(d.name || d.email, d.email);
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 1500);
   }
 
   // Receive the verified Google identity from the license server popup, then

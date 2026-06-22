@@ -1283,11 +1283,19 @@ app.get('/admin/server-logs', async (req, reply) => {
 
 // ── Google identity broker (optional) ──
 // A single OAuth client lives here (vendor domain). Customer instances open a
-// popup to /auth/google; after consent we return the verified email+name to the
-// instance via postMessage, which then provisions/registers the license.
+// popup to /auth/google; after consent we store the verified email+name keyed by
+// an unguessable nonce, and the instance POLLS /auth/google/result?nonce to pick
+// it up (robust against COOP severing window.opener after the OAuth redirect).
 const googleEnabled = (): boolean => !!(cfg.googleClientId && cfg.googleClientSecret);
 const htmlPage = (body: string) =>
   `<!doctype html><meta charset="utf-8"><body style="background:#0a0a0a;color:#aaa;font-family:system-ui,sans-serif;padding:40px">${body}</body>`;
+
+const GOOGLE_RESULT_TTL = 5 * 60 * 1000;
+const googleResults = new Map<string, { email: string; name: string; at: number }>();
+function pruneGoogleResults(): void {
+  const now = Date.now();
+  for (const [k, v] of googleResults) if (now - v.at > GOOGLE_RESULT_TTL) googleResults.delete(k);
+}
 
 app.get('/auth/google/config', async (_req, reply) => {
   // Public boolean — readable cross-origin so customer panels can feature-detect.
@@ -1299,9 +1307,9 @@ app.get('/auth/google', async (req, reply) => {
   if (!googleEnabled()) {
     return reply.type('text/html').send(htmlPage('Login com Google não está configurado neste servidor.'));
   }
-  const origin = (req.query as { origin?: string }).origin ?? '';
+  const { origin = '', nonce = '' } = req.query as { origin?: string; nonce?: string };
   const redirectUri = `https://${req.headers.host}/auth/google/callback`;
-  const state = Buffer.from(JSON.stringify({ origin })).toString('base64url');
+  const state = Buffer.from(JSON.stringify({ origin, nonce })).toString('base64url');
   const params = new URLSearchParams({
     client_id: cfg.googleClientId as string,
     redirect_uri: redirectUri,
@@ -1314,14 +1322,28 @@ app.get('/auth/google', async (req, reply) => {
   return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
+// Customer instance polls this (cross-origin) to pick up the Google identity.
+app.get('/auth/google/result', async (req, reply) => {
+  reply.header('access-control-allow-origin', '*');
+  pruneGoogleResults();
+  const nonce = (req.query as { nonce?: string }).nonce ?? '';
+  const r = nonce ? googleResults.get(nonce) : undefined;
+  if (!r) return { pending: true };
+  googleResults.delete(nonce);
+  return { email: r.email, name: r.name };
+});
+
 app.get('/auth/google/callback', async (req, reply) => {
   reply.type('text/html');
   if (!googleEnabled()) return reply.send(htmlPage('Login com Google não está configurado.'));
   const { code, state } = req.query as { code?: string; state?: string };
   if (!code) return reply.send(htmlPage('Login cancelado. Pode fechar esta janela.'));
   let origin = '';
+  let nonce = '';
   try {
-    origin = (JSON.parse(Buffer.from(state ?? '', 'base64url').toString()) as { origin?: string }).origin ?? '';
+    const s = JSON.parse(Buffer.from(state ?? '', 'base64url').toString()) as { origin?: string; nonce?: string };
+    origin = s.origin ?? '';
+    nonce = s.nonce ?? '';
   } catch {
     /* ignore */
   }
@@ -1338,21 +1360,34 @@ app.get('/auth/google/callback', async (req, reply) => {
         grant_type: 'authorization_code',
       }),
     });
-    const tok = (await tokenRes.json()) as { access_token?: string };
-    if (!tok.access_token) return reply.send(htmlPage('Falha na autenticação com o Google.'));
+    const tok = (await tokenRes.json()) as { access_token?: string; error?: string; error_description?: string };
+    if (!tok.access_token) {
+      logger.warn({ err: tok.error, desc: tok.error_description }, 'google token exchange failed');
+      return reply.send(htmlPage('Falha na autenticação com o Google. Pode fechar esta janela.'));
+    }
     const uiRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
       headers: { authorization: `Bearer ${tok.access_token}` },
     });
     const ui = (await uiRes.json()) as { email?: string; name?: string; email_verified?: boolean };
-    if (!ui.email) return reply.send(htmlPage('Não foi possível obter o e-mail da conta Google.'));
+    if (!ui.email) {
+      logger.warn('google userinfo returned no email');
+      return reply.send(htmlPage('Não foi possível obter o e-mail da conta Google.'));
+    }
+    if (nonce) {
+      pruneGoogleResults();
+      googleResults.set(nonce, { email: ui.email, name: ui.name ?? '', at: Date.now() });
+    }
+    logger.info({ email: ui.email }, 'google login ok');
+    // postMessage is best-effort (often blocked by COOP); polling is the reliable path.
     const payload = JSON.stringify({ source: 'wootrico-google', email: ui.email, name: ui.name ?? '' });
     const target = JSON.stringify(origin || '*');
     return reply.send(
       htmlPage(
-        `Autenticado. Pode fechar esta janela.<script>try{window.opener&&window.opener.postMessage(${payload},${target});}catch(e){}window.close();</script>`,
+        `Autenticado com sucesso. Pode fechar esta janela.<script>try{window.opener&&window.opener.postMessage(${payload},${target});}catch(e){}setTimeout(function(){window.close();},1200);</script>`,
       ),
     );
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, 'google callback error');
     return reply.send(htmlPage('Erro ao autenticar com o Google.'));
   }
 });
