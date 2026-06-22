@@ -197,8 +197,10 @@ configure_env() {
   set_env WOOTRICO_RB_MODE "$RB_MODE"; set_env WOOTRICO_RB_HOST "$RB_HOST"; set_env WOOTRICO_RB_PORT "$RB_PORT"
   set_env WOOTRICO_RD_MODE "$RD_MODE"; set_env WOOTRICO_RD_HOST "$RD_HOST"; set_env WOOTRICO_RD_PORT "$RD_PORT"
   set_env PUBLIC_BASE_URL "$(keep_or PUBLIC_BASE_URL "https://${DOMAIN}")"
-  # Licenciamento provisionado pela aplicação depois; não exige no 1º acesso.
-  set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED false)"
+  # Licenciamento obrigatório: sem chave ativa, integrações e processamento ficam
+  # bloqueados (o cliente ativa a licença no 1º acesso). A URL do servidor de
+  # licença vem embutida na imagem (não é configurada aqui).
+  set_env LICENSE_REQUIRED "$(keep_or LICENSE_REQUIRED true)"
   set_env JWT_SECRET "$JWT_SECRET"; set_env APP_ENCRYPTION_KEY "$APP_ENCRYPTION_KEY"
   set_env NODE_ENV "$(keep_or NODE_ENV production)"; set_env PORT "$(keep_or PORT 3000)"
   set_env HOST "$(keep_or HOST 0.0.0.0)"; set_env LOG_LEVEL "$(keep_or LOG_LEVEL info)"

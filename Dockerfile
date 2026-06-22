@@ -46,6 +46,10 @@ WORKDIR /app
 # Set per build: docker buildx build --build-arg LICENSE_SERVER_URL=https://license.suaempresa.com ...
 ARG LICENSE_SERVER_URL=https://license.example.com
 ENV LICENSE_SERVER_URL=${LICENSE_SERVER_URL}
+# Enforce licensing by default: without an active license the customer can view
+# data but cannot process messages or create/enable integrations.
+ARG LICENSE_REQUIRED=true
+ENV LICENSE_REQUIRED=${LICENSE_REQUIRED}
 
 COPY --from=builder /app /app
 
