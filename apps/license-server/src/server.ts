@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { z } from 'zod';
-import { pino } from 'pino';
+import { pino, multistream } from 'pino';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { FastifyRequest, FastifyReply } from 'fastify';
@@ -14,11 +14,13 @@ import {
   signAdminToken,
   verifyAdminToken,
 } from './admin-auth.js';
+import { logStream, recentLogs } from './log-buffer.js';
 
+// Log to stdout AND an in-memory ring buffer (exposed at /admin/server-logs).
+// (Dropping pino-pretty in dev — the vendor server logs JSON.)
 const logger = pino(
-  cfg.nodeEnv === 'development'
-    ? { transport: { target: 'pino-pretty', options: { colorize: true, ignore: 'pid,hostname' } } }
-    : {},
+  { level: process.env.LOG_LEVEL ?? 'info' },
+  multistream([{ stream: process.stdout }, { stream: logStream }]),
 );
 
 const app = Fastify({ loggerInstance: logger as never, trustProxy: true });
@@ -629,13 +631,29 @@ const KeysQuerySchema = z.object({
   q: z.string().trim().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
+  plan: z.enum(['trial', 'paid']).optional(),
+  status: z.enum(['active', 'expired', 'revoked']).optional(),
 });
+
+/** Prisma filter for a key status bucket (active | expired | revoked). */
+function statusFilter(
+  status: 'active' | 'expired' | 'revoked' | undefined,
+  now: Date,
+): import('../generated/client/index.js').Prisma.LicenseKeyWhereInput {
+  if (status === 'revoked') return { revokedAt: { not: null } };
+  if (status === 'expired') {
+    return { revokedAt: null, plan: 'trial', expiresAt: { lte: now } };
+  }
+  if (status === 'active') return liveKeyFilter(now);
+  return {};
+}
 
 app.get('/admin/keys', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const query = KeysQuerySchema.safeParse(req.query ?? {});
   if (!query.success) return reply.code(400).send({ error: 'validation' });
-  const { q, from, to } = query.data;
+  const { q, from, to, plan, status } = query.data;
+  const filterNow = new Date();
 
   // Date range on createdAt.
   const createdAt: { gte?: Date; lte?: Date } = {};
@@ -654,6 +672,8 @@ app.get('/admin/keys', async (req, reply) => {
   const keys = await prisma.licenseKey.findMany({
     where: {
       ...(from || to ? { createdAt } : {}),
+      ...(plan ? { plan } : {}),
+      ...statusFilter(status, filterNow),
       ...(or.length ? { OR: or } : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -696,11 +716,17 @@ app.get('/admin/keys', async (req, reply) => {
       );
       const activeInstances = liveBindings.length;
       const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+      const statusReason = k.revokedAt
+        ? 'revogada'
+        : expired
+          ? 'teste expirado'
+          : null;
       return {
         id: k.id,
         plan: k.plan,
         expiresAt: k.expiresAt,
         expired,
+        statusReason,
         email: k.email,
         name: k.name,
         provisionedBy: k.provisionedBy,
@@ -717,6 +743,197 @@ app.get('/admin/keys', async (req, reply) => {
         bindings: k.activations,
       };
     }),
+  };
+});
+
+// ── admin: users (registrations grouped by email) ──
+interface UserRow {
+  email: string;
+  name: string | null;
+  keysTotal: number;
+  trial: number;
+  paid: number;
+  active: number;
+  expired: number;
+  revoked: number;
+  alerts: number;
+  firstSeen: Date;
+  lastRequestAt: Date | null;
+}
+
+/** Aggregate license keys (with email) into per-user registration rows. */
+async function buildUsers(opts: { q?: string; from?: string; to?: string }): Promise<UserRow[]> {
+  const now = new Date();
+  const createdAt: { gte?: Date; lte?: Date } = {};
+  if (opts.from) createdAt.gte = new Date(opts.from);
+  if (opts.to) createdAt.lte = new Date(opts.to);
+  const keys = await prisma.licenseKey.findMany({
+    where: {
+      email: { not: null },
+      ...(opts.from || opts.to ? { createdAt } : {}),
+      ...(opts.q
+        ? {
+            OR: [
+              { email: { contains: opts.q, mode: 'insensitive' } },
+              { name: { contains: opts.q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      plan: true,
+      expiresAt: true,
+      revokedAt: true,
+      createdAt: true,
+      activations: { select: { lastHeartbeatAt: true } },
+    },
+  });
+
+  const alertGroups = keys.length
+    ? await prisma.licenseEvent.groupBy({
+        by: ['licenseKeyId'],
+        where: { type: 'ip_alert', licenseKeyId: { in: keys.map((k) => k.id) } },
+        _count: { _all: true },
+      })
+    : [];
+  const alertsByKey = new Map(alertGroups.map((g) => [g.licenseKeyId, g._count._all]));
+
+  const byEmail = new Map<string, UserRow>();
+  for (const k of keys) {
+    const email = (k.email as string).toLowerCase();
+    let u = byEmail.get(email);
+    if (!u) {
+      u = {
+        email: k.email as string,
+        name: k.name,
+        keysTotal: 0,
+        trial: 0,
+        paid: 0,
+        active: 0,
+        expired: 0,
+        revoked: 0,
+        alerts: 0,
+        firstSeen: k.createdAt,
+        lastRequestAt: null,
+      };
+      byEmail.set(email, u);
+    }
+    if (!u.name && k.name) u.name = k.name;
+    u.keysTotal += 1;
+    if (k.plan === 'paid') u.paid += 1;
+    else u.trial += 1;
+    const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+    if (k.revokedAt) u.revoked += 1;
+    else if (expired) u.expired += 1;
+    else u.active += 1;
+    u.alerts += alertsByKey.get(k.id) ?? 0;
+    if (k.createdAt < u.firstSeen) u.firstSeen = k.createdAt;
+    for (const a of k.activations) {
+      if (a.lastHeartbeatAt && (!u.lastRequestAt || a.lastHeartbeatAt > u.lastRequestAt)) {
+        u.lastRequestAt = a.lastHeartbeatAt;
+      }
+    }
+  }
+  return [...byEmail.values()].sort(
+    (a, b) => (b.lastRequestAt?.getTime() ?? 0) - (a.lastRequestAt?.getTime() ?? 0),
+  );
+}
+
+const UsersQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+});
+
+app.get('/admin/users', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const query = UsersQuerySchema.safeParse(req.query ?? {});
+  if (!query.success) return reply.code(400).send({ error: 'validation' });
+  return { users: await buildUsers(query.data) };
+});
+
+app.get('/admin/users/export.csv', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const query = UsersQuerySchema.safeParse(req.query ?? {});
+  if (!query.success) return reply.code(400).send({ error: 'validation' });
+  const users = await buildUsers(query.data);
+  const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const rows = [
+    'nome,email,data_cadastro,data_ultima_requisicao',
+    ...users.map((u) =>
+      [
+        esc(u.name ?? ''),
+        esc(u.email),
+        esc(u.firstSeen.toISOString()),
+        esc(u.lastRequestAt ? u.lastRequestAt.toISOString() : ''),
+      ].join(','),
+    ),
+  ].join('\n');
+  reply
+    .header('content-type', 'text/csv; charset=utf-8')
+    .header('content-disposition', 'attachment; filename="usuarios-wootrico.csv"')
+    .send(rows);
+});
+
+// One user's registration summary + their keys (license history).
+app.get('/admin/users/:email', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const email = decodeURIComponent((req.params as { email: string }).email);
+  const now = new Date();
+  const keys = await prisma.licenseKey.findMany({
+    where: { email: { equals: email, mode: 'insensitive' } },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      _count: { select: { activations: true } },
+      activations: {
+        orderBy: { lastHeartbeatAt: 'desc' },
+        select: { lastHeartbeatAt: true, lastIp: true, firstIp: true, revokedAt: true },
+      },
+    },
+  });
+  if (keys.length === 0) return reply.code(404).send({ error: 'not_found' });
+  const alertGroups = await prisma.licenseEvent.groupBy({
+    by: ['licenseKeyId'],
+    where: { type: 'ip_alert', licenseKeyId: { in: keys.map((k) => k.id) } },
+    _count: { _all: true },
+  });
+  const alertsByKey = new Map(alertGroups.map((g) => [g.licenseKeyId, g._count._all]));
+  const name = keys.find((k) => k.name)?.name ?? null;
+  let firstSeen = keys[0]!.createdAt;
+  let lastRequestAt: Date | null = null;
+  const keyRows = keys.map((k) => {
+    if (k.createdAt < firstSeen) firstSeen = k.createdAt;
+    const live = k.activations.filter((a) => !a.revokedAt);
+    for (const a of k.activations) {
+      if (a.lastHeartbeatAt && (!lastRequestAt || a.lastHeartbeatAt > lastRequestAt)) {
+        lastRequestAt = a.lastHeartbeatAt;
+      }
+    }
+    const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+    return {
+      id: k.id,
+      plan: k.plan,
+      status: k.revokedAt ? 'revoked' : expired ? 'expired' : 'active',
+      statusReason: k.revokedAt ? 'revogada' : expired ? 'teste expirado' : null,
+      expiresAt: k.expiresAt,
+      createdAt: k.createdAt,
+      activeInstances: live.length,
+      lastHeartbeatAt: live[0]?.lastHeartbeatAt ?? k.activations[0]?.lastHeartbeatAt ?? null,
+      alerts: alertsByKey.get(k.id) ?? 0,
+    };
+  });
+  return {
+    user: {
+      email: keys.find((k) => k.email)?.email ?? email,
+      name,
+      keysTotal: keys.length,
+      firstSeen,
+      lastRequestAt,
+    },
+    keys: keyRows,
   };
 });
 
@@ -746,6 +963,76 @@ app.post('/admin/keys/:id/upgrade', async (req, reply) => {
   });
   await recordEvent({ type: 'admin_upgrade', licenseKeyId: id });
   return { ok: true };
+});
+
+// Manually expire a TRIAL key now — forces the client to revalidate (get a new
+// trial or buy). Paid keys don't expire (use revoke instead).
+const ExpireKeySchema = z.object({ reason: z.string().trim().max(300).optional() });
+app.post('/admin/keys/:id/expire', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  const p = ExpireKeySchema.safeParse(req.body ?? {});
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const lk = await prisma.licenseKey.findUnique({ where: { id } });
+  if (!lk) return reply.code(404).send({ error: 'not_found' });
+  if (lk.plan !== 'trial') return reply.code(400).send({ error: 'not_trial' });
+  await prisma.licenseKey.update({ where: { id }, data: { expiresAt: new Date() } });
+  await recordEvent({ type: 'admin_expire', licenseKeyId: id, meta: { reason: p.data.reason ?? null } });
+  return { ok: true };
+});
+
+// Full detail for one key: data + bindings (IP history). Events via /admin/keys/:id/events.
+app.get('/admin/keys/:id', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  const now = new Date();
+  const k = await prisma.licenseKey.findUnique({
+    where: { id },
+    include: {
+      _count: { select: { activations: true } },
+      activations: {
+        orderBy: { lastHeartbeatAt: 'desc' },
+        select: {
+          id: true,
+          instanceId: true,
+          appVersion: true,
+          publicBaseUrl: true,
+          firstIp: true,
+          lastIp: true,
+          boundAt: true,
+          lastHeartbeatAt: true,
+          revokedAt: true,
+        },
+      },
+    },
+  });
+  if (!k) return reply.code(404).send({ error: 'not_found' });
+  const liveBindings = k.activations.filter((a) => !a.revokedAt);
+  const distinctIps = new Set(
+    k.activations.map((a) => a.lastIp ?? a.firstIp).filter(Boolean) as string[],
+  );
+  const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+  const alerts = await prisma.licenseEvent.count({ where: { type: 'ip_alert', licenseKeyId: id } });
+  const status = k.revokedAt ? 'revoked' : expired ? 'expired' : 'active';
+  return {
+    key: {
+      id: k.id,
+      plan: k.plan,
+      status,
+      statusReason: k.revokedAt ? 'revogada' : expired ? 'teste expirado' : null,
+      expiresAt: k.expiresAt,
+      revokedAt: k.revokedAt,
+      email: k.email,
+      name: k.name,
+      provisionedBy: k.provisionedBy,
+      createdAt: k.createdAt,
+      activations: k._count.activations,
+      activeInstances: liveBindings.length,
+      distinctIps: distinctIps.size,
+      alerts,
+    },
+    bindings: k.activations,
+  };
 });
 
 // ── admin: webhook keys (payment provider authentication) ──
@@ -892,12 +1179,106 @@ app.get('/admin/health', async (req, reply) => {
     })
     .sort((a, b) => (b.lastAlertAt?.getTime() ?? 0) - (a.lastAlertAt?.getTime() ?? 0));
 
+  // Active-key counts (live = not revoked, paid or trial-not-expired).
+  const [activeKeys, trialActive, paidActive] = await Promise.all([
+    prisma.licenseKey.count({ where: liveKeyFilter(now) }),
+    prisma.licenseKey.count({ where: { ...liveKeyFilter(now), plan: 'trial' } }),
+    prisma.licenseKey.count({ where: { plan: 'paid', revokedAt: null } }),
+  ]);
+
   return {
     staleHours,
-    summary: { staleInstances: stale.length, keysWithIpAlerts: ipAlerts.length },
+    summary: {
+      staleInstances: stale.length,
+      keysWithIpAlerts: ipAlerts.length,
+      activeKeys,
+      trialActive,
+      paidActive,
+    },
     stale,
     ipAlerts,
   };
+});
+
+// ── admin: dashboard stats (totals + 30-day series) ──
+app.get('/admin/stats', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const now = new Date();
+  const DAY = 24 * 60 * 60 * 1000;
+  const since = new Date(now.getTime() - 29 * DAY); // 30 buckets incl. today
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+
+  const [keys, paid, revoked, activeInstances, distinctUsers, ipAlertCount] = await Promise.all([
+    prisma.licenseKey.count(),
+    prisma.licenseKey.count({ where: { plan: 'paid' } }),
+    prisma.licenseKey.count({ where: { revokedAt: { not: null } } }),
+    prisma.activation.count({ where: { revokedAt: null } }),
+    prisma.licenseKey.findMany({ where: { email: { not: null } }, distinct: ['email'], select: { id: true } }),
+    prisma.licenseEvent.count({ where: { type: 'ip_alert' } }),
+  ]);
+  const [activeKeys, expired] = await Promise.all([
+    prisma.licenseKey.count({ where: liveKeyFilter(now) }),
+    prisma.licenseKey.count({ where: { revokedAt: null, plan: 'trial', expiresAt: { lte: now } } }),
+  ]);
+  const trial = keys - paid;
+
+  // Empty 30-day buckets.
+  const blank = (): { day: string; count: number }[] => {
+    const out: { day: string; count: number }[] = [];
+    for (let i = 0; i < 30; i++) out.push({ day: dayKey(new Date(since.getTime() + i * DAY)), count: 0 });
+    return out;
+  };
+  const tally = (series: { day: string; count: number }[], rows: { createdAt: Date }[]) => {
+    const idx = new Map(series.map((b, i) => [b.day, i]));
+    for (const r of rows) {
+      const i = idx.get(dayKey(r.createdAt));
+      if (i !== undefined) series[i]!.count += 1;
+    }
+    return series;
+  };
+
+  const [keyRows, validateRows, paymentRows] = await Promise.all([
+    prisma.licenseKey.findMany({ where: { createdAt: { gte: since } }, select: { createdAt: true } }),
+    prisma.licenseEvent.findMany({
+      where: { type: 'validate', createdAt: { gte: since } },
+      select: { createdAt: true },
+    }),
+    prisma.licenseEvent.findMany({
+      where: { type: 'payment_confirmed', createdAt: { gte: since } },
+      select: { createdAt: true },
+    }),
+  ]);
+
+  return {
+    totals: {
+      keys,
+      active: activeKeys,
+      trial,
+      paid,
+      expired,
+      revoked,
+      users: distinctUsers.length,
+      activeInstances,
+      ipAlerts: ipAlertCount,
+    },
+    series: {
+      keysPerDay: tally(blank(), keyRows),
+      validationsPerDay: tally(blank(), validateRows),
+      paymentsPerDay: tally(blank(), paymentRows),
+    },
+  };
+});
+
+// ── admin: server process logs (in-memory ring buffer) ──
+const ServerLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  level: z.coerce.number().int().optional(),
+});
+app.get('/admin/server-logs', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const q = ServerLogsQuerySchema.safeParse(req.query ?? {});
+  if (!q.success) return reply.code(400).send({ error: 'validation' });
+  return { entries: recentLogs(q.data.limit ?? 200, q.data.level) };
 });
 
 // ── admin SPA (license-admin-web build) ──

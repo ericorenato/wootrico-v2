@@ -17,6 +17,7 @@ export interface LicenseKeyRow {
   plan: 'trial' | 'paid' | string;
   expiresAt: string | null;
   expired: boolean;
+  statusReason: string | null;
   email: string | null;
   name: string | null;
   provisionedBy: string;
@@ -57,14 +58,52 @@ export const login = (email: string, password: string) =>
     body: JSON.stringify({ email, password }),
   });
 
-export const getKeys = (params: { q?: string; from?: string; to?: string } = {}) => {
+export const getKeys = (
+  params: {
+    q?: string;
+    from?: string;
+    to?: string;
+    plan?: 'trial' | 'paid';
+    status?: 'active' | 'expired' | 'revoked';
+  } = {},
+) => {
   const sp = new URLSearchParams();
   if (params.q) sp.set('q', params.q);
   if (params.from) sp.set('from', params.from);
   if (params.to) sp.set('to', params.to);
+  if (params.plan) sp.set('plan', params.plan);
+  if (params.status) sp.set('status', params.status);
   const qs = sp.toString();
   return api<{ keys: LicenseKeyRow[] }>(`/admin/keys${qs ? `?${qs}` : ''}`);
 };
+
+export interface KeyDetail {
+  key: {
+    id: string;
+    plan: string;
+    status: 'active' | 'expired' | 'revoked';
+    statusReason: string | null;
+    expiresAt: string | null;
+    revokedAt: string | null;
+    email: string | null;
+    name: string | null;
+    provisionedBy: string;
+    createdAt: string;
+    activations: number;
+    activeInstances: number;
+    distinctIps: number;
+    alerts: number;
+  };
+  bindings: Binding[];
+}
+
+export const getKey = (id: string) => api<KeyDetail>(`/admin/keys/${id}`);
+
+export const expireKey = (id: string, reason?: string) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}/expire`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
 
 export const createKey = (body: {
   name?: string;
@@ -97,9 +136,117 @@ export const createWebhookKey = (name?: string) =>
 export const revokeWebhookKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/webhook-keys/${id}/revoke`, { method: 'POST' });
 
+export interface UserRow {
+  email: string;
+  name: string | null;
+  keysTotal: number;
+  trial: number;
+  paid: number;
+  active: number;
+  expired: number;
+  revoked: number;
+  alerts: number;
+  firstSeen: string;
+  lastRequestAt: string | null;
+}
+
+export const getUsers = (params: { q?: string; from?: string; to?: string } = {}) => {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set('q', params.q);
+  if (params.from) sp.set('from', params.from);
+  if (params.to) sp.set('to', params.to);
+  const qs = sp.toString();
+  return api<{ users: UserRow[] }>(`/admin/users${qs ? `?${qs}` : ''}`);
+};
+
+export interface UserKeyRow {
+  id: string;
+  plan: string;
+  status: 'active' | 'expired' | 'revoked';
+  statusReason: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  activeInstances: number;
+  lastHeartbeatAt: string | null;
+  alerts: number;
+}
+
+export const getUser = (email: string) =>
+  api<{ user: { email: string; name: string | null; keysTotal: number; firstSeen: string; lastRequestAt: string | null }; keys: UserKeyRow[] }>(
+    `/admin/users/${encodeURIComponent(email)}`,
+  );
+
+/** Download the users CSV (auth header) and trigger a browser save. */
+export async function downloadUsersCsv(params: { q?: string; from?: string; to?: string } = {}): Promise<void> {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set('q', params.q);
+  if (params.from) sp.set('from', params.from);
+  if (params.to) sp.set('to', params.to);
+  const qs = sp.toString();
+  const token = localStorage.getItem('wootrico.license-admin.token') ?? '';
+  const res = await fetch(`/admin/users/export.csv${qs ? `?${qs}` : ''}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`export_failed_${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'usuarios-wootrico.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export interface StatsReport {
+  totals: {
+    keys: number;
+    active: number;
+    trial: number;
+    paid: number;
+    expired: number;
+    revoked: number;
+    users: number;
+    activeInstances: number;
+    ipAlerts: number;
+  };
+  series: {
+    keysPerDay: { day: string; count: number }[];
+    validationsPerDay: { day: string; count: number }[];
+    paymentsPerDay: { day: string; count: number }[];
+  };
+}
+
+export const getStats = () => api<StatsReport>('/admin/stats');
+
+export interface ServerLogEntry {
+  at: string;
+  level: number;
+  levelLabel: string;
+  msg: string;
+  reqId?: string;
+  meta?: Record<string, unknown>;
+}
+
+export const getServerLogs = (params: { limit?: number; level?: number } = {}) => {
+  const sp = new URLSearchParams();
+  if (params.limit) sp.set('limit', String(params.limit));
+  if (params.level) sp.set('level', String(params.level));
+  const qs = sp.toString();
+  return api<{ entries: ServerLogEntry[] }>(`/admin/server-logs${qs ? `?${qs}` : ''}`);
+};
+
 export interface HealthReport {
   staleHours: number;
-  summary: { staleInstances: number; keysWithIpAlerts: number };
+  summary: {
+    staleInstances: number;
+    keysWithIpAlerts: number;
+    activeKeys: number;
+    trialActive: number;
+    paidActive: number;
+  };
   stale: Array<{
     licenseKeyId: string;
     instanceId: string;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, WifiOff } from 'lucide-react';
+import { AlertTriangle, WifiOff, KeyRound } from 'lucide-react';
 import { Badge, Card, Eyebrow } from '../components/ui';
 import { getHealth, type HealthReport } from '../lib/admin-api';
 
@@ -29,15 +29,31 @@ export default function Health() {
         <p className="text-sm text-neutral-500">Carregando…</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 mb-8">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <Card>
+              <div className="flex items-center gap-3">
+                <KeyRound size={18} className="text-emerald-400" />
+                <div>
+                  <p className="text-2xl font-semibold text-white">{data.summary.activeKeys}</p>
+                  <p className="text-xs text-neutral-500">chaves ativas</p>
+                </div>
+              </div>
+            </Card>
+            <Card>
+              <div>
+                <p className="text-2xl font-semibold text-white">
+                  {data.summary.trialActive}
+                  <span className="text-neutral-500 text-base"> / {data.summary.paidActive}</span>
+                </p>
+                <p className="text-xs text-neutral-500">teste ativas / pagas ativas</p>
+              </div>
+            </Card>
             <Card>
               <div className="flex items-center gap-3">
                 <WifiOff size={18} className="text-amber-300" />
                 <div>
                   <p className="text-2xl font-semibold text-white">{data.summary.staleInstances}</p>
-                  <p className="text-xs text-neutral-500">
-                    instâncias sem validar há +{data.staleHours}h
-                  </p>
+                  <p className="text-xs text-neutral-500">sem validar há +{data.staleHours}h</p>
                 </div>
               </div>
             </Card>
