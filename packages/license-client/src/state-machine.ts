@@ -1,4 +1,4 @@
-import { LICENSE, type LicenseStatus, env } from '@wootrico/config';
+import { LICENSE, type LicenseStatus } from '@wootrico/config';
 import type { LicenseState } from '@wootrico/db';
 import { getLicenseState, updateLicenseState } from './store.js';
 
@@ -30,11 +30,13 @@ export async function evaluateLicense(now = new Date()): Promise<LicenseStatus> 
   return status;
 }
 
-/** Whether message processing is allowed for the given status. */
+/**
+ * Whether message processing is allowed for the given status. Licensing is
+ * ALWAYS enforced (no opt-out): an unactivated or blocked instance cannot
+ * process — only active/warning may.
+ */
 export function isProcessingAllowed(status: LicenseStatus): boolean {
-  if (status === 'blocked') return false;
-  if (status === 'unactivated') return !env.LICENSE_REQUIRED;
-  return true; // active | warning
+  return status === 'active' || status === 'warning';
 }
 
 /** Convenience gate used by ingress + worker. */

@@ -17,11 +17,6 @@ const EnvSchema = z.object({
   // lifetime license. The instanceId is registered with the license server
   // first (purchase intent); this is just where the buyer completes payment.
   LICENSE_CHECKOUT_URL: z.string().url().optional(),
-  // When true, message processing is blocked until a license is active.
-  LICENSE_REQUIRED: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
   APP_VERSION: z.string().default('0.1.0'),
 
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),

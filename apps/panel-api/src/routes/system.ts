@@ -66,7 +66,7 @@ export default async function systemRoutes(app: FastifyInstance) {
       const state = await getLicenseState();
       license = {
         status,
-        required: env.LICENSE_REQUIRED,
+        required: true, // licensing is always enforced
         instanceId: state.instanceId,
         serverUrl: process.env.LICENSE_SERVER_URL,
         plan: state.plan,
@@ -75,7 +75,7 @@ export default async function systemRoutes(app: FastifyInstance) {
         lastHeartbeatAt: state.lastHeartbeatAt,
       };
     } catch {
-      license = { status: 'unknown', required: env.LICENSE_REQUIRED };
+      license = { status: 'unknown', required: true };
     }
 
     return {

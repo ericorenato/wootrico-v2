@@ -111,7 +111,7 @@ bash install.sh local
 
 ```bash
 cp .env.example .env
-# ajuste no .env: PANEL_PORT (ex: 8789), LICENSE_REQUIRED=false,
+# ajuste no .env: PANEL_PORT (ex: 8789),
 # e gere JWT_SECRET / APP_ENCRYPTION_KEY:
 #   node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"  # JWT_SECRET
 #   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"     # APP_ENCRYPTION_KEY
