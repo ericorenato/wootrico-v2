@@ -3,6 +3,7 @@ import { Activity, Boxes, Check, Database, Eye, EyeOff, Globe, Images, KeyRound,
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import MediaStorageEditor from '../components/MediaStorageEditor';
 import { completeSetup, setBaseUrl } from '../lib/setup-api';
+import { useAuth } from '../lib/auth';
 import {
   activateLicense,
   provisionLicense,
@@ -73,9 +74,14 @@ function useAutoTest(service: Service, url: string) {
 }
 
 export default function SetupWizard() {
+  const { user } = useAuth();
   const [step, setStep] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // License owner identity (required for the first key; prefilled from the admin).
+  const [licName, setLicName] = useState('');
+  const [licEmail, setLicEmail] = useState('');
 
   // connections (pre-filled from the installer's .env via /api/system/connections)
   const [conn, setConn] = useState<ConnectionsState | null>(null);
@@ -113,6 +119,12 @@ export default function SetupWizard() {
   useEffect(() => {
     if (step === 5) getLicenseStatus().then(setLicense).catch(() => {});
   }, [step]);
+
+  // Prefill the license owner from the logged-in admin (editable, required).
+  useEffect(() => {
+    if (user?.name) setLicName((v) => v || (user.name ?? ''));
+    if (user?.email) setLicEmail((v) => v || user.email);
+  }, [user]);
 
   // ── restart screen: poll /api/health until the container is back, then go ──
   useEffect(() => {
@@ -231,10 +243,16 @@ export default function SetupWizard() {
   }
 
   async function activateAndFinish() {
+    const name = licName.trim();
+    const email = licEmail.trim();
+    if (!name || !email) {
+      setError('Informe nome e e-mail para ativar a licença.');
+      return;
+    }
     setError('');
     setBusy(true);
     try {
-      await provisionLicense();
+      await provisionLicense({ name, email });
       setLicense(await getLicenseStatus());
       await finish();
     } catch (e) {
@@ -417,7 +435,7 @@ export default function SetupWizard() {
                 <StepShell
                   icon={<KeyRound size={16} className="text-blue-400" />}
                   title="Ativação"
-                  desc="Ative o Wootrico para começar a usar."
+                  desc="A ativação é obrigatória para usar o Wootrico. Confirme seu nome e e-mail para registrar esta instância."
                   badge={
                     license ? (
                       <Badge tone={license.status === 'active' ? 'ok' : 'neutral'}>
@@ -426,6 +444,14 @@ export default function SetupWizard() {
                     ) : undefined
                   }
                 >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="Nome">
+                      <Input value={licName} onChange={(e) => setLicName(e.target.value)} placeholder="Seu nome" />
+                    </Field>
+                    <Field label="E-mail">
+                      <Input value={licEmail} onChange={(e) => setLicEmail(e.target.value)} placeholder="voce@exemplo.com" />
+                    </Field>
+                  </div>
                   <ErrorText>{error}</ErrorText>
                   <p className="text-xs text-neutral-500">
                     Se você alterou RabbitMQ ou Redis, a aplicação reinicia ao concluir para aplicar —
@@ -435,9 +461,6 @@ export default function SetupWizard() {
                     <Button onClick={key.trim() ? activate : activateAndFinish} loading={busy}>
                       Ativar e concluir
                     </Button>
-                    <button onClick={finish} className="text-sm text-neutral-400 hover:text-white">
-                      Concluir sem ativar
-                    </button>
                     <button onClick={() => setStep(4)} className="text-sm text-neutral-400 hover:text-white">
                       Voltar
                     </button>

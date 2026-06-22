@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { Copy, Check, Eye, EyeOff } from 'lucide-react';
+import { useNavigate, useParams, Link } from 'react-router-dom';
+import { Copy, Check, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { getLicenseStatus } from '../lib/license-api';
 import {
   Badge,
   Button,
@@ -70,6 +71,15 @@ export default function IntegrationForm() {
   const [provTest, setProvTest] = useState<TestState>({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  // Creating an integration requires an active license (validated on the server too).
+  const [licensed, setLicensed] = useState(true);
+
+  useEffect(() => {
+    if (editing) return;
+    getLicenseStatus()
+      .then((l) => setLicensed(l.status === 'active' || l.status === 'warning'))
+      .catch(() => {});
+  }, [editing]);
 
   // create flow: a sequence of steps shown in a loading overlay
   // (testar Chatwoot → verificar inbox → criar integração).
@@ -306,6 +316,32 @@ export default function IntegrationForm() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!editing && !licensed) {
+    return (
+      <div className="max-w-3xl">
+        <div className="mb-10">
+          <Eyebrow>Integrações</Eyebrow>
+          <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Nova integração</h1>
+        </div>
+        <Card>
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-300" />
+            <div className="text-sm">
+              <p className="font-medium text-amber-200">Licença inativa</p>
+              <p className="text-amber-200/80">
+                Não é possível criar integrações sem uma licença ativa.{' '}
+                <Link to="/license" className="underline hover:text-white">
+                  Regularizar licença
+                </Link>
+                .
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+    );
   }
 
   return (

@@ -20,10 +20,10 @@ export const activateLicense = (licenseKey: string) =>
     body: JSON.stringify({ licenseKey }),
   });
 
-export const provisionLicense = () =>
+export const provisionLicense = (owner: { name: string; email: string }) =>
   api<{ status: string; features: Record<string, unknown>; instanceId: string }>(
     '/api/license/provision',
-    { method: 'POST' },
+    { method: 'POST', body: JSON.stringify(owner) },
   );
 
 export const purchaseLicense = () =>

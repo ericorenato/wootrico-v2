@@ -39,17 +39,31 @@ export default function License() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [manual, setManual] = useState(false);
+  const [licName, setLicName] = useState('');
+  const [licEmail, setLicEmail] = useState('');
 
   const load = () => getLicenseStatus().then(setInfo).catch(() => {});
   useEffect(() => {
     load();
   }, []);
 
+  // Prefill owner from the logged-in admin (editable, required for the first key).
+  useEffect(() => {
+    if (user?.name) setLicName((v) => v || (user.name ?? ''));
+    if (user?.email) setLicEmail((v) => v || user.email);
+  }, [user]);
+
   async function provision() {
+    const name = licName.trim();
+    const email = licEmail.trim();
+    if (!name || !email) {
+      setError('Informe nome e e-mail para ativar a licença.');
+      return;
+    }
     setError('');
     setBusy(true);
     try {
-      await provisionLicense();
+      await provisionLicense({ name, email });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao ativar a licença.');
@@ -146,8 +160,16 @@ export default function License() {
           <>
             <h3 className="text-sm font-medium text-white mb-2">Ativar</h3>
             <p className="text-sm text-neutral-400 mb-5">
-              Ative o Wootrico para esta instância e comece a usar.
+              Confirme seu nome e e-mail para registrar e ativar esta instância.
             </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+              <Field label="Nome">
+                <Input value={licName} onChange={(e) => setLicName(e.target.value)} placeholder="Seu nome" />
+              </Field>
+              <Field label="E-mail">
+                <Input value={licEmail} onChange={(e) => setLicEmail(e.target.value)} placeholder="voce@exemplo.com" />
+              </Field>
+            </div>
             <ErrorText>{error}</ErrorText>
             <Button onClick={provision} loading={busy}>
               Ativar

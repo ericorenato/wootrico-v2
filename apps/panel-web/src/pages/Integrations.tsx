@@ -122,11 +122,17 @@ export default function Integrations() {
           <div className="flex flex-col items-center text-center py-10 gap-3">
             <Plug className="text-neutral-600" size={32} />
             <p className="text-sm text-neutral-400">Nenhuma integração ainda.</p>
-            <Link to="/integrations/new">
-              <Button>
+            {licensed ? (
+              <Link to="/integrations/new">
+                <Button>
+                  <Plus size={16} /> Criar a primeira
+                </Button>
+              </Link>
+            ) : (
+              <Button disabled title="Licença inativa">
                 <Plus size={16} /> Criar a primeira
               </Button>
-            </Link>
+            )}
           </div>
         </Card>
       ) : (
