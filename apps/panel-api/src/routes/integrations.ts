@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { encryptSecret, decryptSecret, randomToken } from '@wootrico/config';
-import { getLicenseSecret } from '@wootrico/license-client';
+import { getLicenseSecret, ensureLicenseSecret } from '@wootrico/license-client';
 import {
   CreateIntegrationSchema,
   UpdateIntegrationSchema,
@@ -64,7 +64,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
     if (!lic.allowed) {
       return reply.code(403).send({ error: 'license_inactive', status: lic.status });
     }
-    const secret = await getLicenseSecret();
+    const secret = await ensureLicenseSecret();
     if (!secret) return reply.code(403).send({ error: 'license_inactive' });
     const parsed = CreateIntegrationSchema.safeParse(req.body);
     if (!parsed.success)
@@ -174,7 +174,10 @@ export default async function integrationRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
     const d = parsed.data;
-    const secret = await getLicenseSecret();
+    const secret =
+      d.chatwootApiToken || d.providerConfig
+        ? await ensureLicenseSecret()
+        : await getLicenseSecret();
 
     // Enabling an integration requires an active license (disabling/editing is
     // always allowed so customers can still clean up while unlicensed).

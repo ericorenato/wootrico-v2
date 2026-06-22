@@ -1,6 +1,6 @@
 import { prisma } from '@wootrico/db';
 import { decryptSecret } from '@wootrico/config';
-import { getLicenseSecret } from '@wootrico/license-client';
+import { ensureLicenseSecret } from '@wootrico/license-client';
 import type { ProviderConfig } from '@wootrico/types';
 import { createProvider, type WhatsAppProvider } from '@wootrico/providers';
 import { ChatwootClient } from '@wootrico/chatwoot-client';
@@ -26,7 +26,7 @@ export async function loadIntegrationRuntime(
 
   // Credentials are license-sealed: without the per-license secret they cannot be
   // decrypted. Fail closed (drop the job) — a fake/absent license can't operate.
-  const secret = await getLicenseSecret();
+  const secret = await ensureLicenseSecret();
   let providerConfig: ProviderConfig;
   let chatwootApiToken: string;
   try {
