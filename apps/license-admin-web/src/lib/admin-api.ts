@@ -97,6 +97,32 @@ export const createWebhookKey = (name?: string) =>
 export const revokeWebhookKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/webhook-keys/${id}/revoke`, { method: 'POST' });
 
+export interface HealthReport {
+  staleHours: number;
+  summary: { staleInstances: number; keysWithIpAlerts: number };
+  stale: Array<{
+    licenseKeyId: string;
+    instanceId: string;
+    email: string | null;
+    name: string | null;
+    plan: string;
+    appVersion: string | null;
+    lastIp: string | null;
+    lastHeartbeatAt: string | null;
+    boundAt: string;
+  }>;
+  ipAlerts: Array<{
+    licenseKeyId: string | null;
+    email: string | null;
+    name: string | null;
+    alerts: number;
+    lastAlertAt: string | null;
+  }>;
+}
+
+export const getHealth = (staleHours?: number) =>
+  api<HealthReport>(`/admin/health${staleHours ? `?staleHours=${staleHours}` : ''}`);
+
 export const getEvents = (
   params: {
     before?: string;

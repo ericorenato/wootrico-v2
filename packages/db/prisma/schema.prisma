@@ -359,6 +359,7 @@ model AuditLog {
 model LicenseState {
   id              String        @id @default("singleton")
   licenseKey      String?       @map("license_key") // encrypted
+  dataKey         String?       @map("data_key") // per-license secret, encrypted at rest
   instanceId      String?       @map("instance_id")
   plan            String?       // 'trial' | 'paid' — mirrors the server's answer
   expiresAt       DateTime?     @map("expires_at") // trial expiry (null for paid)

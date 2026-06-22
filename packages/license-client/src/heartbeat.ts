@@ -1,4 +1,4 @@
-import { env, LICENSE, logger } from '@wootrico/config';
+import { env, LICENSE, logger, encrypt } from '@wootrico/config';
 import { prisma } from '@wootrico/db';
 import { decryptLicenseKey, encryptLicenseKey, getLicenseState, updateLicenseState } from './store.js';
 import { evaluateLicense } from './state-machine.js';
@@ -15,6 +15,7 @@ interface ValidateResponse {
   reason?: string;
   key?: string; // server delivers a newly minted key (e.g. paid upgrade) to swap in
   features?: Record<string, unknown>;
+  secret?: string | null;
   error?: string;
 }
 
@@ -44,6 +45,7 @@ export async function runHeartbeat(): Promise<{ status: string }> {
       await updateLicenseState({
         // Server delivered a new key (paid upgrade) → swap it in.
         ...(data.key ? { licenseKey: encryptLicenseKey(data.key) } : {}),
+        ...(data.secret ? { dataKey: encrypt(data.secret) } : {}),
         plan: data.plan ?? state.plan ?? null,
         expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
         status: 'active',

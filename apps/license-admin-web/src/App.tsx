@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Keys from './pages/Keys';
 import Events from './pages/Events';
 import WebhookKeys from './pages/WebhookKeys';
+import Health from './pages/Health';
 
 function Spinner() {
   return (
@@ -60,6 +61,14 @@ export default function App() {
             element={
               <Protected>
                 <WebhookKeys />
+              </Protected>
+            }
+          />
+          <Route
+            path="/health"
+            element={
+              <Protected>
+                <Health />
               </Protected>
             }
           />

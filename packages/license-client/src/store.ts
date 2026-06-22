@@ -22,3 +22,9 @@ export function decryptLicenseKey(state: LicenseState): string | null {
 export function encryptLicenseKey(key: string): string {
   return encrypt(key);
 }
+
+/** The per-license secret (decrypted), used to seal integration credentials. */
+export async function getLicenseSecret(): Promise<string | null> {
+  const state = await getLicenseState();
+  return state.dataKey ? decrypt(state.dataKey) : null;
+}

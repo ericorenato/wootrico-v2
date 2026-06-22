@@ -1,4 +1,4 @@
-import { env, LICENSE } from '@wootrico/config';
+import { env, LICENSE, encrypt } from '@wootrico/config';
 import { prisma } from '@wootrico/db';
 import { getOrCreateInstanceId } from './fingerprint.js';
 import { encryptLicenseKey, getLicenseState, updateLicenseState, decryptLicenseKey } from './store.js';
@@ -26,6 +26,7 @@ interface LicenseResponse {
   reason?: string;
   error?: string;
   features?: Record<string, unknown>;
+  secret?: string | null;
   reused?: boolean;
 }
 
@@ -39,6 +40,7 @@ async function applyLicenseResponse(
   const expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
   await updateLicenseState({
     ...(opts.storeKey ? { licenseKey: encryptLicenseKey(opts.storeKey) } : {}),
+    ...(data.secret ? { dataKey: encrypt(data.secret) } : {}),
     instanceId,
     plan: data.plan ?? null,
     expiresAt,

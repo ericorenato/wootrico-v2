@@ -14,3 +14,8 @@ export function generateKey(): string {
 export function generateWebhookKey(): string {
   return `WHK-${randomBytes(24).toString('base64url')}`;
 }
+
+/** Per-license secret handed to active instances (seals integration credentials). */
+export function generateSecret(): string {
+  return randomBytes(32).toString('base64url');
+}

@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { cfg } from './env.js';
 import { prisma } from './db.js';
-import { generateKey, generateWebhookKey, hashKey } from './crypto.js';
+import { generateKey, generateSecret, generateWebhookKey, hashKey } from './crypto.js';
 import {
   adminLoginConfigured,
   checkAdminCredentials,
@@ -83,6 +83,17 @@ function keyStatus(lk: KeyLike, now: Date): { active: boolean; reason: string | 
     return { active: false, reason: 'expired' };
   }
   return { active: true, reason: null };
+}
+
+/**
+ * Return the per-license secret, generating + persisting one for legacy keys
+ * that predate this column. Delivered only over the validated channel.
+ */
+async function ensureSecret(lk: { id: string; secret: string | null }): Promise<string> {
+  if (lk.secret) return lk.secret;
+  const secret = generateSecret();
+  await prisma.licenseKey.update({ where: { id: lk.id }, data: { secret } });
+  return secret;
 }
 
 /** Prisma filter: keys that are still valid (not revoked, trial not expired). */
@@ -225,6 +236,7 @@ app.post('/provision', async (req, reply) => {
       plan: existing.licenseKey.plan,
       expiresAt: existing.licenseKey.expiresAt,
       features: existing.licenseKey.features ?? {},
+      secret: await ensureSecret(existing.licenseKey),
       reused: true,
     };
   }
@@ -241,6 +253,7 @@ app.post('/provision', async (req, reply) => {
       provisionedBy: 'self-service',
       features: {} as never,
       maxActivations: 1,
+      secret: generateSecret(),
     },
   });
   await prisma.activation.create({
@@ -255,7 +268,14 @@ app.post('/provision', async (req, reply) => {
     },
   });
   await recordEvent({ type: 'provision', licenseKeyId: lk.id, instanceId, ip, appVersion });
-  return { key: raw, active: true, plan: lk.plan, expiresAt: lk.expiresAt, features: lk.features ?? {} };
+  return {
+    key: raw,
+    active: true,
+    plan: lk.plan,
+    expiresAt: lk.expiresAt,
+    features: lk.features ?? {},
+    secret: lk.secret,
+  };
 });
 
 // ── activate ──
@@ -303,7 +323,13 @@ app.post('/activate', async (req, reply) => {
   await recordIpActivity({ licenseKeyId: lk.id, instanceId, ip, previousIp: prev?.lastIp, appVersion });
 
   await recordEvent({ type: 'activate', licenseKeyId: lk.id, instanceId, ip, appVersion });
-  return { active: true, plan: lk.plan, expiresAt: lk.expiresAt, features: lk.features ?? {} };
+  return {
+    active: true,
+    plan: lk.plan,
+    expiresAt: lk.expiresAt,
+    features: lk.features ?? {},
+    secret: await ensureSecret(lk),
+  };
 });
 
 // ── validate (online source of truth; replaces token heartbeat) ──
@@ -379,6 +405,7 @@ const validateHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     plan: lk.plan,
     expiresAt: lk.expiresAt,
     features: lk.features ?? {},
+    secret: await ensureSecret(lk),
     ...(deliveredKey ? { key: deliveredKey } : {}),
   };
 };
@@ -463,6 +490,15 @@ app.post('/webhook/payment', async (req, reply) => {
   });
   if (!intent) return reply.code(404).send({ error: 'no_pending_intent' });
 
+  // Carry the per-license secret forward from the instance's current key so the
+  // integration credentials (sealed with it) stay decryptable after the upgrade.
+  const prevActivation = await prisma.activation.findFirst({
+    where: { instanceId: intent.instanceId, revokedAt: null },
+    include: { licenseKey: true },
+    orderBy: { boundAt: 'desc' },
+  });
+  const carrySecret = prevActivation?.licenseKey?.secret ?? generateSecret();
+
   // Mint a fresh paid (lifetime) key and bind it to the buying instance.
   const raw = generateKey();
   const paidKey = await prisma.licenseKey.create({
@@ -475,6 +511,7 @@ app.post('/webhook/payment', async (req, reply) => {
       provisionedBy: 'payment',
       features: {} as never,
       maxActivations: 1,
+      secret: carrySecret,
     },
   });
   await prisma.activation.create({
@@ -581,6 +618,7 @@ app.post('/admin/keys', async (req, reply) => {
       provisionedBy: 'admin',
       features: (p.data.features ?? {}) as never,
       maxActivations: p.data.maxActivations ?? 1,
+      secret: generateSecret(),
     },
   });
   await recordEvent({ type: 'admin_create', licenseKeyId: created.id });
@@ -790,6 +828,76 @@ app.get('/admin/keys/:id/events', async (req, reply) => {
     take: 100,
   });
   return { events };
+});
+
+// ── admin: health/detection (license abuse signals) ──
+// Surfaces (a) live instances that STOPPED validating (possible tampered client
+// that no longer phones home, or just offline) and (b) keys seen from multiple
+// IPs (possible sharing). Detection, not prevention — for the vendor to act on.
+const HealthQuerySchema = z.object({ staleHours: z.coerce.number().int().positive().max(720).optional() });
+app.get('/admin/health', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const q = HealthQuerySchema.safeParse(req.query ?? {});
+  if (!q.success) return reply.code(400).send({ error: 'validation' });
+  const now = new Date();
+  const staleHours = q.data.staleHours ?? 24;
+  const cutoff = new Date(now.getTime() - staleHours * 60 * 60 * 1000);
+
+  // Live bindings (active key, not revoked) that haven't validated since cutoff.
+  const staleRows = await prisma.activation.findMany({
+    where: {
+      revokedAt: null,
+      licenseKey: liveKeyFilter(now),
+      OR: [{ lastHeartbeatAt: { lt: cutoff } }, { lastHeartbeatAt: null }],
+    },
+    include: { licenseKey: true },
+    orderBy: { lastHeartbeatAt: 'asc' },
+    take: 200,
+  });
+  const stale = staleRows.map((a) => ({
+    licenseKeyId: a.licenseKeyId,
+    instanceId: a.instanceId,
+    email: a.licenseKey.email,
+    name: a.licenseKey.name,
+    plan: a.licenseKey.plan,
+    appVersion: a.appVersion,
+    lastIp: a.lastIp,
+    lastHeartbeatAt: a.lastHeartbeatAt,
+    boundAt: a.boundAt,
+  }));
+
+  // Keys with IP-sharing alerts (grouped, with last occurrence + count).
+  const alertGroups = await prisma.licenseEvent.groupBy({
+    by: ['licenseKeyId'],
+    where: { type: 'ip_alert' },
+    _count: { _all: true },
+    _max: { createdAt: true },
+  });
+  const alertKeyIds = alertGroups.map((g) => g.licenseKeyId).filter(Boolean) as string[];
+  const alertKeys = alertKeyIds.length
+    ? await prisma.licenseKey.findMany({ where: { id: { in: alertKeyIds } } })
+    : [];
+  const alertKeyById = new Map(alertKeys.map((k) => [k.id, k]));
+  const ipAlerts = alertGroups
+    .filter((g) => g.licenseKeyId)
+    .map((g) => {
+      const k = alertKeyById.get(g.licenseKeyId as string);
+      return {
+        licenseKeyId: g.licenseKeyId,
+        email: k?.email ?? null,
+        name: k?.name ?? null,
+        alerts: g._count._all,
+        lastAlertAt: g._max.createdAt,
+      };
+    })
+    .sort((a, b) => (b.lastAlertAt?.getTime() ?? 0) - (a.lastAlertAt?.getTime() ?? 0));
+
+  return {
+    staleHours,
+    summary: { staleInstances: stale.length, keysWithIpAlerts: ipAlerts.length },
+    stale,
+    ipAlerts,
+  };
 });
 
 // ── admin SPA (license-admin-web build) ──

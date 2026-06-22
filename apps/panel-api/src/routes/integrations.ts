@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { encrypt, decrypt } from '@wootrico/config';
-import { randomToken } from '@wootrico/config';
+import { encryptSecret, decryptSecret, randomToken } from '@wootrico/config';
+import { getLicenseSecret } from '@wootrico/license-client';
 import {
   CreateIntegrationSchema,
   UpdateIntegrationSchema,
@@ -35,18 +35,19 @@ export default async function integrationRoutes(app: FastifyInstance) {
     });
     if (!row) return reply.code(404).send({ error: 'not_found' });
     const base = await getPublicBaseUrl(app.prisma);
+    const secret = await getLicenseSecret();
 
     let providerConfig: ProviderConfig | null = null;
     if (row.providerConfig) {
       try {
-        providerConfig = JSON.parse(decrypt(row.providerConfig.config)) as ProviderConfig;
+        providerConfig = JSON.parse(decryptSecret(row.providerConfig.config, secret)) as ProviderConfig;
       } catch {
         providerConfig = null;
       }
     }
     let chatwootApiToken = '';
     try {
-      chatwootApiToken = decrypt(row.chatwootApiToken);
+      chatwootApiToken = decryptSecret(row.chatwootApiToken, secret);
     } catch {
       chatwootApiToken = '';
     }
@@ -63,6 +64,8 @@ export default async function integrationRoutes(app: FastifyInstance) {
     if (!lic.allowed) {
       return reply.code(403).send({ error: 'license_inactive', status: lic.status });
     }
+    const secret = await getLicenseSecret();
+    if (!secret) return reply.code(403).send({ error: 'license_inactive' });
     const parsed = CreateIntegrationSchema.safeParse(req.body);
     if (!parsed.success)
       return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
@@ -77,7 +80,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
         isEnabled: d.isEnabled,
         webhookToken,
         chatwootBaseUrl: d.chatwootBaseUrl,
-        chatwootApiToken: encrypt(d.chatwootApiToken),
+        chatwootApiToken: encryptSecret(d.chatwootApiToken, secret),
         chatwootAccountId: d.chatwootAccountId,
         chatwootInboxName: d.chatwootInboxName,
         conversationStatus: d.conversationStatus,
@@ -89,7 +92,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
         providerConfig: {
           create: {
             providerType: d.providerType,
-            config: encrypt(JSON.stringify(d.providerConfig)),
+            config: encryptSecret(JSON.stringify(d.providerConfig), secret),
             providerIdentifier: providerIdentifier(d.providerConfig),
           },
         },
@@ -171,6 +174,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
     if (!parsed.success)
       return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
     const d = parsed.data;
+    const secret = await getLicenseSecret();
 
     // Enabling an integration requires an active license (disabling/editing is
     // always allowed so customers can still clean up while unlicensed).
@@ -179,6 +183,11 @@ export default async function integrationRoutes(app: FastifyInstance) {
       if (!lic.allowed) {
         return reply.code(403).send({ error: 'license_inactive', status: lic.status });
       }
+    }
+
+    // Writing credentials requires the per-license secret to seal them.
+    if ((d.chatwootApiToken || d.providerConfig) && !secret) {
+      return reply.code(403).send({ error: 'license_inactive' });
     }
 
     const data: Record<string, unknown> = {};
@@ -196,7 +205,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
     ] as const) {
       if (d[k] !== undefined) data[k] = d[k];
     }
-    if (d.chatwootApiToken) data.chatwootApiToken = encrypt(d.chatwootApiToken);
+    if (d.chatwootApiToken) data.chatwootApiToken = encryptSecret(d.chatwootApiToken, secret!);
 
     if (d.providerConfig) {
       if (d.providerType && d.providerConfig.provider !== d.providerType)
@@ -206,7 +215,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
         where: { integrationId: id },
         data: {
           providerType: d.providerConfig.provider,
-          config: encrypt(JSON.stringify(d.providerConfig)),
+          config: encryptSecret(JSON.stringify(d.providerConfig), secret!),
           providerIdentifier: providerIdentifier(d.providerConfig),
         },
       });
@@ -224,7 +233,7 @@ export default async function integrationRoutes(app: FastifyInstance) {
     try {
       const cw = new ChatwootClient({
         baseUrl: updated.chatwootBaseUrl,
-        apiToken: d.chatwootApiToken ?? decrypt(existing.chatwootApiToken),
+        apiToken: d.chatwootApiToken ?? decryptSecret(existing.chatwootApiToken, secret),
         accountId: updated.chatwootAccountId,
       });
       const setup = await cw.setupInbox({
@@ -297,9 +306,4 @@ export default async function integrationRoutes(app: FastifyInstance) {
       return reply.code(400).send({ ok: false, detail: (err as Error).message });
     }
   });
-}
-
-/** Decrypt a stored provider config (used by the worker too). */
-export function decryptProviderConfig(encrypted: string): ProviderConfig {
-  return JSON.parse(decrypt(encrypted)) as ProviderConfig;
 }
