@@ -1,12 +1,13 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { KeyRound, Terminal, LogOut, Webhook, Activity, LayoutDashboard, Users, Settings } from 'lucide-react';
+import { KeyRound, Terminal, LogOut, Webhook, Activity, LayoutDashboard, Users, Settings, Gift } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 
 const NAV = [
   { to: '/', label: 'Início', icon: LayoutDashboard, end: true },
   { to: '/users', label: 'Usuários', icon: Users },
   { to: '/keys', label: 'Chaves', icon: KeyRound },
+  { to: '/free-licenses', label: 'Concedidas', icon: Gift },
   { to: '/health', label: 'Saúde', icon: Activity },
   { to: '/logs', label: 'Logs', icon: Terminal },
   { to: '/webhook-keys', label: 'Webhooks', icon: Webhook },
@@ -21,9 +22,11 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-black text-white flex">
       <aside className="hidden md:flex w-64 flex-col bg-gradient-to-br from-white/10 to-white/0 border-r border-white/5 px-5 py-6">
         <div className="flex items-center gap-3 px-2 mb-10">
-          <div className="w-9 h-9 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center">
-            <span className="text-blue-400 font-bold">W</span>
-          </div>
+          <img
+            src="/logo_wootrico.png"
+            alt="Wootrico"
+            className="w-9 h-9 rounded-xl object-contain"
+          />
           <div className="leading-tight">
             <p className="text-sm font-semibold text-white">Wootrico</p>
             <p className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">Licenças</p>

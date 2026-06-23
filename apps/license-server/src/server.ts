@@ -261,6 +261,69 @@ app.post('/provision', async (req, reply) => {
     };
   }
 
+  // Admin-granted pickup. If the admin pre-issued a license for this e-mail (it
+  // carries a parked raw key, `issuedKey`) that's still live and not claimed by a
+  // DIFFERENT instance, bind it and hand the key over — the customer never sees or
+  // types it. A granted PAID license wins over a granted trial. Checked before the
+  // regular trial logic so a user the admin granted (or re-activated) picks THAT
+  // up instead of being refused or minting a fresh trial.
+  if (email) {
+    const grantWhere = (plan: 'trial' | 'paid') => ({
+      plan,
+      revokedAt: null,
+      issuedKey: { not: null }, // admin-granted (self-service keys don't park a raw key)
+      email: { equals: email, mode: 'insensitive' as const },
+      // unclaimed, or already bound to THIS instance (re-provision after data loss)
+      activations: { none: { revokedAt: null, instanceId: { not: instanceId } } },
+      // a granted trial must still be within its window; paid is lifetime
+      ...(plan === 'trial' ? { expiresAt: { gt: now } } : {}),
+    });
+    const granted =
+      (await prisma.licenseKey.findFirst({ where: grantWhere('paid'), orderBy: { createdAt: 'desc' } })) ??
+      (await prisma.licenseKey.findFirst({ where: grantWhere('trial'), orderBy: { createdAt: 'desc' } }));
+    if (granted) {
+      const prevAct = await prisma.activation.findUnique({
+        where: { licenseKeyId_instanceId: { licenseKeyId: granted.id, instanceId } },
+      });
+      await prisma.activation.upsert({
+        where: { licenseKeyId_instanceId: { licenseKeyId: granted.id, instanceId } },
+        create: {
+          licenseKeyId: granted.id,
+          instanceId,
+          appVersion,
+          publicBaseUrl,
+          firstIp: ip,
+          lastIp: ip,
+          lastHeartbeatAt: now,
+        },
+        update: { appVersion, publicBaseUrl, lastIp: ip, revokedAt: null, lastHeartbeatAt: now },
+      });
+      await recordIpActivity({
+        licenseKeyId: granted.id,
+        instanceId,
+        ip,
+        previousIp: prevAct?.lastIp,
+        appVersion,
+      });
+      await recordEvent({
+        type: granted.plan === 'paid' ? 'paid_claimed' : 'trial_claimed',
+        licenseKeyId: granted.id,
+        instanceId,
+        ip,
+        appVersion,
+      });
+      return {
+        key: granted.issuedKey ?? undefined,
+        active: true,
+        plan: granted.plan,
+        expiresAt: granted.expiresAt,
+        features: granted.features ?? {},
+        secret: await ensureSecret(granted),
+        secrets: await instanceSecrets(instanceId),
+      };
+    }
+  }
+
   // No free renewal: a trial is granted ONCE per instance. If this instance has
   // ever bound a key before (its trial expired or was revoked, and no live key
   // remains), refuse to mint a fresh trial — the only way forward is to buy a
@@ -642,36 +705,80 @@ app.get('/admin/me', async (req, reply) => {
   return { ok: true };
 });
 
-const CreateKeySchema = z.object({
-  plan: z.enum(['trial', 'paid']).optional(),
-  email: z.string().email().optional(),
-  name: z.string().trim().min(1).max(120).optional(),
-  features: z.record(z.unknown()).optional(),
-  maxActivations: z.number().int().positive().optional(),
-});
+// Standalone key creation (which exposed a raw WTR-… key to copy/paste) was
+// removed: a customer must NEVER see or type a key. All licenses are delivered
+// transparently — self-service trial at signup, admin grant-by-e-mail below,
+// payment webhook, or trial→paid upgrade.
 
-app.post('/admin/keys', async (req, reply) => {
+// ── admin: granted licenses (trial OR paid, handed to a specific user by e-mail) ──
+// Create a license for a specific user; their instance picks it up automatically
+// on provision (matched by e-mail) — they never see a key. A trial expires after
+// the standard window (reactivate with /admin/keys/:id/reactivate-trial); a paid
+// grant is lifetime. Revoke via /admin/keys/:id/revoke, un-revoke via
+// /admin/keys/:id/activate.
+const GrantSchema = z.object({
+  email: z.string().email(),
+  name: z.string().trim().min(1).max(120).optional(),
+  plan: z.enum(['trial', 'paid']).optional(), // default trial
+  features: z.record(z.unknown()).optional(),
+});
+app.post('/admin/free-licenses', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
-  const p = CreateKeySchema.safeParse(req.body ?? {});
+  const p = GrantSchema.safeParse(req.body ?? {});
   if (!p.success) return reply.code(400).send({ error: 'validation' });
-  const plan = p.data.plan ?? 'paid'; // admin-created keys default to paid (lifetime)
-  const expiresAt = plan === 'trial' ? new Date(Date.now() + cfg.trialDays * DAY_MS) : null;
+  const plan = p.data.plan ?? 'trial';
   const raw = generateKey();
   const created = await prisma.licenseKey.create({
     data: {
       keyHash: hashKey(raw),
       plan,
-      expiresAt,
+      expiresAt: plan === 'trial' ? new Date(Date.now() + cfg.trialDays * DAY_MS) : null,
       email: p.data.email,
       name: p.data.name,
-      provisionedBy: 'admin',
+      provisionedBy: plan === 'paid' ? 'admin-paid' : 'admin-trial',
       features: (p.data.features ?? {}) as never,
-      maxActivations: p.data.maxActivations ?? 1,
+      maxActivations: 1,
       secret: generateSecret(),
+      issuedKey: raw, // delivered to the matching instance on provision (never shown)
     },
   });
-  await recordEvent({ type: 'admin_create', licenseKeyId: created.id });
-  return reply.code(201).send({ id: created.id, key: raw });
+  await recordEvent({
+    type: plan === 'paid' ? 'admin_paid_grant' : 'admin_trial_grant',
+    licenseKeyId: created.id,
+  });
+  return reply.code(201).send({ id: created.id, email: created.email });
+});
+
+app.get('/admin/free-licenses', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const now = new Date();
+  const rows = await prisma.licenseKey.findMany({
+    where: { provisionedBy: { in: ['admin-trial', 'admin-paid'] } },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      activations: {
+        where: { revokedAt: null },
+        orderBy: { lastHeartbeatAt: 'desc' },
+        select: { instanceId: true, lastIp: true, lastHeartbeatAt: true, appVersion: true },
+      },
+    },
+  });
+  return {
+    licenses: rows.map((k) => ({
+      id: k.id,
+      plan: k.plan,
+      email: k.email,
+      name: k.name,
+      revoked: !!k.revokedAt,
+      expired: !k.revokedAt && !!k.expiresAt && k.expiresAt <= now,
+      expiresAt: k.expiresAt,
+      claimed: k.activations.length > 0,
+      activeInstances: k.activations.length,
+      lastHeartbeatAt: k.activations[0]?.lastHeartbeatAt ?? null,
+      lastIp: k.activations[0]?.lastIp ?? null,
+      createdAt: k.createdAt,
+    })),
+  };
 });
 
 const KeysQuerySchema = z.object({
@@ -1009,6 +1116,24 @@ app.post('/admin/keys/:id/upgrade', async (req, reply) => {
     data: { plan: 'paid', expiresAt: null, revokedAt: null },
   });
   await recordEvent({ type: 'admin_upgrade', licenseKeyId: id });
+  return { ok: true };
+});
+
+// Reactivate an expired/revoked TRIAL: give it a fresh window (+trialDays) and
+// clear any revocation. The customer's instance (polling faster while blocked)
+// picks the renewed trial back up on its next validation. Stays a trial — only
+// `/upgrade` makes it lifetime/paid.
+app.post('/admin/keys/:id/reactivate-trial', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  const lk = await prisma.licenseKey.findUnique({ where: { id } });
+  if (!lk) return reply.code(404).send({ error: 'not_found' });
+  if (lk.plan !== 'trial') return reply.code(400).send({ error: 'not_trial' });
+  await prisma.licenseKey.update({
+    where: { id },
+    data: { expiresAt: new Date(Date.now() + cfg.trialDays * DAY_MS), revokedAt: null },
+  });
+  await recordEvent({ type: 'admin_reactivate_trial', licenseKeyId: id });
   return { ok: true };
 });
 

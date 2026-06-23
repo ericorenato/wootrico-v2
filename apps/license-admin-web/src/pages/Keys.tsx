@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, AlertTriangle } from 'lucide-react';
-import { Badge, Button, Card, CopyButton, ErrorText, Eyebrow, Field, Input } from '../components/ui';
-import { createKey, getKeys, type LicenseKeyRow } from '../lib/admin-api';
+import { Search, AlertTriangle } from 'lucide-react';
+import { Badge, Button, Card, Eyebrow, Field, Input } from '../components/ui';
+import { getKeys, type LicenseKeyRow } from '../lib/admin-api';
 
 function fmt(ts: string | null): string {
   return ts ? new Date(ts).toLocaleString() : '—';
@@ -19,15 +19,6 @@ export default function Keys() {
   const [plan, setPlan] = useState<PlanFilter>('');
   const [status, setStatus] = useState<StatusFilter>('');
 
-  // create form
-  const [showNew, setShowNew] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newPlan, setNewPlan] = useState<'trial' | 'paid'>('paid');
-  const [createdKey, setCreatedKey] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
   const load = () =>
     getKeys({
       q: q.trim() || undefined,
@@ -42,28 +33,6 @@ export default function Keys() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, status]);
 
-  async function submitNew(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-    setCreatedKey(null);
-    setBusy(true);
-    try {
-      const res = await createKey({
-        name: newName.trim() || undefined,
-        email: newEmail.trim() || undefined,
-        plan: newPlan,
-      });
-      setCreatedKey(res.key);
-      setNewName('');
-      setNewEmail('');
-      await load();
-    } catch {
-      setError('Falha ao criar chave.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   const selCls =
     'rounded-lg border border-white/10 bg-[#121212] px-3 py-2 text-sm text-white outline-none focus:border-blue-500/50';
 
@@ -74,12 +43,11 @@ export default function Keys() {
           <Eyebrow>Licenças</Eyebrow>
           <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Chaves</h1>
           <p className="mt-2 text-sm text-neutral-400">
-            Busque, filtre por plano/status e clique numa chave para ver detalhes e controles.
+            Busque, filtre por plano/status e clique numa chave para ver detalhes e controles. Para
+            entregar uma licença a um cliente, use <span className="text-neutral-300">Concedidas</span>{' '}
+            (por e-mail, sem chave).
           </p>
         </div>
-        <Button onClick={() => setShowNew((v) => !v)}>
-          <Plus size={16} /> Nova chave
-        </Button>
       </div>
 
       <form
@@ -118,39 +86,6 @@ export default function Keys() {
           <Search size={16} /> Buscar
         </Button>
       </form>
-
-      {showNew && (
-        <Card className="mb-6">
-          <h3 className="text-sm font-medium text-white mb-5">Criar chave manualmente</h3>
-          <form onSubmit={submitNew} className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label="Titular (nome)">
-              <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Opcional" />
-            </Field>
-            <Field label="E-mail">
-              <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="Opcional" />
-            </Field>
-            <Field label="Plano">
-              <select value={newPlan} onChange={(e) => setNewPlan(e.target.value as 'trial' | 'paid')} className={selCls}>
-                <option value="paid">Paga (vitalícia)</option>
-                <option value="trial">Inicial (14 dias)</option>
-              </select>
-            </Field>
-            <div className="sm:col-span-3">
-              <ErrorText>{error}</ErrorText>
-              {createdKey && (
-                <div className="mb-4 flex items-center gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2">
-                  <span className="text-xs text-neutral-300">Chave criada (copie agora):</span>
-                  <code className="text-xs text-blue-300 font-mono truncate">{createdKey}</code>
-                  <CopyButton value={createdKey} className="ml-auto" />
-                </div>
-              )}
-              <Button type="submit" loading={busy}>
-                Criar chave
-              </Button>
-            </div>
-          </form>
-        </Card>
-      )}
 
       {!keys ? (
         <p className="text-sm text-neutral-500">Carregando…</p>

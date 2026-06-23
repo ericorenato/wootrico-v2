@@ -3,12 +3,15 @@ import { prisma } from '@wootrico/db';
 import { applyConnectionOverrides } from '@wootrico/db/conn';
 import { consume, closeQueue } from '@wootrico/queue';
 import { closeRedis } from '@wootrico/cache';
-import { assertLicenseActive, runHeartbeat } from '@wootrico/license-client';
+import { assertLicenseActive, maybeRunHeartbeat } from '@wootrico/license-client';
 import { handleInbound } from './handlers/inbound.js';
 import { handleChatwootCallback } from './handlers/chatwoot-callback.js';
 import { runCleanup } from './jobs/cleanup.js';
 
-const HEARTBEAT_MS = LICENSE.validateIntervalMs; // online license re-check cadence (30 min)
+// Cheap tick: check whether an online validation is due. The actual /validate
+// call (every ~6h, backed off on failure) only fires when nextHeartbeatAt has
+// passed, so restarts and outages don't hammer the vendor server.
+const HEARTBEAT_TICK_MS = LICENSE.heartbeatTickMs; // 30 min
 const CLEANUP_MS = 60 * 60 * 1000; // 1h
 const RESTART_POLL_MS = 15 * 1000; // 15s — watch for a panel-triggered restart
 
@@ -47,12 +50,14 @@ async function main() {
 
   // Periodic jobs (no broker needed): license heartbeat + TTL cleanup.
   const heartbeatTimer = setInterval(() => {
-    void runHeartbeat().catch((err) => logger.warn({ err }, 'heartbeat failed'));
-  }, HEARTBEAT_MS);
+    void maybeRunHeartbeat().catch((err) => logger.warn({ err }, 'heartbeat failed'));
+  }, HEARTBEAT_TICK_MS);
   const cleanupTimer = setInterval(() => {
     void runCleanup().catch((err) => logger.warn({ err }, 'cleanup failed'));
   }, CLEANUP_MS);
-  await runHeartbeat().catch((err) => logger.warn({ err }, 'initial heartbeat failed'));
+  // On boot, only validate if one is actually due (avoids a re-check storm when
+  // Swarm recreates the container repeatedly).
+  await maybeRunHeartbeat().catch((err) => logger.warn({ err }, 'initial heartbeat failed'));
   await runCleanup().catch((err) => logger.warn({ err }, 'initial cleanup failed'));
 
   // Restart watcher: when the panel requests a restart (to apply new connection

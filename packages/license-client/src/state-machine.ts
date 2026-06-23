@@ -3,23 +3,35 @@ import type { LicenseState } from '@wootrico/db';
 import { getLicenseState, updateLicenseState } from './store.js';
 
 /**
- * Pure status computation from stored state + current time. Validation is online:
- * the server's last answer is cached in `status`/`lastValidatedAt`. `blocked` is
- * sticky until a fresh successful validation flips it back to `active`.
+ * Pure status computation from stored state + current time.
+ *
+ * A license blocks when: (a) the server EXPLICITLY answered "inactive"
+ * (`status: 'blocked'`, sticky until re-validated), (b) a trial ran out by the
+ * local clock, or (c) the server has been unreachable past the 48h offline grace
+ * — this last one stops "validate once, then disconnect to run free" abuse. A
+ * shorter outage only downgrades to a soft `warning`; the block in (c) is
+ * RECOVERABLE the moment the server answers "active" again.
  */
 export function computeStatus(state: LicenseState, now = new Date()): LicenseStatus {
-  if (state.status === 'blocked') return 'blocked'; // sticky until re-validated active
+  if (state.status === 'blocked') return 'blocked'; // server said inactive — sticky until re-validated
   if (!state.licenseKey || !state.instanceId) return 'unactivated';
+
+  // Trial ran out by the local clock (the 14-day auto-expiry). Paid keys have a
+  // null expiresAt and never self-expire.
+  if (state.plan === 'trial' && state.expiresAt && now.getTime() >= state.expiresAt.getTime()) {
+    return 'blocked';
+  }
+
   if (!state.lastValidatedAt) {
     // A key exists but was never confirmed online (fresh migration / mid-rollout).
-    // Allow it briefly as 'warning' until the next validation runs.
+    // Allow it as 'warning' until the next validation runs.
     return state.status === 'active' ? 'warning' : 'unactivated';
   }
 
   const since = now.getTime() - state.lastValidatedAt.getTime();
-  if (since <= LICENSE.validateIntervalMs) return 'active';
-  if (since <= LICENSE.cacheGraceMs) return 'warning'; // serving from cache during a blip
-  return 'blocked'; // cache window exceeded without a successful re-check
+  if (since > LICENSE.offlineGraceMs) return 'blocked'; // 48h with no successful check → block (recoverable)
+  if (since > LICENSE.staleWarningMs) return 'warning'; // tolerated outage — keep processing
+  return 'active';
 }
 
 /** Recompute, persist when it changes, and return the status. */

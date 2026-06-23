@@ -8,6 +8,7 @@ import Users from './pages/Users';
 import UserDetail from './pages/UserDetail';
 import Keys from './pages/Keys';
 import KeyDetail from './pages/KeyDetail';
+import FreeLicenses from './pages/FreeLicenses';
 import Logs from './pages/Logs';
 import WebhookKeys from './pages/WebhookKeys';
 import Health from './pages/Health';
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/users/:email" element={<Protected><UserDetail /></Protected>} />
           <Route path="/keys" element={<Protected><Keys /></Protected>} />
           <Route path="/keys/:id" element={<Protected><KeyDetail /></Protected>} />
+          <Route path="/free-licenses" element={<Protected><FreeLicenses /></Protected>} />
           <Route path="/logs" element={<Protected><Logs /></Protected>} />
           <Route path="/health" element={<Protected><Health /></Protected>} />
           <Route path="/webhook-keys" element={<Protected><WebhookKeys /></Protected>} />

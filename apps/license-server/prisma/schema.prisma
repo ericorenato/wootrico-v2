@@ -13,14 +13,19 @@ datasource db {
 model LicenseKey {
   id             String       @id @default(uuid())
   keyHash        String       @unique @map("key_hash")
-  // 'trial' (free, time-limited) or 'paid' (lifetime). Legacy rows ('pro' etc.)
-  // are migrated to 'paid' so existing customers never expire.
+  // 'trial' (free, time-limited) or 'paid' (lifetime, bought or admin-granted).
+  // Legacy rows ('pro' etc.) are migrated to 'paid' so existing customers never
+  // expire.
   plan           String       @default("trial")
   email          String?
   name           String?
   provisionedBy  String       @default("admin") @map("provisioned_by")
   features       Json?
   maxActivations Int          @default(1) @map("max_activations")
+  // Raw key parked for an ADMIN-GRANTED trial: the customer never types a key,
+  // the server hands it over on provision (matched by e-mail). Null for
+  // self-service trials and paid keys (those store only the hash).
+  issuedKey      String?      @map("issued_key")
   // Per-license secret delivered to active instances over the validated channel.
   // The customer image derives the integration-credential encryption key from it,
   // so a fake "always-active" server cannot unlock the product (it lacks this).

@@ -9,6 +9,8 @@ export interface LicenseStatus {
   lastValidatedAt: string | null;
   lastHeartbeatAt: string | null;
   lastError: string | null;
+  /** License is valid but the last validation couldn't reach the server. */
+  offline?: boolean;
   serverUrl?: string;
 }
 
@@ -31,3 +33,7 @@ export const purchaseLicense = () =>
 
 export const deactivateLicense = () =>
   api<void>('/api/license/deactivate', { method: 'POST' });
+
+/** Force an immediate online re-validation (used to recover quickly when blocked). */
+export const triggerHeartbeat = () =>
+  api<{ status: string }>('/api/license/heartbeat', { method: 'POST' });

@@ -43,8 +43,8 @@ WORKDIR /app
 
 # License server URL baked into the CUSTOMER image so clients never configure it
 # (validation is online — the instance must know where the vendor server lives).
-# Set per build: docker buildx build --build-arg LICENSE_SERVER_URL=https://license.suaempresa.com ...
-ARG LICENSE_SERVER_URL=https://license.example.com
+# Override per build if needed: docker buildx build --build-arg LICENSE_SERVER_URL=https://...
+ARG LICENSE_SERVER_URL=https://licenca-wootrico.ericorenatoautomacao.com.br
 ENV LICENSE_SERVER_URL=${LICENSE_SERVER_URL}
 
 COPY --from=builder /app /app

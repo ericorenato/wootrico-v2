@@ -105,17 +105,6 @@ export const expireKey = (id: string, reason?: string) =>
     body: JSON.stringify({ reason }),
   });
 
-export const createKey = (body: {
-  name?: string;
-  email?: string;
-  plan?: 'trial' | 'paid';
-  maxActivations?: number;
-}) =>
-  api<{ id: string; key: string }>('/admin/keys', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-
 export const revokeKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/revoke`, { method: 'POST' });
 
@@ -269,6 +258,35 @@ export interface HealthReport {
 
 export const getHealth = (staleHours?: number) =>
   api<HealthReport>(`/admin/health${staleHours ? `?staleHours=${staleHours}` : ''}`);
+
+// ── Admin-granted licenses (trial or paid, handed to a specific user by e-mail) ──
+export interface GrantedLicenseRow {
+  id: string;
+  plan: 'trial' | 'paid' | string;
+  email: string | null;
+  name: string | null;
+  revoked: boolean;
+  expired: boolean;
+  expiresAt: string | null;
+  claimed: boolean;
+  activeInstances: number;
+  lastHeartbeatAt: string | null;
+  lastIp: string | null;
+  createdAt: string;
+}
+
+export const getGrantedLicenses = () =>
+  api<{ licenses: GrantedLicenseRow[] }>('/admin/free-licenses');
+
+export const grantLicense = (body: { email: string; name?: string; plan?: 'trial' | 'paid' }) =>
+  api<{ id: string; email: string | null }>('/admin/free-licenses', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+
+/** Reactivate an expired/revoked trial with a fresh window (+trialDays). */
+export const reactivateTrial = (id: string) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}/reactivate-trial`, { method: 'POST' });
 
 export const getEvents = (
   params: {

@@ -19,6 +19,11 @@ export default async function licenseRoutes(app: FastifyInstance) {
   app.get('/api/license/status', guard, async () => {
     const status = await evaluateLicense();
     const state = await getLicenseState();
+    // The license is valid but the last check couldn't reach the server. We
+    // surface this so the panel can reassure the user (the key stays active) —
+    // an unreachable server never blocks. Not "offline" when the server gave an
+    // explicit answer (blocked) or the instance was never activated.
+    const offline = (status === 'active' || status === 'warning') && !!state.lastError;
     return {
       status,
       instanceId: state.instanceId,
@@ -28,6 +33,7 @@ export default async function licenseRoutes(app: FastifyInstance) {
       lastValidatedAt: state.lastValidatedAt,
       lastHeartbeatAt: state.lastHeartbeatAt,
       lastError: state.lastError,
+      offline,
       serverUrl: process.env.LICENSE_SERVER_URL,
     };
   });

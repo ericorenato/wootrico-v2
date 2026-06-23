@@ -371,6 +371,7 @@ model LicenseState {
   lastHeartbeatAt DateTime?     @map("last_heartbeat_at")
   nextHeartbeatAt DateTime?     @map("next_heartbeat_at")
   lastValidatedAt DateTime?     @map("last_validated_at") // last successful online check
+  heartbeatFailures Int         @default(0) @map("heartbeat_failures") // consecutive unreachable checks → backoff
   features        Json?
   lastError       String?       @map("last_error")
   createdAt       DateTime      @default(now()) @map("created_at")

@@ -51,6 +51,7 @@ async function applyLicenseResponse(
     lastHeartbeatAt: now,
     lastValidatedAt: now,
     nextHeartbeatAt: new Date(now.getTime() + LICENSE.validateIntervalMs),
+    heartbeatFailures: 0,
     lastError: null,
   });
   return {

@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Badge, Button, Card, ErrorText, Eyebrow, Field, Input } from '../components/ui';
 import {
-  activateLicense,
   provisionLicense,
   purchaseLicense,
   deactivateLicense,
   getLicenseStatus,
+  triggerHeartbeat,
   type LicenseStatus,
 } from '../lib/license-api';
 import { useAuth } from '../lib/auth';
@@ -22,7 +22,7 @@ const TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
 const LABEL: Record<string, string> = {
   active: 'Ativa',
   warning: 'Atenção',
-  blocked: 'Expirada',
+  blocked: 'Bloqueada',
   unactivated: 'Não ativada',
 };
 
@@ -33,13 +33,23 @@ function daysLeft(iso: string | null): number | null {
   return ms <= 0 ? 0 : Math.ceil(ms / (24 * 60 * 60 * 1000));
 }
 
+/** Human, non-alarming message for an activation/provision failure. */
+function friendlyError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const code = err.code ?? '';
+    if (/unreachable|fetch failed|ENOTFOUND|ECONNREFUSED|timeout|network/i.test(code)) {
+      return 'Não foi possível falar com o servidor de licenças (ele pode estar temporariamente indisponível). Tente novamente em instantes.';
+    }
+    return `Falha: ${code}`;
+  }
+  return 'Falha ao processar a solicitação. Tente novamente.';
+}
+
 export default function License() {
   const { user } = useAuth();
   const [info, setInfo] = useState<LicenseStatus | null>(null);
-  const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [manual, setManual] = useState(false);
   const [licName, setLicName] = useState('');
   const [licEmail, setLicEmail] = useState('');
   const [googleEnabled, setGoogleEnabled] = useState(false);
@@ -48,6 +58,19 @@ export default function License() {
   useEffect(() => {
     load();
   }, []);
+
+  // While blocked, re-check often so the instance recovers quickly the moment the
+  // server says "active" again — e.g. the admin reactivated the trial, or the
+  // server came back online after an outage. A successful validation flips the
+  // status here without the user reloading the page.
+  useEffect(() => {
+    if (info?.status !== 'blocked') return;
+    const id = setInterval(() => {
+      void triggerHeartbeat().then(load).catch(() => {});
+    }, 25_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info?.status]);
 
   // Prefill owner from the logged-in admin (editable, required for the first key).
   useEffect(() => {
@@ -77,7 +100,7 @@ export default function License() {
       await provisionLicense({ name, email });
       await load();
     } catch (err) {
-      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao ativar a licença.');
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
@@ -158,22 +181,7 @@ export default function License() {
       if (checkoutUrl) window.open(checkoutUrl, '_blank', 'noopener');
       else setError('Solicitação registrada. Em breve entraremos em contato para concluir a compra.');
     } catch (err) {
-      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao iniciar a compra.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function activate(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-    setBusy(true);
-    try {
-      await activateLicense(key.trim());
-      setKey('');
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? `Falha: ${err.code}` : 'Falha ao ativar.');
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
@@ -191,6 +199,14 @@ export default function License() {
   const isActive = info?.status === 'active' || info?.status === 'warning';
   const isBlocked = info?.status === 'blocked';
   const remaining = isActive ? daysLeft(info?.expiresAt ?? null) : null;
+  // Distinguish a genuine trial end-of-life from a "blocked because the server
+  // was unreachable for 48h" — the messaging and call-to-action differ.
+  const trialExpired = !!(
+    info?.plan === 'trial' &&
+    info?.expiresAt &&
+    new Date(info.expiresAt).getTime() <= Date.now()
+  );
+  const offlineBlocked = isBlocked && !trialExpired;
 
   return (
     <div className="max-w-2xl">
@@ -218,8 +234,38 @@ export default function License() {
             </div>
           )}
 
-          {/* Banner de licença expirada. */}
-          {isBlocked && (
+          {/* Aviso: servidor de licenças indisponível — a licença CONTINUA ativa. */}
+          {!isBlocked && info.offline && (
+            <div className="mb-5 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-300" />
+              <div className="text-sm">
+                <p className="font-medium text-amber-200">Servidor de licenças indisponível</p>
+                <p className="text-amber-200/80">
+                  Não conseguimos validar a licença com o servidor agora — ele pode estar
+                  temporariamente fora do ar. Sua licença continua ativa e o processamento segue
+                  normal. Vamos tentar de novo automaticamente.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Bloqueio por falta de validação (servidor inacessível por +48h). */}
+          {offlineBlocked && (
+            <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+              <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-300" />
+              <div className="text-sm">
+                <p className="font-medium text-red-200">Licença sem validação</p>
+                <p className="text-red-200/80">
+                  Não foi possível validar sua licença com o servidor por mais de 48h, então o
+                  processamento foi pausado por segurança. Assim que a conexão for restabelecida, sua
+                  licença é reativada automaticamente. Seus dados continuam acessíveis.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Banner de teste expirado. */}
+          {trialExpired && isBlocked && (
             <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
               <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-300" />
               <div className="text-sm">
@@ -292,13 +338,23 @@ export default function License() {
           </>
         )}
 
-        {isBlocked && (
+        {offlineBlocked && (
+          <>
+            <h3 className="text-sm font-medium text-white mb-2">Reconectando ao servidor</h3>
+            <p className="text-sm text-neutral-400 mb-5">
+              Estamos tentando validar sua licença com o servidor automaticamente. Assim que a
+              conexão voltar, o processamento é retomado sozinho — não é preciso fazer nada.
+            </p>
+            <ErrorText>{error}</ErrorText>
+          </>
+        )}
+
+        {trialExpired && isBlocked && (
           <>
             <h3 className="text-sm font-medium text-white mb-2">Adquirir licença</h3>
             <p className="text-sm text-neutral-400 mb-5">
               Seu período de teste terminou e as integrações estão pausadas. Para voltar a processar
-              mensagens, adquira uma licença definitiva. Seus dados continuam acessíveis. Já comprou
-              uma chave? Use <span className="text-neutral-300">“Tenho uma chave”</span> abaixo.
+              mensagens, adquira uma licença definitiva. Seus dados continuam acessíveis.
             </p>
             <ErrorText>{error}</ErrorText>
             <div className="flex flex-wrap items-center gap-4">
@@ -307,30 +363,6 @@ export default function License() {
               </Button>
             </div>
           </>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setManual((v) => !v)}
-          className="mt-6 block text-xs text-neutral-500 hover:text-white"
-        >
-          {manual ? 'Ocultar ativação manual' : 'Tenho uma chave (ativar manualmente)'}
-        </button>
-
-        {manual && (
-          <form onSubmit={activate} className="mt-4 space-y-4 border-t border-white/5 pt-6">
-            <Field label="Chave de licença" hint="Formato WTR-…">
-              <Input
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder="WTR-..."
-                required
-              />
-            </Field>
-            <Button type="submit" variant="ghost" loading={busy}>
-              Ativar chave
-            </Button>
-          </form>
         )}
       </Card>
     </div>
