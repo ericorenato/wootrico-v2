@@ -9,6 +9,7 @@ import {
   activateKey,
   upgradeKey,
   expireKey,
+  setKeyExpiry,
   type KeyDetail as KeyDetailT,
   type LicenseEvent,
 } from '../lib/admin-api';
@@ -29,11 +30,19 @@ const EVENT_LABEL: Record<string, string> = {
   deactivate: 'Desativação',
   purchase_intent: 'Intenção de compra',
   payment_confirmed: 'Pagamento confirmado',
+  payment_renewed: 'Renovação paga',
+  payment_refunded: 'Reembolso/estorno',
+  trial_claimed: 'Teste concedido (retirado)',
+  paid_claimed: 'Licença concedida (retirada)',
   admin_create: 'Admin: criada',
   admin_revoke: 'Admin: revogada',
   admin_activate: 'Admin: reativada',
   admin_upgrade: 'Admin: upgrade vitalícia',
   admin_expire: 'Admin: expirada',
+  admin_trial_grant: 'Admin: teste concedido',
+  admin_paid_grant: 'Admin: licença concedida',
+  admin_reactivate_trial: 'Admin: teste reativado',
+  admin_set_expiry: 'Admin: vencimento alterado',
 };
 
 const STATUS_TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
@@ -78,6 +87,22 @@ export default function KeyDetail() {
     await act(() => expireKey(id, reason || undefined));
   }
 
+  async function doSetExpiry() {
+    const cur = data?.key.expiresAt ? new Date(data.key.expiresAt).toISOString().slice(0, 10) : '';
+    const input = prompt(
+      'Nova data de vencimento (AAAA-MM-DD). Deixe em branco para tornar VITALÍCIA:',
+      cur,
+    );
+    if (input === null) return; // cancelado
+    const trimmed = input.trim();
+    if (trimmed && Number.isNaN(new Date(trimmed).getTime())) {
+      alert('Data inválida.');
+      return;
+    }
+    const iso = trimmed ? new Date(`${trimmed}T23:59:59`).toISOString() : null;
+    await act(() => setKeyExpiry(id, iso));
+  }
+
   const k = data?.key;
 
   return (
@@ -95,7 +120,8 @@ export default function KeyDetail() {
               <p className="mt-2 text-sm text-neutral-400">{k.name || k.email || 'Sem titular'}</p>
             </div>
             <div className="flex items-center gap-2">
-              <Badge tone={k.plan === 'paid' ? 'ok' : 'neutral'}>{k.plan === 'paid' ? 'Vitalícia' : 'Teste'}</Badge>
+              <Badge tone={k.plan === 'paid' ? 'ok' : 'neutral'}>{k.plan === 'paid' ? 'Paga' : 'Teste'}</Badge>
+              {k.plan === 'paid' && !k.expiresAt && <Badge tone="ok">Vitalícia</Badge>}
               <Badge tone={STATUS_TONE[k.status] ?? 'neutral'}>{STATUS_LABEL[k.status] ?? k.status}</Badge>
             </div>
           </div>
@@ -116,12 +142,10 @@ export default function KeyDetail() {
               <dd className="text-neutral-300">{k.provisionedBy}</dd>
               <dt className="text-neutral-500">Criada em</dt>
               <dd className="text-neutral-300">{fmt(k.createdAt)}</dd>
-              {k.plan === 'trial' && (
-                <>
-                  <dt className="text-neutral-500">Expira</dt>
-                  <dd className={k.status === 'expired' ? 'text-red-300' : 'text-neutral-300'}>{fmt(k.expiresAt)}</dd>
-                </>
-              )}
+              <dt className="text-neutral-500">Vencimento</dt>
+              <dd className={k.status === 'expired' ? 'text-red-300' : 'text-neutral-300'}>
+                {k.expiresAt ? fmt(k.expiresAt) : 'Vitalícia (sem vencimento)'}
+              </dd>
               {k.statusReason && (
                 <>
                   <dt className="text-neutral-500">Motivo</dt>
@@ -152,6 +176,9 @@ export default function KeyDetail() {
                   Revogar
                 </Button>
               )}
+              <Button variant="ghost" loading={busy} onClick={doSetExpiry}>
+                Alterar vencimento
+              </Button>
               {k.plan === 'trial' && (
                 <>
                   <Button variant="ghost" loading={busy} onClick={() => act(() => upgradeKey(k.id))}>

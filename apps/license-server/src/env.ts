@@ -12,6 +12,19 @@ export const cfg = {
   // the key is inactive and the customer must buy a definitive license (no free
   // renewal).
   trialDays: Number(process.env.LICENSE_TRIAL_DAYS ?? 14),
+  // Paid keys are now time-limited (default 1 year). A paid purchase/renewal
+  // grants this many days; the admin can override the date per key (or clear it
+  // to make a key lifetime).
+  paidDays: Number(process.env.LICENSE_PAID_DAYS ?? 365),
+  // Checkout URL the customer is sent to when buying (Hotmart). The server
+  // appends `?sck=<intentId>` so the payment maps back even if the buyer's
+  // Hotmart e-mail differs from the registered one.
+  checkoutUrl: process.env.LICENSE_CHECKOUT_URL ?? 'https://pay.hotmart.com/F106461744G',
+  // Hotmart Postback (webhook) token — set in the license-server .env. Without
+  // it the Hotmart webhook rejects every call.
+  hotmartHottok: process.env.HOTMART_HOTTOK,
+  // Optional: only accept Hotmart events for this product id (extra safety).
+  hotmartProductId: process.env.HOTMART_PRODUCT_ID,
   nodeEnv: process.env.NODE_ENV ?? 'development',
   // Admin web panel credentials (optional). When set, /admin/login issues a JWT;
   // when unset, the panel login is disabled and only ADMIN_TOKEN (Bearer) works.

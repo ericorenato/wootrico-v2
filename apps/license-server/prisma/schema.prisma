@@ -91,6 +91,35 @@ model PurchaseIntent {
   @@map("purchase_intents")
 }
 
+// Payment ledger — every payment event received (Hotmart or other), for history
+// per-key, per-user and overall, and to drive the payments dashboard. Idempotent
+// by `transaction`. `kind`: purchase | renewal | refund | chargeback | cancel.
+model Payment {
+  id           String   @id @default(uuid())
+  // provider transaction id (Hotmart). Idempotency is per (transaction, event) —
+  // a refund reuses the purchase transaction id, so transaction alone isn't unique.
+  transaction  String?
+  provider     String   @default("hotmart")
+  event        String?  // raw provider event (e.g. PURCHASE_APPROVED)
+  kind         String   @default("purchase") // purchase | renewal | refund | chargeback | cancel
+  status       String?  // applied | ignored | rejected
+  email        String?
+  instanceId   String?  @map("instance_id")
+  licenseKeyId String?  @map("license_key_id")
+  amount       Float?
+  currency     String?
+  expiresAt    DateTime? @map("expires_at") // key expiry resulting from this payment
+  raw          Json?    // full provider payload (for audit)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([transaction, event])
+  @@index([email, createdAt])
+  @@index([licenseKeyId, createdAt])
+  @@index([kind, createdAt])
+  @@index([createdAt])
+  @@map("payments")
+}
+
 model HeartbeatLog {
   id           String   @id @default(uuid())
   licenseKeyId String   @map("license_key_id")
@@ -126,6 +155,10 @@ model LicenseEvent {
 model ServerSettings {
   id               String   @id @default("singleton")
   logRetentionDays Int?     @map("log_retention_days")
+  // Payment config, editable from the admin panel (falls back to env when null).
+  checkoutUrl      String?  @map("checkout_url") // Hotmart checkout link
+  hotmartHottok    String?  @map("hotmart_hottok") // Hotmart webhook token
+  hotmartProductId String?  @map("hotmart_product_id") // optional product filter
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("server_settings")

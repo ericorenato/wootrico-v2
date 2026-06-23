@@ -199,14 +199,12 @@ export default function License() {
   const isActive = info?.status === 'active' || info?.status === 'warning';
   const isBlocked = info?.status === 'blocked';
   const remaining = isActive ? daysLeft(info?.expiresAt ?? null) : null;
-  // Distinguish a genuine trial end-of-life from a "blocked because the server
-  // was unreachable for 48h" — the messaging and call-to-action differ.
-  const trialExpired = !!(
-    info?.plan === 'trial' &&
-    info?.expiresAt &&
-    new Date(info.expiresAt).getTime() <= Date.now()
-  );
-  const offlineBlocked = isBlocked && !trialExpired;
+  // A key past its expiry (trial 14d OR paid 1y) → show buy/renew. A block with a
+  // future/no expiry is the 48h-offline case → reconnecting, not a purchase.
+  const expired = !!(info?.expiresAt && new Date(info.expiresAt).getTime() <= Date.now());
+  const expiredBlocked = isBlocked && expired;
+  const isPaidExpired = expiredBlocked && info?.plan === 'paid';
+  const offlineBlocked = isBlocked && !expired;
 
   return (
     <div className="max-w-2xl">
@@ -264,12 +262,14 @@ export default function License() {
             </div>
           )}
 
-          {/* Banner de teste expirado. */}
-          {trialExpired && isBlocked && (
+          {/* Banner de licença/teste vencido. */}
+          {expiredBlocked && (
             <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
               <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-300" />
               <div className="text-sm">
-                <p className="font-medium text-red-200">Licença expirada</p>
+                <p className="font-medium text-red-200">
+                  {isPaidExpired ? 'Licença vencida' : 'Período de teste encerrado'}
+                </p>
                 <p className="text-red-200/80">
                   O processamento de mensagens está pausado e as integrações foram desativadas.
                   Seus dados continuam acessíveis.
@@ -349,17 +349,30 @@ export default function License() {
           </>
         )}
 
-        {trialExpired && isBlocked && (
+        {expiredBlocked && (
           <>
-            <h3 className="text-sm font-medium text-white mb-2">Adquirir licença</h3>
-            <p className="text-sm text-neutral-400 mb-5">
-              Seu período de teste terminou e as integrações estão pausadas. Para voltar a processar
-              mensagens, adquira uma licença definitiva. Seus dados continuam acessíveis.
+            <h3 className="text-sm font-medium text-white mb-2">
+              {isPaidExpired ? 'Renovar licença' : 'Adquirir licença'}
+            </h3>
+            <p className="text-sm text-neutral-400 mb-4">
+              {isPaidExpired
+                ? 'Sua licença anual venceu e o processamento está pausado. Renove para voltar a operar — seus dados continuam acessíveis.'
+                : 'Seu período de teste terminou e as integrações estão pausadas. Garanta sua licença para voltar a processar — seus dados continuam acessíveis.'}
             </p>
+
+            {/* Preço + validade de 1 ano. */}
+            <div className="mb-5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3">
+              <p className="text-2xl font-semibold text-white">
+                R$ 57,90 <span className="text-sm font-normal text-neutral-300">à vista</span>
+              </p>
+              <p className="text-sm text-neutral-300">ou 12x de R$ 8,42</p>
+              <p className="mt-1 text-xs text-blue-200/90">Acesso por 1 ano · renovável</p>
+            </div>
+
             <ErrorText>{error}</ErrorText>
             <div className="flex flex-wrap items-center gap-4">
               <Button onClick={buy} loading={busy}>
-                Adquirir licença definitiva
+                {isPaidExpired ? 'Renovar agora' : 'Adquirir licença'}
               </Button>
             </div>
           </>

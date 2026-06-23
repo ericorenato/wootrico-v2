@@ -81,9 +81,9 @@ type KeyLike = { revokedAt: Date | null; plan: string; expiresAt: Date | null };
 /** Whether a license key is currently valid, and if not, why. Online source of truth. */
 function keyStatus(lk: KeyLike, now: Date): { active: boolean; reason: string | null } {
   if (lk.revokedAt) return { active: false, reason: 'revoked' };
-  if (lk.plan === 'trial' && lk.expiresAt && lk.expiresAt <= now) {
-    return { active: false, reason: 'expired' };
-  }
+  // Any key with an expiry in the past is inactive — trial (14d) AND paid (1y).
+  // A null expiresAt means lifetime (admin-granted) and never expires.
+  if (lk.expiresAt && lk.expiresAt <= now) return { active: false, reason: 'expired' };
   return { active: true, reason: null };
 }
 
@@ -117,13 +117,14 @@ async function instanceSecrets(instanceId: string): Promise<string[]> {
   return out;
 }
 
-/** Prisma filter: keys that are still valid (not revoked, trial not expired). */
+/** Prisma filter: keys that are still valid (not revoked, not past expiry). A
+ * null expiresAt is lifetime. Applies uniformly to trial (14d) and paid (1y). */
 function liveKeyFilter(
   now: Date,
 ): import('../generated/client/index.js').Prisma.LicenseKeyWhereInput {
   return {
     revokedAt: null,
-    OR: [{ plan: 'paid' }, { expiresAt: null }, { expiresAt: { gt: now } }],
+    OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
   };
 }
 
@@ -553,7 +554,12 @@ app.post('/purchase-intent', async (req, reply) => {
     ip,
     meta: { intentId: intent.id, email: intent.email },
   });
-  return { ok: true, intentId: intent.id };
+  // Send the buyer to checkout, carrying the intent id as Hotmart `sck` so the
+  // payment maps back to this instance even if the buyer pays with another email.
+  const base = (await paymentConfig()).checkoutUrl;
+  const sep = base.includes('?') ? '&' : '?';
+  const checkoutUrl = `${base}${sep}sck=${encodeURIComponent(intent.id)}`;
+  return { ok: true, intentId: intent.id, checkoutUrl };
 });
 
 // ── payment webhook (external provider → license server) ──
@@ -580,6 +586,125 @@ async function requireWebhookKey(req: FastifyRequest, reply: FastifyReply): Prom
   return true;
 }
 
+/**
+ * Effective payment config: admin-panel settings (DB) take precedence, falling
+ * back to env. Lets the vendor set the Hotmart checkout link, webhook token and
+ * product id from the panel without redeploying.
+ */
+async function paymentConfig(): Promise<{
+  checkoutUrl: string;
+  hotmartHottok: string | undefined;
+  hotmartProductId: string | undefined;
+}> {
+  const s = await prisma.serverSettings.findUnique({ where: { id: 'singleton' } });
+  return {
+    checkoutUrl: s?.checkoutUrl || cfg.checkoutUrl,
+    hotmartHottok: s?.hotmartHottok || cfg.hotmartHottok,
+    hotmartProductId: s?.hotmartProductId || cfg.hotmartProductId,
+  };
+}
+
+/**
+ * Grant or RENEW a paid license for a buyer. Renewals STACK: +paidDays from the
+ * current expiry when it's still in the future, otherwise from now. Reactivates a
+ * revoked/expired key. With no instance (paid via a direct link), the key is
+ * created with `issuedKey` parked so the customer claims it by e-mail on
+ * provision. `deliverKey` is the raw key to park on the intent for delivery to a
+ * bound instance (null when the client already holds it / a legacy key).
+ */
+async function grantOrRenewPaid(opts: {
+  email: string;
+  name?: string | null;
+  instanceId?: string | null;
+}): Promise<{ licenseKeyId: string; deliverKey: string | null; expiresAt: Date; renewed: boolean }> {
+  const now = new Date();
+  const span = cfg.paidDays * DAY_MS;
+
+  // Prefer an existing paid key bound to the instance; else the buyer's by e-mail.
+  let lk = null as Awaited<ReturnType<typeof prisma.licenseKey.findFirst>> | null;
+  if (opts.instanceId) {
+    const act = await prisma.activation.findFirst({
+      where: { instanceId: opts.instanceId, licenseKey: { plan: 'paid' } },
+      include: { licenseKey: true },
+      orderBy: { licenseKey: { createdAt: 'desc' } },
+    });
+    lk = act?.licenseKey ?? null;
+  }
+  if (!lk) {
+    lk = await prisma.licenseKey.findFirst({
+      where: { plan: 'paid', email: { equals: opts.email, mode: 'insensitive' } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  if (lk) {
+    const base = lk.expiresAt && lk.expiresAt > now ? lk.expiresAt : now;
+    const expiresAt = new Date(base.getTime() + span);
+    await prisma.licenseKey.update({ where: { id: lk.id }, data: { expiresAt, revokedAt: null } });
+    if (opts.instanceId) {
+      await prisma.activation.upsert({
+        where: { licenseKeyId_instanceId: { licenseKeyId: lk.id, instanceId: opts.instanceId } },
+        create: { licenseKeyId: lk.id, instanceId: opts.instanceId, lastHeartbeatAt: now },
+        update: { revokedAt: null, lastHeartbeatAt: now },
+      });
+    }
+    return { licenseKeyId: lk.id, deliverKey: lk.issuedKey ?? null, expiresAt, renewed: true };
+  }
+
+  // Mint a new paid key — carry the seal secret forward so sealed integration
+  // credentials stay decryptable.
+  const prev = opts.instanceId
+    ? await prisma.activation.findFirst({
+        where: { instanceId: opts.instanceId, revokedAt: null },
+        include: { licenseKey: true },
+        orderBy: { boundAt: 'desc' },
+      })
+    : null;
+  const carrySecret = prev?.licenseKey?.secret ?? generateSecret();
+  const raw = generateKey();
+  const expiresAt = new Date(now.getTime() + span);
+  const created = await prisma.licenseKey.create({
+    data: {
+      keyHash: hashKey(raw),
+      plan: 'paid',
+      expiresAt,
+      email: opts.email,
+      name: opts.name ?? undefined,
+      provisionedBy: 'payment',
+      features: {} as never,
+      maxActivations: 1,
+      secret: carrySecret,
+      issuedKey: raw, // claim-by-email pickup + delivery to the bound instance
+    },
+  });
+  if (opts.instanceId) {
+    await prisma.activation.upsert({
+      where: { licenseKeyId_instanceId: { licenseKeyId: created.id, instanceId: opts.instanceId } },
+      create: { licenseKeyId: created.id, instanceId: opts.instanceId, lastHeartbeatAt: now },
+      update: { revokedAt: null, lastHeartbeatAt: now },
+    });
+  }
+  return { licenseKeyId: created.id, deliverKey: raw, expiresAt, renewed: false };
+}
+
+/** Revoke a buyer's paid key on refund/chargeback/cancel. */
+async function revokePaidForBuyer(opts: {
+  email?: string | null;
+  licenseKeyId?: string | null;
+}): Promise<string | null> {
+  let id = opts.licenseKeyId ?? null;
+  if (!id && opts.email) {
+    const lk = await prisma.licenseKey.findFirst({
+      where: { plan: 'paid', email: { equals: opts.email, mode: 'insensitive' }, revokedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    id = lk?.id ?? null;
+  }
+  if (!id) return null;
+  await prisma.licenseKey.update({ where: { id }, data: { revokedAt: new Date() } });
+  return id;
+}
+
 app.post('/webhook/payment', async (req, reply) => {
   if (!(await requireWebhookKey(req, reply))) return;
   const p = WebhookPaymentSchema.safeParse(req.body);
@@ -587,69 +712,205 @@ app.post('/webhook/payment', async (req, reply) => {
   const { email, paymentRef, name } = p.data;
   const now = new Date();
 
-  // Idempotency: a retried webhook with the same paymentRef is a no-op.
+  // Idempotency: a retried webhook with the same (transaction, event) is a no-op.
   if (paymentRef) {
-    const done = await prisma.purchaseIntent.findFirst({
-      where: { paymentRef, status: 'paid' },
-    });
-    if (done) return { ok: true, alreadyProcessed: true, intentId: done.id };
+    const done = await prisma.payment.findFirst({ where: { transaction: paymentRef, event: 'PAYMENT' } });
+    if (done) return { ok: true, alreadyProcessed: true };
   }
 
-  // Settle the most recent pending request for this email.
   const intent = await prisma.purchaseIntent.findFirst({
     where: { email, status: 'pending' },
     orderBy: { createdAt: 'desc' },
   });
-  if (!intent) return reply.code(404).send({ error: 'no_pending_intent' });
-
-  // Carry the per-license secret forward from the instance's current key so the
-  // integration credentials (sealed with it) stay decryptable after the upgrade.
-  const prevActivation = await prisma.activation.findFirst({
-    where: { instanceId: intent.instanceId, revokedAt: null },
-    include: { licenseKey: true },
-    orderBy: { boundAt: 'desc' },
-  });
-  const carrySecret = prevActivation?.licenseKey?.secret ?? generateSecret();
-
-  // Mint a fresh paid (lifetime) key and bind it to the buying instance.
-  const raw = generateKey();
-  const paidKey = await prisma.licenseKey.create({
+  const instanceId = intent?.instanceId ?? null;
+  const res = await grantOrRenewPaid({ email, name, instanceId });
+  if (intent) {
+    await prisma.purchaseIntent.update({
+      where: { id: intent.id },
+      data: {
+        status: 'paid',
+        licenseKeyId: res.licenseKeyId,
+        issuedKey: res.deliverKey,
+        paymentRef: paymentRef ?? null,
+        paidAt: now,
+      },
+    });
+  }
+  await prisma.payment.create({
     data: {
-      keyHash: hashKey(raw),
-      plan: 'paid',
-      expiresAt: null,
+      transaction: paymentRef ?? null,
+      provider: 'manual',
+      event: 'PAYMENT',
+      kind: res.renewed ? 'renewal' : 'purchase',
+      status: 'applied',
       email,
-      name,
-      provisionedBy: 'payment',
-      features: {} as never,
-      maxActivations: 1,
-      secret: carrySecret,
-    },
-  });
-  await prisma.activation.create({
-    data: {
-      licenseKeyId: paidKey.id,
-      instanceId: intent.instanceId,
-      lastHeartbeatAt: now,
-    },
-  });
-  await prisma.purchaseIntent.update({
-    where: { id: intent.id },
-    data: {
-      status: 'paid',
-      licenseKeyId: paidKey.id,
-      issuedKey: raw,
-      paymentRef: paymentRef ?? null,
-      paidAt: now,
+      instanceId,
+      licenseKeyId: res.licenseKeyId,
+      expiresAt: res.expiresAt,
     },
   });
   await recordEvent({
-    type: 'payment_confirmed',
-    licenseKeyId: paidKey.id,
-    instanceId: intent.instanceId,
-    meta: { intentId: intent.id, email, paymentRef: paymentRef ?? null },
+    type: res.renewed ? 'payment_renewed' : 'payment_confirmed',
+    licenseKeyId: res.licenseKeyId,
+    instanceId: instanceId ?? undefined,
+    meta: { intentId: intent?.id ?? null, email, paymentRef: paymentRef ?? null },
   });
-  return { ok: true, intentId: intent.id };
+  return { ok: true, intentId: intent?.id ?? null };
+});
+
+// ── Hotmart webhook (Postback 2.0) ──
+// Configure in Hotmart pointing to this endpoint; the token (hottok) goes in
+// HOTMART_HOTTOK. PURCHASE_APPROVED/COMPLETE → grant/renew +1y; refund/chargeback/
+// cancel → revoke. The intent id rides back as `sck` so we map to the instance.
+const APPROVE_EVENTS = new Set(['PURCHASE_APPROVED', 'PURCHASE_COMPLETE', 'PURCHASE_COMPLETED']);
+const REVOKE_EVENTS = new Set([
+  'PURCHASE_REFUNDED',
+  'PURCHASE_CHARGEBACK',
+  'PURCHASE_CANCELED',
+  'PURCHASE_CANCELLED',
+  'PURCHASE_PROTEST',
+]);
+
+function hotmartAuthorized(req: FastifyRequest, expected: string | undefined): boolean {
+  if (!expected) return false;
+  const header = (req.headers['x-hotmart-hottok'] as string | undefined) ?? '';
+  const body = req.body as { hottok?: unknown } | undefined;
+  const bodyTok = typeof body?.hottok === 'string' ? body.hottok : '';
+  const query = req.query as { hottok?: unknown } | undefined;
+  const queryTok = typeof query?.hottok === 'string' ? query.hottok : '';
+  return [header, bodyTok, queryTok].some((t) => t.length > 0 && t === expected);
+}
+
+app.post('/webhook/hotmart', async (req, reply) => {
+  const pc = await paymentConfig();
+  if (!hotmartAuthorized(req, pc.hotmartHottok)) return reply.code(401).send({ error: 'unauthorized' });
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const data = (body.data ?? {}) as Record<string, unknown>;
+  const buyer = (data.buyer ?? {}) as Record<string, unknown>;
+  const purchase = (data.purchase ?? {}) as Record<string, unknown>;
+  const product = (data.product ?? {}) as Record<string, unknown>;
+  const tracking = (purchase.tracking ?? {}) as Record<string, unknown>;
+  const price = (purchase.price ?? {}) as Record<string, unknown>;
+
+  const event = String(body.event ?? '').toUpperCase();
+  const email = typeof buyer.email === 'string' ? buyer.email : undefined;
+  const name = typeof buyer.name === 'string' ? buyer.name : undefined;
+  const transaction = typeof purchase.transaction === 'string' ? purchase.transaction : undefined;
+  const amount = typeof price.value === 'number' ? price.value : undefined;
+  const currency = typeof price.currency_value === 'string' ? price.currency_value : undefined;
+  const sck =
+    (typeof tracking.source_sck === 'string' && tracking.source_sck) ||
+    (typeof purchase.sck === 'string' && purchase.sck) ||
+    undefined;
+  const productId = product.id != null ? String(product.id) : undefined;
+
+  // Optional product filter.
+  if (pc.hotmartProductId && productId && productId !== pc.hotmartProductId) {
+    return { ok: true, ignored: 'other_product' };
+  }
+
+  // Idempotency per (transaction, event).
+  if (transaction) {
+    const done = await prisma.payment.findFirst({ where: { transaction, event } });
+    if (done) return { ok: true, alreadyProcessed: true };
+  }
+
+  // Resolve the intent: by sck (intent id), else the buyer's most recent pending.
+  let intent = sck
+    ? await prisma.purchaseIntent.findUnique({ where: { id: String(sck) } }).catch(() => null)
+    : null;
+  if (!intent && email) {
+    intent = await prisma.purchaseIntent.findFirst({
+      where: { email, status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+  const targetEmail = email ?? intent?.email ?? undefined;
+  const instanceId = intent?.instanceId ?? null;
+
+  if (APPROVE_EVENTS.has(event)) {
+    if (!targetEmail) {
+      await prisma.payment.create({
+        data: { transaction: transaction ?? null, provider: 'hotmart', event, kind: 'purchase', status: 'rejected', amount, currency, raw: body as never },
+      });
+      return reply.code(202).send({ ok: false, reason: 'no_email' });
+    }
+    const res = await grantOrRenewPaid({ email: targetEmail, name, instanceId });
+    if (intent) {
+      await prisma.purchaseIntent.update({
+        where: { id: intent.id },
+        data: {
+          status: 'paid',
+          licenseKeyId: res.licenseKeyId,
+          issuedKey: res.deliverKey,
+          paymentRef: transaction ?? null,
+          paidAt: new Date(),
+        },
+      });
+    }
+    await prisma.payment.create({
+      data: {
+        transaction: transaction ?? null,
+        provider: 'hotmart',
+        event,
+        kind: res.renewed ? 'renewal' : 'purchase',
+        status: 'applied',
+        email: targetEmail,
+        instanceId,
+        licenseKeyId: res.licenseKeyId,
+        amount,
+        currency,
+        expiresAt: res.expiresAt,
+        raw: body as never,
+      },
+    });
+    await recordEvent({
+      type: res.renewed ? 'payment_renewed' : 'payment_confirmed',
+      licenseKeyId: res.licenseKeyId,
+      instanceId: instanceId ?? undefined,
+      meta: { intentId: intent?.id ?? null, email: targetEmail, transaction: transaction ?? null },
+    });
+    return { ok: true, renewed: res.renewed, intentId: intent?.id ?? null };
+  }
+
+  if (REVOKE_EVENTS.has(event)) {
+    const revokedKeyId = await revokePaidForBuyer({ email: targetEmail, licenseKeyId: intent?.licenseKeyId });
+    const kind = event.includes('CHARGEBACK')
+      ? 'chargeback'
+      : event.includes('CANCEL')
+        ? 'cancel'
+        : 'refund';
+    await prisma.payment.create({
+      data: {
+        transaction: transaction ?? null,
+        provider: 'hotmart',
+        event,
+        kind,
+        status: revokedKeyId ? 'applied' : 'ignored',
+        email: targetEmail,
+        instanceId,
+        licenseKeyId: revokedKeyId,
+        amount,
+        currency,
+        raw: body as never,
+      },
+    });
+    if (revokedKeyId) {
+      await recordEvent({
+        type: 'payment_refunded',
+        licenseKeyId: revokedKeyId,
+        meta: { event, email: targetEmail, transaction: transaction ?? null },
+      });
+    }
+    return { ok: true, revoked: !!revokedKeyId };
+  }
+
+  // Any other event (billet printed, delayed, etc.) — log and ack.
+  await prisma.payment.create({
+    data: { transaction: transaction ?? null, provider: 'hotmart', event, kind: 'purchase', status: 'ignored', email: targetEmail, amount, currency, raw: body as never },
+  });
+  return { ok: true, ignored: event };
 });
 
 // ── deactivate (release binding) ──
@@ -796,7 +1057,8 @@ function statusFilter(
 ): import('../generated/client/index.js').Prisma.LicenseKeyWhereInput {
   if (status === 'revoked') return { revokedAt: { not: null } };
   if (status === 'expired') {
-    return { revokedAt: null, plan: 'trial', expiresAt: { lte: now } };
+    // Any non-revoked key past its expiry (trial or paid). Lifetime keys (null) never.
+    return { revokedAt: null, expiresAt: { lte: now } };
   }
   if (status === 'active') return liveKeyFilter(now);
   return {};
@@ -869,11 +1131,13 @@ app.get('/admin/keys', async (req, reply) => {
         k.activations.map((a) => a.lastIp ?? a.firstIp).filter(Boolean) as string[],
       );
       const activeInstances = liveBindings.length;
-      const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+      const expired = !!k.expiresAt && k.expiresAt <= now;
       const statusReason = k.revokedAt
         ? 'revogada'
         : expired
-          ? 'teste expirado'
+          ? k.plan === 'paid'
+            ? 'licença vencida'
+            : 'teste expirado'
           : null;
       return {
         id: k.id,
@@ -979,7 +1243,7 @@ async function buildUsers(opts: { q?: string; from?: string; to?: string }): Pro
     u.keysTotal += 1;
     if (k.plan === 'paid') u.paid += 1;
     else u.trial += 1;
-    const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+    const expired = !!k.expiresAt && k.expiresAt <= now;
     if (k.revokedAt) u.revoked += 1;
     else if (expired) u.expired += 1;
     else u.active += 1;
@@ -1066,12 +1330,18 @@ app.get('/admin/users/:email', async (req, reply) => {
         lastRequestAt = a.lastHeartbeatAt;
       }
     }
-    const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+    const expired = !!k.expiresAt && k.expiresAt <= now;
     return {
       id: k.id,
       plan: k.plan,
       status: k.revokedAt ? 'revoked' : expired ? 'expired' : 'active',
-      statusReason: k.revokedAt ? 'revogada' : expired ? 'teste expirado' : null,
+      statusReason: k.revokedAt
+        ? 'revogada'
+        : expired
+          ? k.plan === 'paid'
+            ? 'licença vencida'
+            : 'teste expirado'
+          : null,
       expiresAt: k.expiresAt,
       createdAt: k.createdAt,
       activeInstances: live.length,
@@ -1137,6 +1407,132 @@ app.post('/admin/keys/:id/reactivate-trial', async (req, reply) => {
   return { ok: true };
 });
 
+// Set/override a key's expiry date directly — a paid key defaults to 1 year, but
+// the admin can push the date, shorten it, or clear it (null = lifetime).
+const SetExpirySchema = z.object({ expiresAt: z.string().datetime().nullable() });
+app.post('/admin/keys/:id/set-expiry', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  const p = SetExpirySchema.safeParse(req.body ?? {});
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const expiresAt = p.data.expiresAt ? new Date(p.data.expiresAt) : null;
+  await prisma.licenseKey.update({ where: { id }, data: { expiresAt } });
+  await recordEvent({
+    type: 'admin_set_expiry',
+    licenseKeyId: id,
+    meta: { expiresAt: expiresAt?.toISOString() ?? null },
+  });
+  return { ok: true };
+});
+
+// ── admin: payments history (per-user via ?q, per-key via ?keyId, or all) ──
+const PaymentsQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  keyId: z.string().optional(),
+  kind: z.enum(['purchase', 'renewal', 'refund', 'chargeback', 'cancel']).optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  before: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+});
+app.get('/admin/payments', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const q = PaymentsQuerySchema.safeParse(req.query ?? {});
+  if (!q.success) return reply.code(400).send({ error: 'validation' });
+  const { q: email, keyId, kind, from, to, before, limit } = q.data;
+  const take = limit ?? 50;
+
+  const createdAt: { gte?: Date; lte?: Date } = {};
+  if (from) createdAt.gte = new Date(from);
+  if (to) createdAt.lte = new Date(to);
+  if (before) createdAt.lte = new Date(before);
+
+  const rows = await prisma.payment.findMany({
+    where: {
+      ...(email ? { email: { contains: email, mode: 'insensitive' } } : {}),
+      ...(keyId ? { licenseKeyId: keyId } : {}),
+      ...(kind ? { kind } : {}),
+      ...(from || to || before ? { createdAt } : {}),
+    },
+    orderBy: { createdAt: 'desc' },
+    take: take + 1,
+    select: {
+      id: true,
+      transaction: true,
+      provider: true,
+      event: true,
+      kind: true,
+      status: true,
+      email: true,
+      instanceId: true,
+      licenseKeyId: true,
+      amount: true,
+      currency: true,
+      expiresAt: true,
+      createdAt: true,
+    },
+  });
+  const hasMore = rows.length > take;
+  const payments = hasMore ? rows.slice(0, take) : rows;
+  const nextBefore = hasMore ? payments[payments.length - 1]!.createdAt.toISOString() : null;
+  return { payments, nextBefore };
+});
+
+// ── admin: payments dashboard (totals + 30-day revenue/volume series) ──
+app.get('/admin/payments/summary', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const now = new Date();
+  const since = new Date(now.getTime() - 29 * DAY_MS);
+  const soon = new Date(now.getTime() + 30 * DAY_MS);
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+
+  const [purchases, renewals, refunds, paidActive, expiringSoon, revenueAgg, applied] = await Promise.all([
+    prisma.payment.count({ where: { kind: 'purchase', status: 'applied' } }),
+    prisma.payment.count({ where: { kind: 'renewal', status: 'applied' } }),
+    prisma.payment.count({ where: { kind: { in: ['refund', 'chargeback', 'cancel'] }, status: 'applied' } }),
+    prisma.licenseKey.count({ where: { plan: 'paid', ...liveKeyFilter(now) } }),
+    prisma.licenseKey.count({ where: { plan: 'paid', revokedAt: null, expiresAt: { gt: now, lte: soon } } }),
+    prisma.payment.aggregate({
+      _sum: { amount: true },
+      where: { status: 'applied', kind: { in: ['purchase', 'renewal'] } },
+    }),
+    prisma.payment.findMany({
+      where: { status: 'applied', kind: { in: ['purchase', 'renewal'] }, createdAt: { gte: since } },
+      select: { amount: true, kind: true, createdAt: true },
+    }),
+  ]);
+
+  // 30-day series: count + revenue per day.
+  const blank = (): { day: string; count: number; revenue: number }[] => {
+    const out: { day: string; count: number; revenue: number }[] = [];
+    for (let i = 0; i < 30; i++)
+      out.push({ day: dayKey(new Date(since.getTime() + i * DAY_MS)), count: 0, revenue: 0 });
+    return out;
+  };
+  const series = blank();
+  const idx = new Map(series.map((b, i) => [b.day, i]));
+  for (const r of applied) {
+    const i = idx.get(dayKey(r.createdAt));
+    if (i !== undefined) {
+      series[i]!.count += 1;
+      series[i]!.revenue += r.amount ?? 0;
+    }
+  }
+
+  return {
+    totals: {
+      revenue: revenueAgg._sum.amount ?? 0,
+      payments: purchases + renewals,
+      purchases,
+      renewals,
+      refunds,
+      paidActive,
+      expiringSoon,
+    },
+    series,
+  };
+});
+
 // Manually expire a TRIAL key now — forces the client to revalidate (get a new
 // trial or buy). Paid keys don't expire (use revoke instead).
 const ExpireKeySchema = z.object({ reason: z.string().trim().max(300).optional() });
@@ -1183,7 +1579,8 @@ app.get('/admin/keys/:id', async (req, reply) => {
   const distinctIps = new Set(
     k.activations.map((a) => a.lastIp ?? a.firstIp).filter(Boolean) as string[],
   );
-  const expired = k.plan === 'trial' && !!k.expiresAt && k.expiresAt <= now;
+  const expired = !!k.expiresAt && k.expiresAt <= now;
+  const reasonText = k.plan === 'paid' ? 'licença vencida' : 'teste expirado';
   const alerts = await prisma.licenseEvent.count({ where: { type: 'ip_alert', licenseKeyId: id } });
   const status = k.revokedAt ? 'revoked' : expired ? 'expired' : 'active';
   return {
@@ -1191,7 +1588,7 @@ app.get('/admin/keys/:id', async (req, reply) => {
       id: k.id,
       plan: k.plan,
       status,
-      statusReason: k.revokedAt ? 'revogada' : expired ? 'teste expirado' : null,
+      statusReason: k.revokedAt ? 'revogada' : expired ? reasonText : null,
       expiresAt: k.expiresAt,
       revokedAt: k.revokedAt,
       email: k.email,
@@ -1283,22 +1680,44 @@ app.get('/admin/events', async (req, reply) => {
 // log-retention window that drives the periodic purge (null = keep forever).
 const SettingsSchema = z.object({
   logRetentionDays: z.number().int().positive().nullable(),
+  checkoutUrl: z.string().url().nullable().optional(),
+  hotmartHottok: z.string().trim().max(200).nullable().optional(),
+  hotmartProductId: z.string().trim().max(100).nullable().optional(),
 });
 
 app.get('/admin/settings', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const s = await prisma.serverSettings.findUnique({ where: { id: 'singleton' } });
-  return { logRetentionDays: s?.logRetentionDays ?? null };
+  return {
+    logRetentionDays: s?.logRetentionDays ?? null,
+    checkoutUrl: s?.checkoutUrl ?? null,
+    hotmartHottok: s?.hotmartHottok ?? null,
+    hotmartProductId: s?.hotmartProductId ?? null,
+    // Defaults coming from env, shown as placeholders / "active fallback" hints.
+    envDefaults: {
+      checkoutUrl: cfg.checkoutUrl,
+      hotmartHottokSet: !!cfg.hotmartHottok,
+      hotmartProductId: cfg.hotmartProductId ?? null,
+    },
+  };
 });
 
 app.put('/admin/settings', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const body = SettingsSchema.safeParse(req.body ?? {});
   if (!body.success) return reply.code(400).send({ error: 'validation' });
+  // Normalize empty strings to null (so they fall back to env).
+  const norm = (v: string | null | undefined) => (v && v.trim() ? v.trim() : null);
+  const data = {
+    logRetentionDays: body.data.logRetentionDays,
+    checkoutUrl: norm(body.data.checkoutUrl),
+    hotmartHottok: norm(body.data.hotmartHottok),
+    hotmartProductId: norm(body.data.hotmartProductId),
+  };
   await prisma.serverSettings.upsert({
     where: { id: 'singleton' },
-    create: { id: 'singleton', logRetentionDays: body.data.logRetentionDays },
-    update: { logRetentionDays: body.data.logRetentionDays },
+    create: { id: 'singleton', ...data },
+    update: data,
   });
   return { ok: true };
 });
@@ -1415,7 +1834,7 @@ app.get('/admin/stats', async (req, reply) => {
   ]);
   const [activeKeys, expired] = await Promise.all([
     prisma.licenseKey.count({ where: liveKeyFilter(now) }),
-    prisma.licenseKey.count({ where: { revokedAt: null, plan: 'trial', expiresAt: { lte: now } } }),
+    prisma.licenseKey.count({ where: { revokedAt: null, expiresAt: { lte: now } } }),
   ]);
   const trial = keys - paid;
 

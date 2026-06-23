@@ -288,6 +288,61 @@ export const grantLicense = (body: { email: string; name?: string; plan?: 'trial
 export const reactivateTrial = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/reactivate-trial`, { method: 'POST' });
 
+/** Set/override a key's expiry (ISO string) or clear it (null = lifetime). */
+export const setKeyExpiry = (id: string, expiresAt: string | null) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}/set-expiry`, {
+    method: 'POST',
+    body: JSON.stringify({ expiresAt }),
+  });
+
+// ── Payments ──
+export interface PaymentRow {
+  id: string;
+  transaction: string | null;
+  provider: string;
+  event: string | null;
+  kind: 'purchase' | 'renewal' | 'refund' | 'chargeback' | 'cancel' | string;
+  status: string | null;
+  email: string | null;
+  instanceId: string | null;
+  licenseKeyId: string | null;
+  amount: number | null;
+  currency: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export const getPayments = (
+  params: { q?: string; keyId?: string; kind?: string; from?: string; to?: string; before?: string } = {},
+) => {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set('q', params.q);
+  if (params.keyId) sp.set('keyId', params.keyId);
+  if (params.kind) sp.set('kind', params.kind);
+  if (params.from) sp.set('from', params.from);
+  if (params.to) sp.set('to', params.to);
+  if (params.before) sp.set('before', params.before);
+  const qs = sp.toString();
+  return api<{ payments: PaymentRow[]; nextBefore: string | null }>(
+    `/admin/payments${qs ? `?${qs}` : ''}`,
+  );
+};
+
+export interface PaymentsSummary {
+  totals: {
+    revenue: number;
+    payments: number;
+    purchases: number;
+    renewals: number;
+    refunds: number;
+    paidActive: number;
+    expiringSoon: number;
+  };
+  series: { day: string; count: number; revenue: number }[];
+}
+
+export const getPaymentsSummary = () => api<PaymentsSummary>('/admin/payments/summary');
+
 export const getEvents = (
   params: {
     before?: string;
@@ -313,9 +368,21 @@ export const getKeyEvents = (id: string) =>
 
 export interface ServerSettings {
   logRetentionDays: number | null;
+  checkoutUrl: string | null;
+  hotmartHottok: string | null;
+  hotmartProductId: string | null;
+  envDefaults?: {
+    checkoutUrl: string | null;
+    hotmartHottokSet: boolean;
+    hotmartProductId: string | null;
+  };
 }
 
 export const getSettings = () => api<ServerSettings>('/admin/settings');
 
-export const updateSettings = (body: ServerSettings) =>
-  api<{ ok: boolean }>('/admin/settings', { method: 'PUT', body: JSON.stringify(body) });
+export const updateSettings = (body: {
+  logRetentionDays: number | null;
+  checkoutUrl?: string | null;
+  hotmartHottok?: string | null;
+  hotmartProductId?: string | null;
+}) => api<{ ok: boolean }>('/admin/settings', { method: 'PUT', body: JSON.stringify(body) });

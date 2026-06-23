@@ -148,11 +148,13 @@ export async function requestPurchase(email?: string | null): Promise<{ checkout
   } catch (err) {
     throw new LicenseError(`license server unreachable: ${(err as Error).message}`);
   }
+  const data = (await res.json().catch(() => ({}))) as { error?: string; checkoutUrl?: string };
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
     throw new LicenseError(data.error ?? `purchase_intent_failed_${res.status}`);
   }
-  return { checkoutUrl: env.LICENSE_CHECKOUT_URL ?? null };
+  // The license server returns the checkout URL (Hotmart link + intent as `sck`),
+  // so the vendor controls it centrally. Fall back to the local env if absent.
+  return { checkoutUrl: data.checkoutUrl ?? env.LICENSE_CHECKOUT_URL ?? null };
 }
 
 /** Release the binding so the key can be moved to another instance. */
