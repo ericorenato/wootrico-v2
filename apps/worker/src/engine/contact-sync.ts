@@ -1,17 +1,40 @@
 import { hmac, logger } from '@wootrico/config';
 import { cacheGet, cacheSet } from '@wootrico/cache';
 import { prisma } from '@wootrico/db';
-import type { ChatwootClient } from '@wootrico/chatwoot-client';
+import type { AttachmentInput, ChatwootClient } from '@wootrico/chatwoot-client';
 import type { WhatsAppProvider } from '@wootrico/providers';
 
 const SYNC_TTL = 7 * 24 * 3600; // a week
+const MAX_AVATAR_ATTEMPTS = 5; // bound retries when there's no pic / persistent failure
+const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 interface SyncedMeta {
   name?: string;
   phone?: string;
-  avatar?: boolean; // an avatar has been applied at least once
+  avatarOk?: boolean; // avatar successfully UPLOADED to Chatwoot
   avatarUrl?: string; // last avatar URL applied (to detect changes)
   avatarTried?: string; // last target we fetched the avatar for
+  avatarAttempts?: number; // fetch attempts so far (caps retries)
+}
+
+/**
+ * Download an image to upload to Chatwoot. WhatsApp avatar URLs are fetched while
+ * still fresh and the bytes are pushed to Chatwoot directly, so Chatwoot never
+ * has to reach the (short-lived, often-unreachable) WhatsApp CDN itself.
+ */
+async function downloadImage(url: string): Promise<AttachmentInput | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const ct = res.headers.get('content-type') ?? 'image/jpeg';
+    if (!ct.startsWith('image/')) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > MAX_AVATAR_BYTES) return null;
+    const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg';
+    return { buffer: buf, filename: `avatar.${ext}`, contentType: ct };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -38,39 +61,9 @@ export async function syncContactMeta(opts: {
   const key = `cw:meta:${opts.integrationId}:${hmac(opts.identifier)}`;
   const prev = (await cacheGet<SyncedMeta>(key)) ?? {};
 
-  const update: { name?: string; phoneNumber?: string; avatarUrl?: string } = {};
+  const update: { name?: string; phoneNumber?: string } = {};
   if (opts.name && opts.name !== prev.name) update.name = opts.name;
   if (opts.phoneE164 && opts.phoneE164 !== prev.phone) update.phoneNumber = opts.phoneE164;
-
-  // Avatar: prefer one already in the payload (uazapi sends senderPhoto). When
-  // it isn't there (Evolution), fetch it from the provider — at most once per
-  // addressing target so we retry when the number becomes known.
-  let avatarDone = prev.avatar === true;
-  let avatarUrl: string | undefined;
-  let avatarTried = prev.avatarTried;
-  if (opts.avatarUrl && opts.avatarUrl !== prev.avatarUrl) {
-    avatarUrl = opts.avatarUrl;
-  } else if (
-    !opts.avatarUrl &&
-    !avatarDone &&
-    opts.avatarTarget &&
-    opts.avatarTarget !== prev.avatarTried &&
-    typeof opts.provider.fetchProfilePictureUrl === 'function'
-  ) {
-    avatarTried = opts.avatarTarget;
-    const url = await opts.provider.fetchProfilePictureUrl(opts.avatarTarget).catch(() => null);
-    if (url) avatarUrl = url;
-  }
-  if (avatarUrl) {
-    update.avatarUrl = avatarUrl;
-    avatarDone = true;
-    // Mirror it onto the GLOBAL identity row so the panel's contacts list can
-    // show it. Best-effort: identifier is the canonical id for DMs; a non-UUID
-    // fallback (phone/jid) simply matches no row and is swallowed.
-    await prisma.contactIdentity
-      .update({ where: { id: opts.identifier }, data: { avatarUrl } })
-      .catch(() => undefined);
-  }
 
   if (Object.keys(update).length) {
     await opts.chatwoot
@@ -78,14 +71,56 @@ export async function syncContactMeta(opts: {
       .catch((err) => logger.debug({ err, integrationId: opts.integrationId }, 'updateContact failed'));
   }
 
+  // Avatar: prefer one already in the payload (uazapi sends senderPhoto). When it
+  // isn't there (Evolution), fetch it from the provider. We retry — bounded by
+  // MAX_AVATAR_ATTEMPTS — until the image is actually UPLOADED to Chatwoot, since
+  // a fresh URL handed to Chatwoot often fails to download server-side.
+  let avatarOk = prev.avatarOk === true;
+  let avatarUrl: string | undefined;
+  let avatarTried = prev.avatarTried;
+  let avatarAttempts = prev.avatarAttempts ?? 0;
+
+  if (opts.avatarUrl && opts.avatarUrl !== prev.avatarUrl) {
+    avatarUrl = opts.avatarUrl;
+  } else if (
+    !opts.avatarUrl &&
+    !avatarOk &&
+    avatarAttempts < MAX_AVATAR_ATTEMPTS &&
+    opts.avatarTarget &&
+    typeof opts.provider.fetchProfilePictureUrl === 'function'
+  ) {
+    avatarTried = opts.avatarTarget;
+    avatarAttempts += 1;
+    const url = await opts.provider.fetchProfilePictureUrl(opts.avatarTarget).catch(() => null);
+    if (url) avatarUrl = url;
+  }
+
+  if (avatarUrl) {
+    // Download while the URL is fresh and push the BYTES to Chatwoot (reliable).
+    const img = await downloadImage(avatarUrl);
+    if (img) {
+      try {
+        await opts.chatwoot.setContactAvatar(opts.contactId, img);
+        avatarOk = true;
+      } catch (err) {
+        logger.debug({ err, integrationId: opts.integrationId }, 'setContactAvatar failed');
+      }
+    }
+    // Mirror onto the GLOBAL identity row so the panel's contacts list shows it.
+    await prisma.contactIdentity
+      .update({ where: { id: opts.identifier }, data: { avatarUrl } })
+      .catch(() => undefined);
+  }
+
   await cacheSet(
     key,
     {
       name: opts.name ?? prev.name,
       phone: opts.phoneE164 ?? prev.phone,
-      avatar: avatarDone,
+      avatarOk,
       avatarUrl: avatarUrl ?? prev.avatarUrl,
       avatarTried,
+      avatarAttempts,
     } satisfies SyncedMeta,
     SYNC_TTL,
   );

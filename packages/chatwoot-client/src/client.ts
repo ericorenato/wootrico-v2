@@ -237,6 +237,25 @@ export class ChatwootClient {
     await this.http.put(this.acc(`/contacts/${contactId}`), body);
   }
 
+  /**
+   * Set a contact's avatar by UPLOADING the image bytes (multipart `avatar`),
+   * instead of handing Chatwoot a URL it must fetch itself. WhatsApp profile
+   * pictures (pps.whatsapp.net) are short-lived and frequently unreachable from
+   * the Chatwoot server, so url-based avatars silently fail — uploading the bytes
+   * is reliable.
+   */
+  async setContactAvatar(contactId: string | number, avatar: AttachmentInput): Promise<void> {
+    const form = new FormData();
+    form.append('avatar', avatar.buffer, {
+      filename: avatar.filename,
+      contentType: avatar.contentType,
+    });
+    await this.http.put(this.acc(`/contacts/${contactId}`), form, {
+      headers: form.getHeaders(),
+      timeout: 30000,
+    });
+  }
+
   // ─────────────────────── conversations ───────────────────────
 
   async findConversation(opts: {
