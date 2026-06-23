@@ -85,7 +85,12 @@ services:
     image: ${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}
     platform: ${WOOTRICO_PLATFORM:-}
     env_file: .env
-    command: node apps/worker/dist/main.cjs
+    # Run pending migrations before starting (Prisma takes a Postgres advisory
+    # lock, so racing the `app` service is safe — one waits for the other). This
+    # stops the worker from booting against a not-yet-migrated DB.
+    command: >-
+      sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
+             node apps/worker/dist/main.cjs"
     networks: [wootrico]
     deploy:
       replicas: 1

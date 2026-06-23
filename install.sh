@@ -502,7 +502,9 @@ EOF
   worker:
     image: __IMAGE__
     env_file: .env
-    command: node apps/worker/dist/main.cjs
+    command: >-
+      sh -c "pnpm --filter @wootrico/db exec prisma migrate deploy &&
+             node apps/worker/dist/main.cjs"
     networks: [wtnet]
     deploy:
       replicas: 1
