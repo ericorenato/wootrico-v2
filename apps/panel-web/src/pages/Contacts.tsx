@@ -11,7 +11,7 @@ const ROW_GRID =
 
 /** Origin badges: where the contact was observed (not mutually exclusive). */
 function OriginCell({ contact }: { contact: ContactDTO }) {
-  const { seenInDm, seenInGroup } = contact;
+  const { seenInDm, seenInGroup, groupName } = contact;
   if (!seenInDm && !seenInGroup) {
     return (
       <span className="text-xs text-neutral-600" title="Origem ainda não registrada">
@@ -31,10 +31,11 @@ function OriginCell({ contact }: { contact: ContactDTO }) {
       )}
       {seenInGroup && (
         <span
-          title="Visto como participante de grupo"
-          className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-300"
+          title={groupName ? `Visto no grupo: ${groupName}` : 'Visto como participante de grupo'}
+          className="inline-flex max-w-[180px] items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-300"
         >
-          <Users size={10} /> Grupo
+          <Users size={10} className="shrink-0" />
+          <span className="truncate">{groupName ? `Grupo · ${groupName}` : 'Grupo'}</span>
         </span>
       )}
     </div>

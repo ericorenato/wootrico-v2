@@ -20,10 +20,11 @@ function toJid(pn: string | null, lid: string | null): string | null {
 }
 
 /** Human label for where the contact was observed (CSV). */
-function originLabel(seenInDm: boolean, seenInGroup: boolean): string {
-  if (seenInDm && seenInGroup) return 'Direto e grupo';
+function originLabel(seenInDm: boolean, seenInGroup: boolean, groupName: string | null): string {
+  const group = groupName ? `Grupo: ${groupName}` : 'Grupo';
+  if (seenInDm && seenInGroup) return `Direto e ${group.toLowerCase()}`;
   if (seenInDm) return 'Direto';
-  if (seenInGroup) return 'Grupo';
+  if (seenInGroup) return group;
   return 'Desconhecida';
 }
 
@@ -68,6 +69,7 @@ export default async function contactRoutes(app: FastifyInstance) {
           avatarUrl: true,
           seenInDm: true,
           seenInGroup: true,
+          lastGroupName: true,
           createdAt: true,
           updatedAt: true,
           lastSeenAt: true,
@@ -83,6 +85,7 @@ export default async function contactRoutes(app: FastifyInstance) {
       avatarUrl: c.avatarUrl,
       seenInDm: c.seenInDm,
       seenInGroup: c.seenInGroup,
+      groupName: c.lastGroupName,
       createdAt: c.createdAt.toISOString(),
       updatedAt: c.updatedAt.toISOString(),
       lastSeenAt: c.lastSeenAt ? c.lastSeenAt.toISOString() : null,
@@ -107,6 +110,7 @@ export default async function contactRoutes(app: FastifyInstance) {
         pushName: true,
         seenInDm: true,
         seenInGroup: true,
+        lastGroupName: true,
         createdAt: true,
         updatedAt: true,
         lastSeenAt: true,
@@ -122,7 +126,7 @@ export default async function contactRoutes(app: FastifyInstance) {
           csvCell(c.pn),
           csvCell(c.lid),
           csvCell(toJid(c.pn, c.lid)),
-          csvCell(originLabel(c.seenInDm, c.seenInGroup)),
+          csvCell(originLabel(c.seenInDm, c.seenInGroup, c.lastGroupName)),
           csvCell(c.createdAt.toISOString()),
           csvCell(c.updatedAt.toISOString()),
           csvCell(c.lastSeenAt ? c.lastSeenAt.toISOString() : null),

@@ -28,6 +28,7 @@ export interface IdentityInput {
   lid?: string | null; // LID number, no @lid
   pushName?: string | null;
   source?: 'dm' | 'group'; // where this sender was observed (sets the origin flags)
+  groupName?: string | null; // when source==='group', the group's name (for the panel)
 }
 
 function clean(v?: string | null): string | null {
@@ -49,6 +50,7 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
   const lid = clean(input.lid);
   const pushName = clean(input.pushName);
   const source = input.source;
+  const groupName = source === 'group' ? clean(input.groupName) : null;
   if (!pn && !lid) return null;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -68,6 +70,7 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
               pushName: pushName ?? byLid.pushName ?? byPn.pushName,
               seenInDm: byLid.seenInDm || byPn.seenInDm || source === 'dm',
               seenInGroup: byLid.seenInGroup || byPn.seenInGroup || source === 'group',
+              lastGroupName: groupName ?? byLid.lastGroupName ?? byPn.lastGroupName,
               lastSeenAt: new Date(),
             },
           });
@@ -82,6 +85,7 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
           if (pushName && pushName !== existing.pushName) data.pushName = pushName;
           if (source === 'dm' && !existing.seenInDm) data.seenInDm = true;
           if (source === 'group' && !existing.seenInGroup) data.seenInGroup = true;
+          if (groupName && groupName !== existing.lastGroupName) data.lastGroupName = groupName;
           const row =
             Object.keys(data).length > 1
               ? await tx.contactIdentity.update({ where: { id: existing.id }, data })
@@ -96,6 +100,7 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
             pushName,
             seenInDm: source === 'dm',
             seenInGroup: source === 'group',
+            lastGroupName: groupName,
             lastSeenAt: new Date(),
           },
         });
@@ -117,17 +122,21 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
  */
 export async function ingestDirectoryHints(
   hints: Array<{ pn?: string | null; lid?: string | null; pushName?: string | null }>,
+  groupName?: string | null,
 ): Promise<void> {
   // New rows are tagged seen_in_group and carry the roster display name when the
   // provider gives one — so a participant who never sent a DM still shows up
-  // named. skipDuplicates means existing rows are left untouched (the member who
-  // actually speaks gets the precise update via resolveIdentity).
+  // named, with the group they came from. skipDuplicates means existing rows are
+  // left untouched (the member who actually speaks gets the precise update via
+  // resolveIdentity).
+  const gname = clean(groupName);
   const rows = hints
     .map((h) => ({
       pn: clean(h.pn),
       lid: clean(h.lid),
       pushName: clean(h.pushName),
       seenInGroup: true,
+      lastGroupName: gname,
     }))
     .filter((h) => h.pn || h.lid);
   if (!rows.length) return;

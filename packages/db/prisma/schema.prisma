@@ -165,6 +165,10 @@ model ContactIdentity {
   // are seen_in_group=true with no push name/avatar until they send a message.
   seenInDm    Boolean @default(false) @map("seen_in_dm")
   seenInGroup Boolean @default(false) @map("seen_in_group")
+  // Name of the most recent group this contact was seen in — so the panel can
+  // signal WHICH group a group-origin contact came from (besides the person's
+  // own name). Null for DM-only contacts.
+  lastGroupName String? @map("last_group_name")
 
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")

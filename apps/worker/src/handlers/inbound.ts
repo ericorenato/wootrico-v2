@@ -55,15 +55,20 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   const identity = await resolveIdentity({
     pn: norm.phone,
     lid: norm.lid,
-    pushName: norm.name ?? norm.senderName,
+    // In a group, `name` can be the GROUP/chat name (e.g. uazapi sets it to the
+    // chat name) — the participant's own name is `senderName`. Use that so a group
+    // member isn't saved (or overwritten) under the group's name. For DMs `name`
+    // is the contact's own name.
+    pushName: isGroup ? norm.senderName : (norm.name ?? norm.senderName),
     source: isGroup ? 'group' : 'dm',
+    groupName: isGroup ? norm.groupName : null,
   });
   // Seed the directory with the whole group roster (throttled, best-effort).
   if (isGroup && norm.groupId && norm.directoryHints?.length) {
     const hintKey = `idir:group:${hmac(norm.groupId)}`;
     if ((await cacheGet(hintKey)) == null) {
       await cacheSet(hintKey, 1, 6 * 3600);
-      await ingestDirectoryHints(norm.directoryHints);
+      await ingestDirectoryHints(norm.directoryHints, norm.groupName);
     }
   }
   // Canonical key — drives Chatwoot identifier, dedup and per-conversation lock.
@@ -81,8 +86,9 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
   // the global directory (e.g. another company already paired this LID↔number).
   const discoveredPhone = !isGroup ? (norm.phone ?? identity?.pn ?? null) : null;
   // In groups, label each message with who sent it (Chatwoot has no groups, so
-  // the whole group is one contact/conversation).
-  const senderLabel = norm.senderName ?? norm.name ?? null;
+  // the whole group is one contact/conversation). Never fall back to `name` in a
+  // group — it may be the group's name, not the speaker's.
+  const senderLabel = norm.senderName ?? (isGroup ? null : norm.name) ?? null;
 
   const mirror = async (
     direction: ChatwootMessageType,

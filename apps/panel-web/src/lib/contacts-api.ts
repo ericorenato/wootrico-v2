@@ -15,6 +15,8 @@ export interface ContactDTO {
   seenInDm: boolean;
   /** Observed as a participant of a group (sender or seeded from the roster). */
   seenInGroup: boolean;
+  /** Name of the most recent group this contact was seen in (null for DM-only). */
+  groupName: string | null;
   createdAt: string;
   updatedAt: string;
   lastSeenAt: string | null;
