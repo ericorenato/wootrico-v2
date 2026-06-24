@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Terminal } from 'lucide-react';
+import { Terminal, Instagram, Youtube } from 'lucide-react';
 
 const LINKS = [
   { href: '#recursos', label: 'Recursos' },
   { href: '#integracoes', label: 'Integrações' },
+  { href: '#ecossistema', label: 'Ecossistema' },
   { href: '#sobre', label: 'Sobre' },
 ];
 
@@ -49,13 +50,33 @@ export default function Navbar() {
           ))}
         </div>
 
-        <a
-          href="#instalacao"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-500/20"
-        >
-          <Terminal className="w-4 h-4" />
-          Instalar
-        </a>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <a
+            href="https://www.instagram.com/erico.arenato"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Instagram"
+            className="hidden sm:flex w-9 h-9 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 items-center justify-center text-neutral-300 hover:text-white transition-colors"
+          >
+            <Instagram className="w-4 h-4" />
+          </a>
+          <a
+            href="https://www.youtube.com/@ericorenato.automacao"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="YouTube"
+            className="hidden sm:flex w-9 h-9 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 items-center justify-center text-neutral-300 hover:text-white transition-colors"
+          >
+            <Youtube className="w-4 h-4" />
+          </a>
+          <a
+            href="#instalacao"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-blue-500/20"
+          >
+            <Terminal className="w-4 h-4" />
+            Instalar
+          </a>
+        </div>
       </nav>
     </motion.header>
   );

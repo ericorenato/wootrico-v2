@@ -17,7 +17,7 @@ export default function Footer() {
             </div>
           </div>
 
-          <nav className="flex items-center gap-6">
+          <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
             <a href="#recursos" className="text-sm text-neutral-400 hover:text-white transition-colors">
               Recursos
             </a>
@@ -26,6 +26,17 @@ export default function Footer() {
             </a>
             <a href="#integracoes" className="text-sm text-neutral-400 hover:text-white transition-colors">
               Integrações
+            </a>
+            <a href="#ecossistema" className="text-sm text-neutral-400 hover:text-white transition-colors">
+              Ecossistema
+            </a>
+            <a
+              href="https://comunidade.ericorenato.com.br"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-neutral-400 hover:text-white transition-colors"
+            >
+              Comunidade
             </a>
           </nav>
 
@@ -52,15 +63,35 @@ export default function Footer() {
         </div>
 
         <div className="mt-10 pt-6 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-neutral-600">
-          <p>© {new Date().getFullYear()} Wootrico · Érico Renato. Todos os direitos reservados.</p>
-          <a
-            href="https://ericorenato.com.br"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-neutral-400 transition-colors"
-          >
-            ericorenato.com.br
-          </a>
+          <p>© {new Date().getFullYear()} Wootrico · Érico Renato Almeida. Todos os direitos reservados.</p>
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <a
+              href="https://ericorenato.com.br/privacidade"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-neutral-300 transition-colors"
+            >
+              Política de Privacidade
+            </a>
+            <span className="text-neutral-700">·</span>
+            <a
+              href="https://ericorenato.com.br/termos"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-neutral-300 transition-colors"
+            >
+              Termos de Uso
+            </a>
+            <span className="text-neutral-700">·</span>
+            <a
+              href="https://ericorenato.com.br"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-neutral-300 transition-colors"
+            >
+              ericorenato.com.br
+            </a>
+          </div>
         </div>
       </div>
     </footer>

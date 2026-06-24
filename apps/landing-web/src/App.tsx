@@ -6,6 +6,7 @@ import InstallSection from './sections/InstallSection';
 import FeaturesSection from './sections/FeaturesSection';
 import IntegrationsSection from './sections/IntegrationsSection';
 import CTASection from './sections/CTASection';
+import EcosystemSection from './sections/EcosystemSection';
 import Footer from './sections/Footer';
 
 export default function App() {
@@ -37,6 +38,7 @@ export default function App() {
       <FeaturesSection />
       <CTASection />
       <IntegrationsSection />
+      <EcosystemSection />
       <Footer />
     </div>
   );
