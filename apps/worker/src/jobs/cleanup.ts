@@ -66,6 +66,17 @@ async function sweepLogs(
   };
 }
 
+/**
+ * Delete conversation openers older than the configured retention window
+ * (startedAt-based; default 90 days, null = keep forever).
+ */
+async function sweepConversations(now: Date, days: number | null): Promise<number> {
+  if (days == null || days <= 0) return 0;
+  const cutoff = new Date(now.getTime() - days * 86_400_000);
+  const del = await prisma.conversationLog.deleteMany({ where: { startedAt: { lt: cutoff } } });
+  return del.count;
+}
+
 /** Delete rows past their TTL. Scheduled hourly. */
 export async function runCleanup(): Promise<void> {
   const now = new Date();
@@ -82,6 +93,14 @@ export async function runCleanup(): Promise<void> {
     return { messageLogs: 0, webhookEvents: 0, auditLogs: 0 };
   });
 
+  const conversations = await sweepConversations(
+    now,
+    settings?.conversationRetentionDays ?? null,
+  ).catch((err) => {
+    logger.warn({ err }, 'conversation retention sweep failed');
+    return 0;
+  });
+
   const media = await sweepMedia(now).catch((err) => {
     logger.warn({ err }, 'media retention sweep failed');
     return { rows: 0, blobs: 0 };
@@ -94,6 +113,7 @@ export async function runCleanup(): Promise<void> {
       messageLogs: logs.messageLogs,
       webhookEvents: logs.webhookEvents,
       auditLogs: logs.auditLogs,
+      conversationLogs: conversations,
       mediaAssets: media.rows,
       mediaBlobs: media.blobs,
     },

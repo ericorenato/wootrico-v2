@@ -59,15 +59,17 @@ export default function License() {
     load();
   }, []);
 
-  // While blocked, re-check often so the instance recovers quickly the moment the
-  // server says "active" again — e.g. the admin reactivated the trial, or the
-  // server came back online after an outage. A successful validation flips the
-  // status here without the user reloading the page.
+  // While the license screen is OPEN, re-validate with the server periodically so
+  // admin actions (revogar, expirar, liberar como vitalícia) reflect in ~30–45s
+  // instead of waiting for the next scheduled heartbeat (~6h). Faster (25s) when
+  // blocked, to recover quickly. Only runs while this page is mounted, so it
+  // doesn't add global load.
   useEffect(() => {
-    if (info?.status !== 'blocked') return;
+    if (!info || info.status === 'unactivated') return;
+    const intervalMs = info.status === 'blocked' ? 25_000 : 45_000;
     const id = setInterval(() => {
       void triggerHeartbeat().then(load).catch(() => {});
-    }, 25_000);
+    }, intervalMs);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info?.status]);

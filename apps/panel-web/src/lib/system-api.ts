@@ -173,3 +173,13 @@ export const saveLogsConfig = (retentionDays: number | null) =>
     method: 'PUT',
     body: JSON.stringify({ retentionDays }),
   });
+
+/** Conversation-openers retention (days); null = keep forever. Default 90. */
+export const getConversationsConfig = () =>
+  api<{ retentionDays: number | null }>('/api/system/conversations-config');
+
+export const saveConversationsConfig = (retentionDays: number | null) =>
+  api<{ ok: boolean }>('/api/system/conversations-config', {
+    method: 'PUT',
+    body: JSON.stringify({ retentionDays }),
+  });

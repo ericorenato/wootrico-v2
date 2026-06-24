@@ -8,3 +8,12 @@ import { assertLicenseActive } from '@wootrico/license-client';
 export async function canManageIntegrations(): Promise<{ allowed: boolean; status: string }> {
   return assertLicenseActive();
 }
+
+/**
+ * Whether the customer may use functional features that depend on an active
+ * license (e.g. exporting captured conversations). Without an active license the
+ * customer can still change settings, but cannot use these features.
+ */
+export async function requireActiveLicense(): Promise<{ allowed: boolean; status: string }> {
+  return assertLicenseActive();
+}

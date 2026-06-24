@@ -9,6 +9,7 @@ import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 import { storeMediaAsset } from '../lib/media-store.js';
 import { logMessage } from '../lib/message-log.js';
+import { logConversationOpener } from '../lib/conversation-log.js';
 
 const CONTACT_TTL = 3600; // seconds
 
@@ -141,6 +142,24 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     });
     const conversationId = conversation?.id;
     if (!conversationId) return logger.warn({ integrationId }, 'inbound: missing conversation id');
+
+    // Record the conversation OPENER (first message only, start truncated) for the
+    // panel's exportable conversations. Best-effort, idempotent per conversation.
+    if (!opts?.bodyOverride) {
+      void logConversationOpener({
+        integrationId,
+        chatwootConversationId: String(conversationId),
+        contactName,
+        contactNumber: isGroup
+          ? null
+          : (phoneNumber ?? discoveredPhone ?? norm.phone ?? norm.jid ?? null),
+        senderName: senderLabel,
+        isGroup,
+        direction,
+        messageType: norm.media?.type ?? 'text',
+        text: norm.text || norm.media?.caption || null,
+      });
+    }
 
     let inReplyTo: number | undefined = opts?.inReplyToOverride;
     if (inReplyTo == null && norm.replyToProviderMessageId) {

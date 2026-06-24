@@ -134,11 +134,12 @@ model Integration {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   providerConfig  ProviderConfig?
-  messageMappings MessageMapping[]
-  dedupTickets    DedupTicket[]
-  webhookEvents   WebhookEvent[]
-  mediaAssets     MediaAsset[]
-  messageLogs     MessageLog[]
+  messageMappings  MessageMapping[]
+  dedupTickets     DedupTicket[]
+  webhookEvents    WebhookEvent[]
+  mediaAssets      MediaAsset[]
+  messageLogs      MessageLog[]
+  conversationLogs ConversationLog[]
 
   @@map("integrations")
 }
@@ -307,6 +308,30 @@ model MessageLog {
   @@map("message_logs")
 }
 
+// Conversation openers, grouped by Chatwoot conversation (one "window" each).
+// LGPD: stores ONLY the BEGINNING of the first message (truncated preview) — not
+// the rest of the thread. Captured only while the license is active (processing
+// is gated). Retention via AppSettings.conversationRetentionDays (default 90d).
+model ConversationLog {
+  id                     String         @id @default(uuid())
+  integrationId          String         @map("integration_id")
+  integration            Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  chatwootConversationId String         @map("chatwoot_conversation_id")
+  contactName            String?        @map("contact_name") // person or group name
+  contactNumber          String?        @map("contact_number") // counterparty phone/jid (null for groups)
+  senderName             String?        @map("sender_name") // who sent the opener (esp. in groups)
+  isGroup                Boolean        @default(false) @map("is_group")
+  direction              MediaDirection // who started the conversation
+  messageType            MessageType    @map("message_type")
+  preview                String? // first ~200 chars of the opening message (LGPD: start only)
+  startedAt              DateTime       @default(now()) @map("started_at")
+
+  @@unique([integrationId, chatwootConversationId])
+  @@index([integrationId, startedAt])
+  @@index([startedAt])
+  @@map("conversation_logs")
+}
+
 model DedupTicket {
   id            String         @id @default(uuid())
   integrationId String         @map("integration_id")
@@ -407,6 +432,9 @@ model AppSettings {
   // System-log retention. Drives the worker's createdAt-based sweep of
   // message_logs / webhook_events / audit_logs. null = keep forever; default 14.
   logRetentionDays    Int?    @default(14) @map("log_retention_days")
+  // Conversation-openers retention (createdAt-based sweep of conversation_logs).
+  // null = keep forever; default 90 days.
+  conversationRetentionDays Int? @default(90) @map("conversation_retention_days")
 
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")

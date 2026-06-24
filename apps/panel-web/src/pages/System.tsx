@@ -3,6 +3,7 @@ import { Badge, Button, Card, Eyebrow } from '../components/ui';
 import ConnectionsEditor from '../components/ConnectionsEditor';
 import MediaStorageEditor from '../components/MediaStorageEditor';
 import LogRetentionEditor from '../components/LogRetentionEditor';
+import ConversationRetentionEditor from '../components/ConversationRetentionEditor';
 import {
   getSystemInfo,
   runDiagnostics,
@@ -162,6 +163,9 @@ export default function System() {
 
           {/* Retenção de logs do sistema */}
           <LogRetentionEditor />
+
+          {/* Retenção de conversas capturadas */}
+          <ConversationRetentionEditor />
 
           {/* Licença */}
           <Card>

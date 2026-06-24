@@ -382,6 +382,36 @@ export default async function systemRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
+  // ── conversation-openers retention ──
+  // How many days of captured conversation openers to keep. null = keep forever;
+  // default 90. Drives the worker's startedAt-based cleanup sweep.
+  app.get('/api/system/conversations-config', guard, async () => {
+    const s = await app.prisma.appSettings.findUnique({ where: { id: 'singleton' } });
+    return { retentionDays: s?.conversationRetentionDays ?? null };
+  });
+
+  app.put('/api/system/conversations-config', guard, async (req, reply) => {
+    const parsed = LogConfigSchema.safeParse(req.body);
+    if (!parsed.success)
+      return reply.code(400).send({ error: 'validation', issues: parsed.error.issues });
+    await app.prisma.appSettings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', conversationRetentionDays: parsed.data.retentionDays },
+      update: { conversationRetentionDays: parsed.data.retentionDays },
+    });
+    await app.prisma.auditLog
+      .create({
+        data: {
+          adminUserId: req.user.sub,
+          action: 'conversations.config.updated',
+          entityType: 'app_settings',
+          entityId: 'singleton',
+        },
+      })
+      .catch(() => undefined);
+    return { ok: true };
+  });
+
   // ── system logs (console) ──
   // A unified, CONTENT-FREE feed of admin actions (audit_logs) and webhook
   // events (webhook_events). Never includes message bodies or media — only the
