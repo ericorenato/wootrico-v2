@@ -43,9 +43,9 @@ export default function InstallSection() {
   return (
     <section
       id="instalacao"
-      className="relative py-16 sm:py-24 bg-gradient-to-b from-[#050509] to-black overflow-hidden"
+      className="relative py-10 sm:py-16 bg-gradient-to-b from-[#050509] to-black overflow-hidden"
     >
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none hidden sm:block">
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-full max-w-4xl h-72 bg-blue-500/10 blur-[140px] rounded-full" />
       </div>
 

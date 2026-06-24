@@ -1,34 +1,36 @@
 import { motion } from 'framer-motion';
 import { Terminal, Bot, Zap, ArrowRight, Users, ExternalLink } from 'lucide-react';
 
+const UTM = '?utm_source=wootrico_lp&utm_medium=landing';
+
 const PRODUCTS = [
   {
     name: 'VibeStack + AutoNext',
     tag: 'Cursos',
     desc: 'Vibe Coding e Automação com IA — do prompt ao deploy. Crie SaaS, landing pages e fluxos automáticos de atendimento sem depender de programador.',
-    href: 'https://ericorenato.com.br',
+    href: `https://ericorenato.com.br${UTM}`,
     icon: Terminal,
   },
   {
     name: 'OpenClaw + Hermes',
     tag: 'Curso de agentes',
     desc: 'Agentes de IA autônomos open source: assistentes que fazem, lembram e melhoram sozinhos — rodando na sua própria infra.',
-    href: 'https://clawhermes.ericorenato.com.br/',
+    href: `https://clawhermes.ericorenato.com.br/${UTM}`,
     icon: Bot,
   },
   {
     name: 'Evolution Go',
     tag: 'API de WhatsApp',
     desc: 'A API de WhatsApp open-source que o Wootrico conecta ao Chatwoot. Instalador, VPS e deploy em produção, do zero ao ar.',
-    href: 'https://docs.evolutionfoundation.com.br/evolution-go',
+    href: `https://docs.evolutionfoundation.com.br/evolution-go${UTM}`,
     icon: Zap,
   },
 ];
 
 export default function EcosystemSection() {
   return (
-    <section id="ecossistema" className="relative py-16 sm:py-24 bg-gradient-to-b from-[#050509] to-black overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none">
+    <section id="ecossistema" className="relative py-10 sm:py-16 bg-gradient-to-b from-[#050509] to-black overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none hidden sm:block">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl h-64 bg-blue-500/5 blur-[120px] rounded-full" />
       </div>
 

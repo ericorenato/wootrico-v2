@@ -5,10 +5,10 @@ export default function Hero() {
   return (
     <section
       id="topo"
-      className="relative w-full min-h-[92vh] flex items-center overflow-hidden bg-gradient-to-b from-black via-[#050509] to-[#050509] pt-16"
+      className="relative w-full min-h-[88vh] sm:min-h-[92vh] flex items-center overflow-hidden bg-gradient-to-b from-black via-[#050509] to-[#050509] pt-16"
     >
-      {/* Background glows */}
-      <div className="absolute inset-0 z-0 pointer-events-none">
+      {/* Background glows — desktop only (mais leve no mobile) */}
+      <div className="absolute inset-0 z-0 pointer-events-none hidden sm:block">
         <div className="absolute top-0 right-0 w-72 h-72 sm:w-[28rem] sm:h-[28rem] bg-blue-500/15 rounded-full blur-[120px]" />
         <div className="absolute bottom-0 left-0 w-72 h-72 sm:w-[28rem] sm:h-[28rem] bg-indigo-500/10 rounded-full blur-[120px]" />
       </div>

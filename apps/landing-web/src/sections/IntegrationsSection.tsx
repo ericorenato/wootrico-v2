@@ -32,9 +32,9 @@ export default function IntegrationsSection() {
   return (
     <section
       id="integracoes"
-      className="relative py-16 sm:py-24 bg-gradient-to-b from-black to-[#050509] overflow-hidden"
+      className="relative py-10 sm:py-16 bg-gradient-to-b from-black to-[#050509] overflow-hidden"
     >
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none hidden sm:block">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl h-64 bg-blue-500/5 blur-[120px] rounded-full" />
       </div>
 

@@ -63,8 +63,8 @@ const FEATURES = [
 
 export default function FeaturesSection() {
   return (
-    <section id="recursos" className="relative py-16 sm:py-24 bg-black overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none">
+    <section id="recursos" className="relative py-10 sm:py-16 bg-black overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none hidden sm:block">
         <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/5 rounded-full blur-[120px]" />
         <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-500/5 rounded-full blur-[120px]" />
       </div>

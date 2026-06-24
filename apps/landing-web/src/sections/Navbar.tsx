@@ -25,7 +25,9 @@ export default function Navbar() {
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.6 }}
       className={`fixed top-0 inset-x-0 z-50 transition-colors duration-300 ${
-        scrolled ? 'bg-black/70 backdrop-blur-xl border-b border-white/10' : 'bg-transparent'
+        scrolled
+          ? 'bg-black/90 sm:bg-black/70 sm:backdrop-blur-xl border-b border-white/10'
+          : 'bg-transparent'
       }`}
     >
       <nav className="container mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
