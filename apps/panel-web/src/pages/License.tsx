@@ -201,12 +201,14 @@ export default function License() {
   const isActive = info?.status === 'active' || info?.status === 'warning';
   const isBlocked = info?.status === 'blocked';
   const remaining = isActive ? daysLeft(info?.expiresAt ?? null) : null;
-  // A key past its expiry (trial 14d OR paid 1y) → show buy/renew. A block with a
-  // future/no expiry is the 48h-offline case → reconnecting, not a purchase.
-  const expired = !!(info?.expiresAt && new Date(info.expiresAt).getTime() <= Date.now());
-  const expiredBlocked = isBlocked && expired;
-  const isPaidExpired = expiredBlocked && info?.plan === 'paid';
-  const offlineBlocked = isBlocked && !expired;
+  // Why it's blocked drives the message + CTA. The server tells us: an
+  // expired/revoked/inactive key means BUY/RENEW; 'offline' (server unreachable
+  // 48h) means just reconnect — no purchase. Default unknown blocks to offline.
+  const reason = info?.blockedReason ?? null;
+  const offlineBlocked = isBlocked && (reason === 'offline' || reason === null);
+  const purchaseBlocked = isBlocked && !offlineBlocked; // expired | revoked | inactive
+  const isRevoked = reason === 'revoked';
+  const isPaidExpired = purchaseBlocked && info?.plan === 'paid' && !isRevoked;
 
   return (
     <div className="max-w-2xl">
@@ -264,13 +266,19 @@ export default function License() {
             </div>
           )}
 
-          {/* Banner de licença/teste vencido. */}
-          {expiredBlocked && (
+          {/* Banner de licença inativa (vencida / revogada / inativa pelo servidor). */}
+          {purchaseBlocked && (
             <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
               <AlertTriangle size={18} className="mt-0.5 shrink-0 text-red-300" />
               <div className="text-sm">
                 <p className="font-medium text-red-200">
-                  {isPaidExpired ? 'Licença vencida' : 'Período de teste encerrado'}
+                  {isRevoked
+                    ? 'Licença revogada'
+                    : isPaidExpired
+                      ? 'Licença vencida'
+                      : info.plan === 'trial'
+                        ? 'Período de teste encerrado'
+                        : 'Licença inativa'}
                 </p>
                 <p className="text-red-200/80">
                   O processamento de mensagens está pausado e as integrações foram desativadas.
@@ -351,15 +359,17 @@ export default function License() {
           </>
         )}
 
-        {expiredBlocked && (
+        {purchaseBlocked && (
           <>
             <h3 className="text-sm font-medium text-white mb-2">
               {isPaidExpired ? 'Renovar licença' : 'Adquirir licença'}
             </h3>
             <p className="text-sm text-neutral-400 mb-4">
-              {isPaidExpired
-                ? 'Sua licença anual venceu e o processamento está pausado. Renove para voltar a operar — seus dados continuam acessíveis.'
-                : 'Seu período de teste terminou e as integrações estão pausadas. Garanta sua licença para voltar a processar — seus dados continuam acessíveis.'}
+              {isRevoked
+                ? 'Sua licença foi revogada e o processamento está pausado. Adquira uma licença para voltar a operar — seus dados continuam acessíveis.'
+                : isPaidExpired
+                  ? 'Sua licença anual venceu e o processamento está pausado. Renove para voltar a operar — seus dados continuam acessíveis.'
+                  : 'Seu acesso está inativo e as integrações estão pausadas. Garanta sua licença para voltar a processar — seus dados continuam acessíveis.'}
             </p>
 
             {/* Preço + validade de 1 ano. */}

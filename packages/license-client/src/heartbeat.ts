@@ -99,10 +99,14 @@ export async function runHeartbeat(): Promise<{ status: string }> {
 
     if (res.ok && data.active === false) {
       // Explicit, authoritative "no" from the server — the ONLY thing that blocks.
+      // Capture the reason AND the server's plan/expiry so the panel can tell an
+      // expired/revoked key apart from an offline outage and offer buy/renew.
       const now = new Date();
       await updateLicenseState({
         status: 'blocked',
         lastError: data.reason ?? 'inactive',
+        ...(data.plan ? { plan: data.plan } : {}),
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
         lastHeartbeatAt: now,
         nextHeartbeatAt: new Date(now.getTime() + jittered(LICENSE.validateIntervalMs)),
         heartbeatFailures: 0,

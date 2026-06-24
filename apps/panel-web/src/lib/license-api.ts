@@ -11,6 +11,8 @@ export interface LicenseStatus {
   lastError: string | null;
   /** License is valid but the last validation couldn't reach the server. */
   offline?: boolean;
+  /** When blocked, why: expired/revoked/inactive (buy/renew) vs offline (reconnect). */
+  blockedReason?: 'expired' | 'revoked' | 'inactive' | 'offline' | null;
   serverUrl?: string;
 }
 

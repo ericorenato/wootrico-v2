@@ -24,6 +24,19 @@ export default async function licenseRoutes(app: FastifyInstance) {
     // an unreachable server never blocks. Not "offline" when the server gave an
     // explicit answer (blocked) or the instance was never activated.
     const offline = (status === 'active' || status === 'warning') && !!state.lastError;
+    // When blocked, WHY — so the panel shows the right message and CTA. An
+    // explicit server reason (expired/revoked/inactive) means the customer should
+    // buy/renew; anything else (network error / 48h stale) is a connectivity
+    // "offline" block that recovers on its own.
+    const REASONS: Record<string, 'expired' | 'revoked' | 'inactive'> = {
+      expired: 'expired',
+      trial_expired: 'expired',
+      revoked: 'revoked',
+      invalid_key: 'inactive',
+      inactive: 'inactive',
+    };
+    const blockedReason =
+      status === 'blocked' ? (REASONS[state.lastError ?? ''] ?? 'offline') : null;
     return {
       status,
       instanceId: state.instanceId,
@@ -34,6 +47,7 @@ export default async function licenseRoutes(app: FastifyInstance) {
       lastHeartbeatAt: state.lastHeartbeatAt,
       lastError: state.lastError,
       offline,
+      blockedReason,
       serverUrl: process.env.LICENSE_SERVER_URL,
     };
   });

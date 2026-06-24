@@ -166,7 +166,11 @@ export default function Integrations() {
                   >
                     <span
                       className={`relative h-5 w-9 rounded-full transition-colors ${
-                        it.isEnabled ? 'bg-blue-500' : 'bg-neutral-600'
+                        it.isEnabled
+                          ? licensed
+                            ? 'bg-blue-500'
+                            : 'bg-amber-500/70' // enabled but paused by license
+                          : 'bg-neutral-600'
                       }`}
                     >
                       <span
@@ -175,7 +179,11 @@ export default function Integrations() {
                         }`}
                       />
                     </span>
-                    <span className="text-xs text-neutral-400 w-16 text-left">
+                    <span
+                      className={`text-xs w-16 text-left ${
+                        it.isEnabled && !licensed ? 'text-amber-300' : 'text-neutral-400'
+                      }`}
+                    >
                       {it.isEnabled ? (!licensed ? 'Pausada' : 'Ativa') : 'Inativa'}
                     </span>
                   </button>
