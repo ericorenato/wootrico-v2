@@ -111,8 +111,12 @@ export const revokeKey = (id: string) =>
 export const activateKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/activate`, { method: 'POST' });
 
-export const upgradeKey = (id: string) =>
-  api<{ ok: boolean }>(`/admin/keys/${id}/upgrade`, { method: 'POST' });
+/** Convert a key to paid. lifetime=false (default) gives 1 year; true = never expires. */
+export const upgradeKey = (id: string, lifetime = false) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}/upgrade`, {
+    method: 'POST',
+    body: JSON.stringify({ lifetime }),
+  });
 
 export const getWebhookKeys = () => api<{ keys: WebhookKeyRow[] }>('/admin/webhook-keys');
 

@@ -1378,14 +1378,24 @@ app.post('/admin/keys/:id/activate', async (req, reply) => {
 });
 
 // Manually upgrade a trial key to paid (lifetime) — e.g. after offline payment.
+// Convert a key to PAID. By default it gets the standard paid window (1 year);
+// `lifetime: true` makes it never expire. Clears any revocation.
+const UpgradeSchema = z.object({ lifetime: z.boolean().optional() });
 app.post('/admin/keys/:id/upgrade', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const { id } = req.params as { id: string };
+  const p = UpgradeSchema.safeParse(req.body ?? {});
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const expiresAt = p.data.lifetime ? null : new Date(Date.now() + cfg.paidDays * DAY_MS);
   await prisma.licenseKey.update({
     where: { id },
-    data: { plan: 'paid', expiresAt: null, revokedAt: null },
+    data: { plan: 'paid', expiresAt, revokedAt: null },
   });
-  await recordEvent({ type: 'admin_upgrade', licenseKeyId: id });
+  await recordEvent({
+    type: 'admin_upgrade',
+    licenseKeyId: id,
+    meta: { lifetime: !!p.data.lifetime, expiresAt: expiresAt?.toISOString() ?? null },
+  });
   return { ok: true };
 });
 

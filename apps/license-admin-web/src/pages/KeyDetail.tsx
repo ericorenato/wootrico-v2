@@ -179,15 +179,22 @@ export default function KeyDetail() {
               <Button variant="ghost" loading={busy} onClick={doSetExpiry}>
                 Alterar vencimento
               </Button>
+              {/* Converter para paga: 1 ano (padrão) ou vitalícia. Disponível para
+                  trial e para uma paga que se queira tornar vitalícia. */}
               {k.plan === 'trial' && (
-                <>
-                  <Button variant="ghost" loading={busy} onClick={() => act(() => upgradeKey(k.id))}>
-                    Liberar como vitalícia
-                  </Button>
-                  <Button variant="ghost" loading={busy} onClick={doExpire}>
-                    Expirar agora
-                  </Button>
-                </>
+                <Button variant="ghost" loading={busy} onClick={() => act(() => upgradeKey(k.id, false))}>
+                  Liberar como paga (1 ano)
+                </Button>
+              )}
+              {!(k.plan === 'paid' && !k.expiresAt) && (
+                <Button variant="ghost" loading={busy} onClick={() => act(() => upgradeKey(k.id, true))}>
+                  {k.plan === 'paid' ? 'Tornar vitalícia' : 'Liberar como vitalícia'}
+                </Button>
+              )}
+              {k.plan === 'trial' && (
+                <Button variant="ghost" loading={busy} onClick={doExpire}>
+                  Expirar agora
+                </Button>
               )}
             </div>
           </Card>
