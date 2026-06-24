@@ -56,6 +56,10 @@ const STATUS_LABEL: Record<string, string> = {
   revoked: 'Revogada',
 };
 
+// Compact override for the action buttons so they line up on a single row
+// (the base ghost button uses px-8). `!` beats the base utilities.
+const ACTION_BTN = '!px-4 !py-2 text-xs';
+
 export default function KeyDetail() {
   const { id = '' } = useParams();
   const [data, setData] = useState<KeyDetailT | null>(null);
@@ -166,33 +170,69 @@ export default function KeyDetail() {
               )}
             </dl>
 
-            <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-white/5 pt-5">
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/5 pt-5">
               {k.status === 'revoked' ? (
-                <Button variant="ghost" loading={busy} onClick={() => act(() => activateKey(k.id))}>
+                <Button
+                  variant="ghost"
+                  className={ACTION_BTN}
+                  loading={busy}
+                  onClick={() => act(() => activateKey(k.id))}
+                  title="Desfaz a revogação e devolve o acesso, mantendo plano e vencimento."
+                >
                   Reativar
                 </Button>
               ) : (
-                <Button variant="ghost" loading={busy} onClick={() => act(() => revokeKey(k.id))}>
+                <Button
+                  variant="ghost"
+                  className={ACTION_BTN}
+                  loading={busy}
+                  onClick={() => act(() => revokeKey(k.id))}
+                  title="Bloqueia o acesso AGORA (qualquer tipo de chave). É reversível em 'Reativar' e não altera a data de vencimento. Use para abuso, reembolso ou disputa."
+                >
                   Revogar
                 </Button>
               )}
-              <Button variant="ghost" loading={busy} onClick={doSetExpiry}>
+              <Button
+                variant="ghost"
+                className={ACTION_BTN}
+                loading={busy}
+                onClick={doSetExpiry}
+                title="Define a data de vencimento da chave (ou deixa em branco para torná-la vitalícia)."
+              >
                 Alterar vencimento
               </Button>
               {/* Converter para paga: 1 ano (padrão) ou vitalícia. Disponível para
                   trial e para uma paga que se queira tornar vitalícia. */}
               {k.plan === 'trial' && (
-                <Button variant="ghost" loading={busy} onClick={() => act(() => upgradeKey(k.id, false))}>
+                <Button
+                  variant="ghost"
+                  className={ACTION_BTN}
+                  loading={busy}
+                  onClick={() => act(() => upgradeKey(k.id, false))}
+                  title="Converte o teste em licença paga com vencimento de 1 ano."
+                >
                   Liberar como paga (1 ano)
                 </Button>
               )}
               {!(k.plan === 'paid' && !k.expiresAt) && (
-                <Button variant="ghost" loading={busy} onClick={() => act(() => upgradeKey(k.id, true))}>
+                <Button
+                  variant="ghost"
+                  className={ACTION_BTN}
+                  loading={busy}
+                  onClick={() => act(() => upgradeKey(k.id, true))}
+                  title="Torna a chave paga e vitalícia (sem data de vencimento)."
+                >
                   {k.plan === 'paid' ? 'Tornar vitalícia' : 'Liberar como vitalícia'}
                 </Button>
               )}
               {k.plan === 'trial' && (
-                <Button variant="ghost" loading={busy} onClick={doExpire}>
+                <Button
+                  variant="ghost"
+                  className={ACTION_BTN}
+                  loading={busy}
+                  onClick={doExpire}
+                  title="Encerra o teste AGORA (vence o trial), levando o cliente ao fluxo de compra. Só para teste; para uma paga use 'Alterar vencimento' ou 'Revogar'."
+                >
                   Expirar agora
                 </Button>
               )}
