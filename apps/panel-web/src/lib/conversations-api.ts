@@ -1,17 +1,35 @@
 import { api, getToken } from './api-client';
 
 export interface ConversationDTO {
-  conversationId: string;
+  id: string;
   name: string | null;
   number: string | null;
-  sender: string | null;
   isGroup: boolean;
-  direction: 'incoming' | 'outgoing';
-  messageType: string;
-  /** First ~200 chars of the opening message (LGPD: start only). */
+  /** Latest-message gist (truncated) — to know what the conversation is about. */
   preview: string | null;
   integration: string | null;
+  messageCount: number;
   startedAt: string;
+  lastMessageAt: string;
+}
+
+export interface ConversationMessage {
+  at: string;
+  direction: 'incoming' | 'outgoing';
+  sender: string | null;
+  type: string;
+  /** Truncated for display (the full text is only in the export). */
+  text: string;
+}
+
+export interface ConversationDetail {
+  id: string;
+  name: string | null;
+  number: string | null;
+  isGroup: boolean;
+  integration: string | null;
+  startedAt: string;
+  messages: ConversationMessage[];
 }
 
 export interface ConversationsPage {
@@ -34,16 +52,23 @@ export const listConversations = (
   return api<ConversationsPage>(`/api/conversations${qs ? `?${qs}` : ''}`);
 };
 
-/** Download the (filtered) conversations export as JSON or TXT. */
+/** Partial history of one conversation (clicked in the list). */
+export const getConversation = (id: string) =>
+  api<ConversationDetail>(`/api/conversations/${id}`);
+
+/** Download the export as JSON or TXT — selected ids, or all matching the filter. */
 export async function exportConversations(
   format: 'json' | 'txt',
-  opts: { search?: string; from?: string; to?: string } = {},
+  opts: { ids?: string[]; search?: string; from?: string; to?: string } = {},
 ): Promise<void> {
   const p = new URLSearchParams();
   p.set('format', format);
-  if (opts.search) p.set('search', opts.search);
-  if (opts.from) p.set('from', opts.from);
-  if (opts.to) p.set('to', opts.to);
+  if (opts.ids && opts.ids.length) p.set('ids', opts.ids.join(','));
+  else {
+    if (opts.search) p.set('search', opts.search);
+    if (opts.from) p.set('from', opts.from);
+    if (opts.to) p.set('to', opts.to);
+  }
   const token = getToken();
   const res = await fetch(`/api/conversations/export?${p.toString()}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,

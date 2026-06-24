@@ -67,13 +67,14 @@ async function sweepLogs(
 }
 
 /**
- * Delete conversation openers older than the configured retention window
- * (startedAt-based; default 90 days, null = keep forever).
+ * Delete captured conversations whose last message is older than the configured
+ * retention window (default 90 days, null = keep forever). Deleting a
+ * conversation cascades to all its messages.
  */
 async function sweepConversations(now: Date, days: number | null): Promise<number> {
   if (days == null || days <= 0) return 0;
   const cutoff = new Date(now.getTime() - days * 86_400_000);
-  const del = await prisma.conversationLog.deleteMany({ where: { startedAt: { lt: cutoff } } });
+  const del = await prisma.conversation.deleteMany({ where: { lastMessageAt: { lt: cutoff } } });
   return del.count;
 }
 
@@ -113,7 +114,7 @@ export async function runCleanup(): Promise<void> {
       messageLogs: logs.messageLogs,
       webhookEvents: logs.webhookEvents,
       auditLogs: logs.auditLogs,
-      conversationLogs: conversations,
+      conversations,
       mediaAssets: media.rows,
       mediaBlobs: media.blobs,
     },

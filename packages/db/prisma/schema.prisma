@@ -139,7 +139,7 @@ model Integration {
   webhookEvents    WebhookEvent[]
   mediaAssets      MediaAsset[]
   messageLogs      MessageLog[]
-  conversationLogs ConversationLog[]
+  conversations    Conversation[]
 
   @@map("integrations")
 }
@@ -308,28 +308,45 @@ model MessageLog {
   @@map("message_logs")
 }
 
-// Conversation openers, grouped by Chatwoot conversation (one "window" each).
-// LGPD: stores ONLY the BEGINNING of the first message (truncated preview) — not
-// the rest of the thread. Captured only while the license is active (processing
-// is gated). Retention via AppSettings.conversationRetentionDays (default 90d).
-model ConversationLog {
-  id                     String         @id @default(uuid())
-  integrationId          String         @map("integration_id")
-  integration            Integration    @relation(fields: [integrationId], references: [id], onDelete: Cascade)
-  chatwootConversationId String         @map("chatwoot_conversation_id")
-  contactName            String?        @map("contact_name") // person or group name
-  contactNumber          String?        @map("contact_number") // counterparty phone/jid (null for groups)
-  senderName             String?        @map("sender_name") // who sent the opener (esp. in groups)
-  isGroup                Boolean        @default(false) @map("is_group")
-  direction              MediaDirection // who started the conversation
-  messageType            MessageType    @map("message_type")
-  preview                String? // first ~200 chars of the opening message (LGPD: start only)
-  startedAt              DateTime       @default(now()) @map("started_at")
+// Captured conversation, grouped by counterparty (contact/group) per integration
+// — `peerKey` is the canonical id, always available, so history is captured even
+// when the license is inactive (processing is gated, capture is not). The FULL
+// message text is stored; the panel only ever shows a truncated view and full
+// view/export require an active license. Retention via
+// AppSettings.conversationRetentionDays (default 90d), swept by lastMessageAt.
+model Conversation {
+  id            String                @id @default(uuid())
+  integrationId String                @map("integration_id")
+  integration   Integration           @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  peerKey       String                @map("peer_key") // canonical contact/group key
+  contactName   String?               @map("contact_name")
+  contactNumber String?               @map("contact_number") // counterparty phone/jid (null for groups)
+  isGroup       Boolean               @default(false) @map("is_group")
+  preview       String? // latest message start (~200 chars) — the list "gist"
+  startedAt     DateTime              @default(now()) @map("started_at")
+  lastMessageAt DateTime              @default(now()) @map("last_message_at")
+  messages      ConversationMessage[]
 
-  @@unique([integrationId, chatwootConversationId])
-  @@index([integrationId, startedAt])
-  @@index([startedAt])
-  @@map("conversation_logs")
+  @@unique([integrationId, peerKey])
+  @@index([integrationId, lastMessageAt])
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id                String         @id @default(uuid())
+  conversationId    String         @map("conversation_id")
+  conversation      Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  at                DateTime       @default(now())
+  direction         MediaDirection
+  sender            String? // who sent it (esp. in groups)
+  messageType       MessageType    @map("message_type")
+  text              String // FULL message text (truncated only for display)
+  providerMessageId String?        @map("provider_message_id") // dedup re-deliveries
+
+  @@unique([conversationId, providerMessageId])
+  @@index([conversationId, at])
+  @@map("conversation_messages")
 }
 
 model DedupTicket {

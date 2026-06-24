@@ -25,11 +25,9 @@ async function main() {
   await consume(
     AMQP.queues.inbound,
     async (job) => {
-      const gate = await assertLicenseActive();
-      if (!gate.allowed) {
-        logger.warn({ status: gate.status }, 'inbound dropped: license not active');
-        return;
-      }
+      // The license gate now lives INSIDE handleInbound: the conversation history
+      // is captured first (kept even when the license is inactive), then the gate
+      // decides whether to mirror to Chatwoot.
       await handleInbound(job.payload, job.integrationId);
     },
     { prefetch: 16 },

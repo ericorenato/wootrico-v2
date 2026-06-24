@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, Search, Users, User, MessageSquare } from 'lucide-react';
+import { Download, Search, Users, User, MessageSquare, ChevronDown } from 'lucide-react';
 import { Button, Eyebrow, Field, Input } from '../components/ui';
 import {
   listConversations,
+  getConversation,
   exportConversations,
   type ConversationDTO,
+  type ConversationMessage,
 } from '../lib/conversations-api';
 import { getLicenseStatus, type LicenseStatus } from '../lib/license-api';
 
@@ -14,6 +16,9 @@ const PAGE_SIZE = 50;
 function fmt(iso: string): string {
   const d = new Date(iso);
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+function clock(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export default function Conversations() {
@@ -28,6 +33,10 @@ export default function Conversations() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<{ id: string; messages: ConversationMessage[] } | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
     getLicenseStatus().then(setLicense).catch(() => {});
@@ -50,6 +59,8 @@ export default function Conversations() {
         setRows(res.conversations);
         setTotal(res.total);
         setPage(res.page);
+        setSelected(new Set());
+        setOpenId(null);
       } catch (err) {
         const code = (err as { code?: string })?.code;
         setError(code === 'license_inactive' ? 'license_inactive' : 'Falha ao carregar as conversas.');
@@ -61,7 +72,6 @@ export default function Conversations() {
     [query, from, to],
   );
 
-  // Debounce the search box.
   useEffect(() => {
     const t = setTimeout(() => setQuery(search.trim()), 350);
     return () => clearTimeout(t);
@@ -71,10 +81,41 @@ export default function Conversations() {
     if (licensed) void load(1);
   }, [licensed, load]);
 
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((prev) => (prev.size === rows.length ? new Set() : new Set(rows.map((r) => r.id))));
+  }
+
+  async function openConversation(id: string) {
+    if (openId === id) {
+      setOpenId(null);
+      return;
+    }
+    setOpenId(id);
+    setDetail(null);
+    setDetailLoading(true);
+    try {
+      const d = await getConversation(id);
+      setDetail({ id, messages: d.messages });
+    } catch {
+      setDetail({ id, messages: [] });
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
   async function doExport(format: 'json' | 'txt') {
     setExporting(true);
     try {
       await exportConversations(format, {
+        ids: selected.size ? [...selected] : undefined,
         search: query || undefined,
         from: from || undefined,
         to: to || undefined,
@@ -87,6 +128,7 @@ export default function Conversations() {
   }
 
   const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+  const exportLabel = selected.size ? `${selected.size} selecionada(s)` : 'todas';
 
   return (
     <div>
@@ -95,13 +137,15 @@ export default function Conversations() {
           <Eyebrow>Dados</Eyebrow>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight text-white">Conversas</h1>
           <p className="mt-2 max-w-2xl text-sm text-neutral-400">
-            Conversas capturadas, agrupadas por conversa do Chatwoot. Por privacidade (LGPD),
-            mostramos apenas o <strong className="text-neutral-300">início</strong> de cada conversa.
-            A retenção é configurável em <Link to="/system" className="underline hover:text-white">Sistema</Link>.
+            Histórico das conversas capturadas, agrupadas por contato. Clique numa conversa para ver o
+            histórico — aqui o conteúdo aparece <strong className="text-neutral-300">truncado</strong>;
+            para o texto completo, <strong className="text-neutral-300">exporte</strong> (JSON/TXT).
+            Retenção em <Link to="/system" className="underline hover:text-white">Sistema</Link>.
           </p>
         </div>
         {licensed && (
           <div className="flex items-center gap-2">
+            <span className="text-xs text-neutral-500 mr-1">Exportar {exportLabel}:</span>
             <Button variant="ghost" onClick={() => doExport('json')} loading={exporting} disabled={!total}>
               <Download size={16} /> JSON
             </Button>
@@ -123,7 +167,6 @@ export default function Conversations() {
         </div>
       ) : (
         <>
-          {/* Filtros */}
           <div className="mb-5 flex flex-wrap items-end gap-3">
             <div className="flex-1 min-w-[220px]">
               <Field label="Buscar (nome, número ou trecho)">
@@ -153,44 +196,109 @@ export default function Conversations() {
           ) : rows.length === 0 ? (
             <p className="text-sm text-neutral-500">Nenhuma conversa capturada ainda.</p>
           ) : (
-            <div className="space-y-2">
-              {rows.map((c) => (
-                <div
-                  key={c.conversationId}
-                  className="rounded-xl border border-white/5 bg-[#0F0F11] p-4 hover:border-white/10 transition-colors"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        {c.isGroup ? (
-                          <Users size={13} className="text-neutral-400 shrink-0" />
-                        ) : (
-                          <User size={13} className="text-neutral-400 shrink-0" />
-                        )}
-                        <span className="text-sm font-medium text-white truncate">
-                          {c.name || c.number || 'Sem nome'}
-                        </span>
-                        {c.isGroup && c.sender && (
-                          <span className="text-xs text-neutral-500 truncate">· {c.sender}</span>
-                        )}
+            <>
+              <label className="mb-2 flex items-center gap-2 text-xs text-neutral-500 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={selected.size === rows.length && rows.length > 0}
+                  onChange={toggleAll}
+                  className="accent-blue-500"
+                />
+                Selecionar todas (página)
+              </label>
+
+              <div className="space-y-2">
+                {rows.map((c) => {
+                  const isOpen = openId === c.id;
+                  return (
+                    <div
+                      key={c.id}
+                      className="rounded-xl border border-white/5 bg-[#0F0F11] hover:border-white/10 transition-colors"
+                    >
+                      <div className="flex items-start gap-3 p-4">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(c.id)}
+                          onChange={() => toggle(c.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-1 accent-blue-500 shrink-0"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => openConversation(c.id)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <div className="flex items-center gap-2 mb-0.5">
+                            {c.isGroup ? (
+                              <Users size={13} className="text-neutral-400 shrink-0" />
+                            ) : (
+                              <User size={13} className="text-neutral-400 shrink-0" />
+                            )}
+                            <span className="text-sm font-medium text-white truncate">
+                              {c.name || c.number || 'Sem nome'}
+                            </span>
+                            <ChevronDown
+                              size={14}
+                              className={`text-neutral-600 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                            />
+                          </div>
+                          <p className="flex items-start gap-1.5 text-sm text-neutral-300">
+                            <MessageSquare size={13} className="mt-0.5 shrink-0 text-neutral-600" />
+                            <span className="line-clamp-1">{c.preview || '—'}</span>
+                          </p>
+                        </button>
+                        <div className="text-right text-[11px] text-neutral-500 shrink-0">
+                          <p>{fmt(c.lastMessageAt)}</p>
+                          {c.number && !c.isGroup && <p className="font-mono">{c.number}</p>}
+                          <p>
+                            {c.messageCount} msg{c.messageCount === 1 ? '' : 's'}
+                            {c.integration ? ` · ${c.integration}` : ''}
+                          </p>
+                        </div>
                       </div>
-                      <p className="flex items-start gap-1.5 text-sm text-neutral-300">
-                        <MessageSquare size={13} className="mt-0.5 shrink-0 text-neutral-600" />
-                        <span className="line-clamp-2">{c.preview || '—'}</span>
-                      </p>
+
+                      {isOpen && (
+                        <div className="border-t border-white/5 px-4 py-3 space-y-2">
+                          {detailLoading || detail?.id !== c.id ? (
+                            <p className="text-xs text-neutral-500">Carregando histórico…</p>
+                          ) : detail.messages.length === 0 ? (
+                            <p className="text-xs text-neutral-500">Sem mensagens capturadas.</p>
+                          ) : (
+                            <>
+                              {detail.messages.map((m, i) => (
+                                <div
+                                  key={i}
+                                  className={`flex flex-col ${m.direction === 'outgoing' ? 'items-end' : 'items-start'}`}
+                                >
+                                  <div
+                                    className={`max-w-[80%] rounded-lg px-3 py-1.5 text-sm ${
+                                      m.direction === 'outgoing'
+                                        ? 'bg-blue-500/15 text-blue-100'
+                                        : 'bg-white/5 text-neutral-200'
+                                    }`}
+                                  >
+                                    {m.sender && (
+                                      <span className="block text-[10px] text-neutral-400">{m.sender}</span>
+                                    )}
+                                    {m.text}
+                                  </div>
+                                  <span className="mt-0.5 text-[10px] text-neutral-600">{clock(m.at)}</span>
+                                </div>
+                              ))}
+                              <p className="pt-1 text-[10px] text-neutral-600">
+                                Texto truncado para visualização — exporte para o conteúdo completo.
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-right text-[11px] text-neutral-500 shrink-0">
-                      <p>{fmt(c.startedAt)}</p>
-                      {c.number && !c.isGroup && <p className="font-mono">{c.number}</p>}
-                      {c.integration && <p className="truncate max-w-[140px]">{c.integration}</p>}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            </>
           )}
 
-          {/* Paginação */}
           {total > PAGE_SIZE && (
             <div className="mt-5 flex items-center justify-between text-sm text-neutral-400">
               <span>{total} conversas</span>

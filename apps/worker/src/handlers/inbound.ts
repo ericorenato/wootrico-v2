@@ -1,5 +1,6 @@
 import { logger, hmac } from '@wootrico/config';
 import { normalizePhone } from '@wootrico/providers';
+import { assertLicenseActive } from '@wootrico/license-client';
 import { withLock, cacheGet, cacheSet } from '@wootrico/cache';
 import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/chatwoot-client';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
@@ -9,7 +10,7 @@ import { loadIntegrationRuntime } from '../engine/runtime.js';
 import { fileNameFor } from '../lib/message-type.js';
 import { storeMediaAsset } from '../lib/media-store.js';
 import { logMessage } from '../lib/message-log.js';
-import { logConversationOpener } from '../lib/conversation-log.js';
+import { logConversationMessage } from '../lib/conversation-log.js';
 
 const CONTACT_TTL = 3600; // seconds
 
@@ -142,24 +143,6 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     });
     const conversationId = conversation?.id;
     if (!conversationId) return logger.warn({ integrationId }, 'inbound: missing conversation id');
-
-    // Record the conversation OPENER (first message only, start truncated) for the
-    // panel's exportable conversations. Best-effort, idempotent per conversation.
-    if (!opts?.bodyOverride) {
-      void logConversationOpener({
-        integrationId,
-        chatwootConversationId: String(conversationId),
-        contactName,
-        contactNumber: isGroup
-          ? null
-          : (phoneNumber ?? discoveredPhone ?? norm.phone ?? norm.jid ?? null),
-        senderName: senderLabel,
-        isGroup,
-        direction,
-        messageType: norm.media?.type ?? 'text',
-        text: norm.text || norm.media?.caption || null,
-      });
-    }
 
     let inReplyTo: number | undefined = opts?.inReplyToOverride;
     if (inReplyTo == null && norm.replyToProviderMessageId) {
@@ -304,6 +287,31 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       });
       return;
     }
+
+    // Capture to the conversation HISTORY (FULL text) BEFORE the license gate, so
+    // the conversation is preserved even while processing is paused. Both
+    // directions (incoming + our own/agent echoes); deduped by providerMessageId.
+    await logConversationMessage({
+      integrationId,
+      peerKey: identifier,
+      contactName: isGroup ? (norm.groupName ?? null) : (norm.name ?? norm.senderName ?? null),
+      contactNumber: isGroup ? null : (discoveredPhone ?? norm.phone ?? norm.jid ?? null),
+      senderName: senderLabel,
+      isGroup,
+      direction: norm.fromMe ? 'outgoing' : 'incoming',
+      messageType: norm.media?.type ?? 'text',
+      text: norm.text || norm.media?.caption || null,
+      providerMessageId: norm.providerMessageId,
+    });
+
+    // License gate — when inactive, the history above is kept but nothing is
+    // mirrored to Chatwoot (processing is paused).
+    const gate = await assertLicenseActive();
+    if (!gate.allowed) {
+      logger.warn({ status: gate.status }, 'inbound: license inactive — history kept, chatwoot skipped');
+      return;
+    }
+
     // Idempotency guard — if this provider message was already mirrored (queue
     // retry after a transient failure, or a provider re-delivery), skip it so we
     // never create a duplicate in Chatwoot. Covers both directions.
