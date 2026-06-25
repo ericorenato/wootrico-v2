@@ -11,12 +11,16 @@ e um **domínio/subdomínio** com registro **A** apontando para o IP da VPS (par
 > O script fica salvo nessa pasta — é dele que você roda `update` e `uninstall` depois.
 > O instalador também grava ali o `.env` e o `docker-compose` gerado.
 
-## URLs dos instaladores (copie para a VPS)
+## URLs dos instaladores
 
-| O que | URL para baixar |
+| O que | Como obter |
 |---|---|
-| Servidor de licença (você) | `https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install-license.sh` |
-| Cliente Wootrico | `https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh` |
+| **Cliente Wootrico** (público) | `curl -fsSL https://wootrico.ericorenato.com.br/install.sh \| sudo bash` |
+| Servidor de licença (**só você**) | `install-license.sh` do repositório **privado** (você tem acesso) — não é público |
+
+> O repositório do código é **privado**. Só o `install.sh` do cliente é público (servido em
+> `wootrico.ericorenato.com.br`); ele não contém código, apenas puxa a imagem pública do Docker Hub.
+> O `install-license.sh` é do fornecedor e **não** vai para o ar.
 
 ---
 
@@ -58,27 +62,26 @@ A URL do seu servidor de licença **já vem embutida na imagem** — o cliente n
 disso. O licenciamento é **obrigatório**: no 1º acesso o cliente ativa a licença e, sem ela, o
 produto não processa nem cria integrações.
 
-**Instalar:**
+**Instalar** (um comando, sem baixar arquivo — o instalador é público; o código é privado):
 
 ```bash
-mkdir -p /opt/wootrico && cd /opt/wootrico
-curl -fsSL -O https://raw.githubusercontent.com/ericorenato/wootrico-v2/main/install.sh
-sudo bash install.sh
+curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash
 ```
 
-Pergunta a rede, o **domínio**, o TLS e a infra (Postgres/RabbitMQ/Redis — reaproveita ou
-sobe embarcados). No 1º acesso (`https://SEU_DOMINIO`) o **setup wizard** cria o admin
-(nome + e-mail) e **ativa a licença**.
+Cria um subdiretório dedicado **`./wootrico`** na pasta atual (compose + `.env` isolados,
+para não colidir com outras instalações Docker), e pergunta a rede, o **domínio**, o TLS e a
+infra (Postgres/RabbitMQ/Redis — reaproveita ou sobe embarcados). No 1º acesso
+(`https://SEU_DOMINIO`) o **setup wizard** cria o admin (nome + e-mail) e **ativa a licença**.
 
-**Atualizar / desinstalar** (rode da MESMA pasta `/opt/wootrico`):
+**Atualizar / desinstalar** (rode da mesma pasta da instalação — ele acha o `./wootrico`):
 
 ```bash
-cd /opt/wootrico
-sudo bash install.sh update       # repull da imagem + redeploy (preserva o .env)
-sudo bash install.sh uninstall    # remove a stack (pergunta se apaga os volumes)
+curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash -s update      # repull + redeploy (preserva o .env)
+curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash -s uninstall   # remove a stack (pergunta se apaga os volumes)
 ```
 
-> Rodar local (Docker Desktop, sem Swarm), só para testes: `bash install.sh local`.
+> O instalador só puxa a **imagem pública** do Docker Hub e gera o compose — não expõe código.
+> O `curl | bash` funciona sem criar arquivo porque os prompts são lidos do `/dev/tty`.
 
 ---
 

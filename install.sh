@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # Wootrico v2 — instalador para VPS (Docker Swarm).
-#   sudo bash install.sh            # instalar em produção (Swarm; Traefik/TLS opcional)
-#   sudo bash install.sh update     # pull da imagem + regenera compose + redeploy (preserva .env)
-#   sudo bash install.sh uninstall  # remover a stack (e opcionalmente volumes)
-#        bash install.sh local      # rodar LOCAL (Docker Desktop, Compose puro, sem Swarm)
+#   curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash
+#   …| sudo bash -s update     # pull da imagem + regenera compose + redeploy (preserva .env)
+#   …| sudo bash -s uninstall  # remover a stack (e opcionalmente volumes)
 #
-# NÃO clona o repositório: a stack sobe via Compose GERADO pelo instalador usando
-# a imagem publicada no Docker Hub. Detecta o SO/Docker/Swarm, pergunta a rede
-# overlay e as chaves, gera/preserva segredos, sobe a stack e mostra um resumo.
-# Idempotente: re-executar NÃO sobrescreve valores já existentes no .env.
+# NÃO clona o repositório nem expõe código: a stack sobe via Compose GERADO pelo
+# instalador usando a imagem PÚBLICA do Docker Hub. Detecta o SO/Docker/Swarm,
+# pergunta a rede overlay e as chaves, gera/preserva segredos, sobe a stack e
+# mostra um resumo. Cria um subdiretório dedicado (./wootrico) na pasta atual,
+# para não colidir com outras instalações Docker. Idempotente: re-executar NÃO
+# sobrescreve valores já existentes no .env.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 STACK_NAME="wootrico"
 IMAGE="${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}"
 ENV_FILE=".env"
-REPO_URL_DEFAULT="https://github.com/ericorenato/wootrico-v2"
 
 if [ -t 1 ]; then C_B="\033[1m"; C_G="\033[32m"; C_Y="\033[33m"; C_R="\033[31m"; C_C="\033[36m"; C_0="\033[0m"; else C_B=""; C_G=""; C_Y=""; C_R=""; C_C=""; C_0=""; fi
 info()  { echo -e "${C_C}›${C_0} $*"; }
@@ -85,10 +85,30 @@ svc_alias_on_net() { # $1 img-regex
 }
 
 # ───────────────────────────── INSTALL ─────────────────────────────
+# Keep the compose/.env in a dedicated subfolder (./wootrico) so it never collides
+# with other Docker projects sharing the same path. Re-entrant: stays put if the
+# current dir is already a Wootrico install, else uses ./wootrico (creating it on
+# install). update/uninstall find it here or in the parent.
+enter_install_dir() {
+  local mode="$1" # install | manage
+  if [ -f "$ENV_FILE" ] && grep -q '^WOOTRICO_' "$ENV_FILE" 2>/dev/null; then
+    return 0 # already inside an install dir
+  fi
+  if [ -f "$STACK_NAME/$ENV_FILE" ]; then
+    cd "$STACK_NAME"; info "Instalação encontrada em $(pwd)"; return 0
+  fi
+  if [ "$mode" = "install" ]; then
+    mkdir -p "$STACK_NAME"; cd "$STACK_NAME"; info "Diretório da instalação: $(pwd)"
+  else
+    err ".env não encontrado — rode a instalação primeiro (aqui ou em ./$STACK_NAME)."; exit 1
+  fi
+}
+
 cmd_install() {
   title "Sistema operacional"
-  [ "$(uname -s)" = "Linux" ] || { err "Este instalador é para Linux (VPS). Para testar localmente use docker-compose.local.yml."; exit 1; }
+  [ "$(uname -s)" = "Linux" ] || { err "Este instalador é para Linux (VPS)."; exit 1; }
   need_root
+  enter_install_dir install
   local OS_ID="desconhecido" PKG=""
   [ -f /etc/os-release ] && . /etc/os-release && OS_ID="${ID:-desconhecido}"
   case "$OS_ID" in
@@ -603,7 +623,7 @@ print_summary() {
 # ───────────────────────────── UPDATE ─────────────────────────────
 cmd_update() {
   need_root
-  [ -f "$ENV_FILE" ] || { err ".env não encontrado — rode a instalação primeiro." ; exit 1; }
+  enter_install_dir manage
   title "Atualizar"
   # Reaproveita as escolhas da instalação (rede/Traefik) e regenera o compose
   # apontando para a imagem mais recente do Docker Hub. Sem git.
@@ -618,6 +638,7 @@ cmd_update() {
 # ───────────────────────────── UNINSTALL ─────────────────────────────
 cmd_uninstall() {
   need_root
+  enter_install_dir manage
   title "Desinstalar"
   warn "Isto remove a stack '$STACK_NAME'."
   $SUDO docker stack rm "$STACK_NAME" 2>/dev/null || true
@@ -631,66 +652,9 @@ cmd_uninstall() {
   ok "Concluído. (o arquivo .env foi preservado)"
 }
 
-# ───────────────────────────── LOCAL (Docker Desktop) ─────────────────────────────
-configure_env_local() {
-  title "Configuração (.env local)"
-  touch "$ENV_FILE"; chmod 600 "$ENV_FILE" 2>/dev/null || true
-  get_env() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
-  set_env() { local k="$1" v="$2" tmp; if grep -qE "^$k=" "$ENV_FILE"; then tmp="$(mktemp)"; grep -vE "^$k=" "$ENV_FILE" > "$tmp"; mv "$tmp" "$ENV_FILE"; fi; printf '%s=%s\n' "$k" "$v" >> "$ENV_FILE"; }
-  keep_or() { local c; c="$(get_env "$1")"; [ -n "$c" ] && echo "$c" || echo "$2"; }
-
-  local PORT_HOST PGU PGDB RBU PGP RBP JWT ENC
-  PORT_HOST="$(ask "Porta do painel no host (pouco comum p/ evitar conflito)" "$(keep_or PANEL_PORT 8789)")"
-  PGU="$(keep_or POSTGRES_USER wootrico)"; PGDB="$(keep_or POSTGRES_DB wootrico)"; RBU="$(keep_or RABBITMQ_USER wootrico)"
-  PGP="$(keep_or POSTGRES_PASSWORD "$(openssl rand -hex 16)")"
-  RBP="$(keep_or RABBITMQ_PASSWORD "$(openssl rand -hex 16)")"
-  JWT="$(keep_or JWT_SECRET "$(openssl rand -base64 48 | tr -d '\n=')")"
-  ENC="$(keep_or APP_ENCRYPTION_KEY "$(openssl rand -base64 32 | tr -d '\n')")"
-
-  set_env PANEL_PORT "$PORT_HOST"
-  set_env RABBITMQ_UI_PORT "$(keep_or RABBITMQ_UI_PORT 15673)"
-  set_env POSTGRES_USER "$PGU"; set_env POSTGRES_PASSWORD "$PGP"; set_env POSTGRES_DB "$PGDB"
-  set_env DATABASE_URL "$(keep_or DATABASE_URL "postgresql://${PGU}:${PGP}@postgres:5432/${PGDB}?schema=public")"
-  set_env RABBITMQ_USER "$RBU"; set_env RABBITMQ_PASSWORD "$RBP"
-  set_env RABBITMQ_URL "$(keep_or RABBITMQ_URL "amqp://${RBU}:${RBP}@rabbitmq:5672")"
-  set_env REDIS_URL "$(keep_or REDIS_URL 'redis://redis:6379')"
-  set_env PUBLIC_BASE_URL "http://localhost:${PORT_HOST}"
-  set_env JWT_SECRET "$JWT"; set_env APP_ENCRYPTION_KEY "$ENC"
-  set_env NODE_ENV "$(keep_or NODE_ENV production)"; set_env PORT "$(keep_or PORT 3000)"
-  set_env HOST "$(keep_or HOST 0.0.0.0)"; set_env LOG_LEVEL "$(keep_or LOG_LEVEL info)"
-  chmod 600 "$ENV_FILE" 2>/dev/null || true
-  ok ".env (local) pronto"; PANEL_PORT_OUT="$PORT_HOST"
-}
-
-cmd_local() {
-  title "Modo LOCAL (Docker Desktop · Compose puro · sem Swarm)"
-  command -v docker >/dev/null 2>&1 || { err "Docker não encontrado. Instale o Docker Desktop."; exit 1; }
-  docker compose version >/dev/null 2>&1 || { err "Plugin 'docker compose' ausente (atualize o Docker)."; exit 1; }
-
-  if [ ! -f docker-compose.local.yml ]; then
-    local repo; repo="$(ask "URL do repositório git" "$REPO_URL_DEFAULT")"
-    git clone "$repo" wootrico-v2 && cd wootrico-v2 && ok "clonado em $(pwd)"
-  fi
-
-  configure_env_local
-
-  title "Subindo a stack local"
-  set -a; . "./$ENV_FILE"; set +a
-  docker compose -f docker-compose.local.yml up -d
-
-  title "Resumo"
-  echo -e "Painel:      ${C_B}http://localhost:${PANEL_PORT_OUT}${C_0}"
-  echo -e "RabbitMQ UI: http://localhost:$(grep -E '^RABBITMQ_UI_PORT=' "$ENV_FILE" | cut -d= -f2-)"
-  echo -e "\n${C_Y}Chaves (guarde em local seguro):${C_0}"
-  grep -E '^(POSTGRES_PASSWORD|RABBITMQ_PASSWORD|JWT_SECRET|APP_ENCRYPTION_KEY|PANEL_PORT)=' "$ENV_FILE" | sed 's/^/  /'
-  echo -e "\n${C_C}Parar:  docker compose -f docker-compose.local.yml down${C_0}"
-  echo -e "${C_C}Logs:   docker compose -f docker-compose.local.yml logs -f app${C_0}"
-}
-
 case "${1:-install}" in
   install) cmd_install ;;
   update) cmd_update ;;
   uninstall) cmd_uninstall ;;
-  local) cmd_local ;;
-  *) echo "uso: install.sh [install|update|uninstall|local]"; exit 1 ;;
+  *) echo "uso: install.sh [install|update|uninstall]"; exit 1 ;;
 esac
