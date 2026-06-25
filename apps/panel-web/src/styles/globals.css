@@ -57,6 +57,17 @@ body {
   filter: blur(0);
 }
 
+@keyframes toastIn {
+  0% {
+    transform: translateY(-0.5rem);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 @keyframes barGrow {
   0% {
     transform: scaleY(0);

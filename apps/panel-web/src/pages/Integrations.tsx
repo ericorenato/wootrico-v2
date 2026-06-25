@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Trash2, Plug, Pencil, AlertTriangle } from 'lucide-react';
-import { Badge, Button, Card, CopyButton, Eyebrow } from '../components/ui';
+import { Badge, Button, Card, CopyButton, Eyebrow, useToast } from '../components/ui';
 import {
   deleteIntegration,
   listIntegrations,
@@ -33,6 +33,7 @@ export default function Integrations() {
   const [items, setItems] = useState<IntegrationDTO[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [license, setLicense] = useState<LicenseStatus | null>(null);
+  const { show, node: toast } = useToast();
 
   const load = () => listIntegrations().then(setItems).catch(() => setItems([]));
   useEffect(() => {
@@ -52,7 +53,7 @@ export default function Integrations() {
   async function toggleEnabled(it: IntegrationDTO) {
     const next = !it.isEnabled;
     if (next && !licensed) {
-      alert('Licença inativa — não é possível ativar integrações. Regularize a licença primeiro.');
+      show('Licença inativa — não é possível ativar integrações. Regularize a licença primeiro.', 'warn');
       return;
     }
     setBusy(it.id);
@@ -65,10 +66,11 @@ export default function Integrations() {
         prev?.map((x) => (x.id === it.id ? { ...x, isEnabled: it.isEnabled } : x)) ?? prev,
       );
       const code = (err as { code?: string }).code;
-      alert(
+      show(
         code === 'license_inactive'
           ? 'Licença inativa — não é possível ativar integrações.'
           : 'Não foi possível alterar o status da integração.',
+        code === 'license_inactive' ? 'warn' : 'error',
       );
     } finally {
       setBusy(null);
@@ -77,6 +79,7 @@ export default function Integrations() {
 
   return (
     <div>
+      {toast}
       <div className="flex items-start justify-between mb-10">
         <div>
           <Eyebrow>Integrações</Eyebrow>

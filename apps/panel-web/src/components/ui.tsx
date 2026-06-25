@@ -4,8 +4,8 @@ import type {
   ReactNode,
   SelectHTMLAttributes,
 } from 'react';
-import { useRef, useState } from 'react';
-import { Check, Copy, Info } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Check, Copy, Info, X, XCircle } from 'lucide-react';
 
 /**
  * Discreet hover/focus tooltip anchored to a small info glyph. CSS-only (no
@@ -285,4 +285,77 @@ export function Badge({
       {children}
     </span>
   );
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+// In-app notification matching the dark theme — replaces the browser's alert().
+export type ToastTone = 'warn' | 'error' | 'info' | 'success';
+
+const TOAST_STYLES: Record<ToastTone, { box: string; icon: ReactNode }> = {
+  warn: {
+    box: 'border-amber-500/30 bg-amber-500/10 text-amber-100',
+    icon: <AlertTriangle size={18} className="text-amber-300" />,
+  },
+  error: {
+    box: 'border-red-500/30 bg-red-500/10 text-red-100',
+    icon: <XCircle size={18} className="text-red-300" />,
+  },
+  info: {
+    box: 'border-blue-500/30 bg-blue-500/10 text-blue-100',
+    icon: <Info size={18} className="text-blue-300" />,
+  },
+  success: {
+    box: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100',
+    icon: <Check size={18} className="text-emerald-300" />,
+  },
+};
+
+export function Toast({
+  message,
+  tone = 'warn',
+  onClose,
+  duration = 5000,
+}: {
+  message: ReactNode;
+  tone?: ToastTone;
+  onClose: () => void;
+  duration?: number;
+}) {
+  useEffect(() => {
+    if (!duration) return;
+    const t = setTimeout(onClose, duration);
+    return () => clearTimeout(t);
+  }, [onClose, duration]);
+  const s = TOAST_STYLES[tone];
+  return (
+    <div className="fixed top-4 right-4 z-[100] w-[min(92vw,26rem)] animate-[toastIn_.2s_ease-out]">
+      <div
+        className={`flex items-start gap-3 rounded-xl border px-4 py-3.5 shadow-2xl shadow-black/40 backdrop-blur-md ${s.box}`}
+        role="alert"
+      >
+        <span className="mt-0.5 shrink-0">{s.icon}</span>
+        <p className="flex-1 text-sm leading-relaxed">{message}</p>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Fechar"
+          className="-mr-1 -mt-0.5 shrink-0 rounded-md p-1 opacity-60 transition hover:bg-white/10 hover:opacity-100"
+        >
+          <X size={15} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Ergonomic toast: `const { show, node } = useToast()`; render `{node}`, call `show(msg, tone)`. */
+export function useToast() {
+  const [state, setState] = useState<{ message: ReactNode; tone: ToastTone } | null>(null);
+  const show = useCallback((message: ReactNode, tone: ToastTone = 'warn') => {
+    setState({ message, tone });
+  }, []);
+  const node = state ? (
+    <Toast message={state.message} tone={state.tone} onClose={() => setState(null)} />
+  ) : null;
+  return { show, node };
 }
