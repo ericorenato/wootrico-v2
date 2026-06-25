@@ -21,7 +21,8 @@ const UTM = '?utm_source=wootrico_panel';
 const FOOTER_LINKS = [
   { href: `https://ericorenato.com.br/privacidade${UTM}`, label: 'Privacidade' },
   { href: `https://ericorenato.com.br/termos${UTM}`, label: 'Política de uso' },
-  { href: `https://clawhermes.ericorenato.com.br/${UTM}`, label: 'Cursos' },
+  { href: `https://clawhermes.ericorenato.com.br/${UTM}`, label: 'OpenClaw Hermes' },
+  { href: `https://evogo.ericorenato.com.br${UTM}`, label: 'Evolution Go' },
   { href: `https://ericorenato.com.br${UTM}`, label: 'ericorenato.com.br' },
 ];
 
