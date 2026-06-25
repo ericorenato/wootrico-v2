@@ -10,6 +10,7 @@ import {
   Terminal,
   SlidersHorizontal,
   LifeBuoy,
+  BookOpen,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
@@ -23,6 +24,7 @@ const NAV = [
   { to: '/system', label: 'Sistema', icon: SlidersHorizontal },
   { to: '/license', label: 'Licença', icon: KeyRound },
   { to: '/support', label: 'Suporte', icon: LifeBuoy },
+  { to: '/manual', label: 'Manual', icon: BookOpen },
   { to: '/logs', label: 'Logs', icon: Terminal },
 ];
 
