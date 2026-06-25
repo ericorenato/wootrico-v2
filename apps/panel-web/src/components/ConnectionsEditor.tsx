@@ -5,7 +5,9 @@ import {
   getConnections,
   restartSystem,
   saveConnections,
+  testConnection,
   type ConnectionsState,
+  type PingResult,
   type SaveConnectionsResult,
 } from '../lib/system-api';
 import {
@@ -66,6 +68,10 @@ export default function ConnectionsEditor({ heading = true }: { heading?: boolea
   const [res, setRes] = useState<SaveConnectionsResult | null>(null);
   const [error, setError] = useState('');
   const [restarting, setRestarting] = useState(false);
+  // Standalone "test now" — independent of save; keyed by tab+url so editing
+  // invalidates the shown result.
+  const [testBusy, setTestBusy] = useState(false);
+  const [testState, setTestState] = useState<{ tab: Tab; url: string; result: PingResult } | null>(null);
 
   async function load() {
     const c = await getConnections();
@@ -115,6 +121,22 @@ export default function ConnectionsEditor({ heading = true }: { heading?: boolea
       setError('Falha ao salvar/testar as conexões.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Testa a conexão do serviço ATUAL com os valores em tela, sem salvar — sempre
+  // disponível (mesmo sem alterações).
+  async function testNow() {
+    setError('');
+    setTestBusy(true);
+    const url = built[tab];
+    try {
+      const result = await testConnection(tab, url);
+      setTestState({ tab, url, result });
+    } catch {
+      setTestState({ tab, url, result: { ok: false, detail: 'falha na requisição' } });
+    } finally {
+      setTestBusy(false);
     }
   }
 
@@ -215,6 +237,11 @@ export default function ConnectionsEditor({ heading = true }: { heading?: boolea
             {result.ok ? 'testado: ok' : `falhou: ${result.detail ?? ''}`}
           </Badge>
         )}
+        {testState && testState.tab === tab && testState.url === built[tab] && (
+          <Badge tone={testState.result.ok ? 'ok' : 'error'}>
+            {testState.result.ok ? 'conexão ok' : `falhou: ${testState.result.detail ?? ''}`}
+          </Badge>
+        )}
       </div>
 
       <ErrorText>{error}</ErrorText>
@@ -237,6 +264,9 @@ export default function ConnectionsEditor({ heading = true }: { heading?: boolea
       <div className="flex items-center gap-4 mt-5">
         <Button type="button" onClick={save} loading={busy}>
           Salvar e testar
+        </Button>
+        <Button type="button" variant="ghost" onClick={testNow} loading={testBusy}>
+          Testar conexão
         </Button>
         {!pendingRestart && (
           <button

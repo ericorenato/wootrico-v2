@@ -117,10 +117,20 @@ export default async function systemRoutes(app: FastifyInstance) {
       }
     };
 
+    // Hard cap each probe so a single unreachable service never hangs the whole
+    // request (which would freeze the dashboard on "Verificando…").
+    const withTimeout = (p: Promise<{ ok: boolean; detail?: string }>, label: string) =>
+      Promise.race([
+        p,
+        new Promise<{ ok: boolean; detail?: string }>((res) =>
+          setTimeout(() => res({ ok: false, detail: `timeout (${label})` }), 6000),
+        ),
+      ]);
+
     const [postgres, rabbitmq, redis] = await Promise.all([
-      testPostgres(),
-      pingRabbit(),
-      pingRedis(),
+      withTimeout(testPostgres(), 'postgres'),
+      withTimeout(pingRabbit(), 'rabbitmq'),
+      withTimeout(pingRedis(), 'redis'),
     ]);
 
     return { postgres, rabbitmq, redis };

@@ -1,8 +1,9 @@
 import Redis from 'ioredis';
 import { randomBytes } from 'node:crypto';
-import { env } from '@wootrico/config';
+import { env, logger } from '@wootrico/config';
 
 let redis: Redis | undefined;
+let lastRedisErrAt = 0; // throttle the connection-error log (ioredis emits on every retry)
 
 // Optional runtime override of the Redis URL (set at boot from DB settings,
 // taking precedence over the env var). Empty/undefined falls back to env.
@@ -17,6 +18,15 @@ export function effectiveRedisUrl(): string {
 export function getRedis(): Redis {
   if (redis) return redis;
   redis = new Redis(effectiveRedisUrl(), { maxRetriesPerRequest: null, lazyConnect: false });
+  // Handle 'error' so ioredis doesn't spam "Unhandled error event" on every retry
+  // (e.g. when the configured host is unreachable). Throttled to once / 30s.
+  redis.on('error', (err: Error) => {
+    const now = Date.now();
+    if (now - lastRedisErrAt > 30_000) {
+      lastRedisErrAt = now;
+      logger.warn({ err: err.message, url: effectiveRedisUrl() }, 'redis connection error');
+    }
+  });
   return redis;
 }
 
@@ -32,10 +42,17 @@ export interface PingResult {
   detail?: string;
 }
 
-/** Ping the active Redis (the one the app is actually using). */
-export async function pingRedis(): Promise<PingResult> {
+/** Ping the active Redis (the one the app is actually using). Bounded by a
+ *  timeout so an unreachable host never HANGS the caller (the main client uses
+ *  infinite retries, so its ping would otherwise queue forever). */
+export async function pingRedis(timeoutMs = 5000): Promise<PingResult> {
   try {
-    const pong = await getRedis().ping();
+    const pong = await Promise.race([
+      getRedis().ping(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), timeoutMs),
+      ),
+    ]);
     return { ok: pong === 'PONG', detail: pong };
   } catch (err) {
     return { ok: false, detail: (err as Error).message };
