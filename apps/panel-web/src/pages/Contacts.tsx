@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Download, Search, User, Users } from 'lucide-react';
 import { Button, CopyButton, CopyableText, Eyebrow, InfoTip } from '../components/ui';
-import { exportContacts, listContacts, type ContactDTO } from '../lib/contacts-api';
+import {
+  exportContacts,
+  fetchContactAvatarUrl,
+  listContacts,
+  type ContactDTO,
+} from '../lib/contacts-api';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
@@ -20,11 +25,11 @@ function OriginCell({ contact }: { contact: ContactDTO }) {
     );
   }
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className="flex items-center gap-1 min-w-0">
       {seenInDm && (
         <span
           title="Visto em conversa direta (1:1)"
-          className="inline-flex items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300"
+          className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300"
         >
           <User size={10} /> Direto
         </span>
@@ -32,10 +37,10 @@ function OriginCell({ contact }: { contact: ContactDTO }) {
       {seenInGroup && (
         <span
           title={groupName ? `Visto no grupo: ${groupName}` : 'Visto como participante de grupo'}
-          className="inline-flex max-w-[180px] items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-300"
+          className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-neutral-300"
         >
           <Users size={10} className="shrink-0" />
-          <span className="truncate">{groupName ? `Grupo · ${groupName}` : 'Grupo'}</span>
+          <span className="truncate">{groupName ?? 'Grupo'}</span>
         </span>
       )}
     </div>
@@ -66,17 +71,34 @@ function contactKey(c: ContactDTO): string {
 }
 
 function Avatar({ contact }: { contact: ContactDTO }) {
-  const [failed, setFailed] = useState(false);
-  const showImg = contact.avatarUrl && !failed;
+  // Lazily fetch the stored avatar bytes (auth-aware) → blob URL. Revoked on
+  // unmount / change. Falls back to initials when there's no photo.
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!contact.hasAvatar) {
+      setUrl(null);
+      return;
+    }
+    let alive = true;
+    let blob: string | null = null;
+    fetchContactAvatarUrl(contact.lid, contact.pn).then((u) => {
+      if (!alive) {
+        if (u) URL.revokeObjectURL(u);
+        return;
+      }
+      blob = u;
+      setUrl(u);
+    });
+    return () => {
+      alive = false;
+      if (blob) URL.revokeObjectURL(blob);
+    };
+  }, [contact.hasAvatar, contact.avatarVersion, contact.lid, contact.pn]);
+
   return (
     <div className="w-9 h-9 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-      {showImg ? (
-        <img
-          src={contact.avatarUrl ?? ''}
-          alt=""
-          className="w-full h-full object-cover"
-          onError={() => setFailed(true)}
-        />
+      {url ? (
+        <img src={url} alt="" className="w-full h-full object-cover" />
       ) : (
         <span className="text-[11px] font-medium text-neutral-400">{initials(contact)}</span>
       )}

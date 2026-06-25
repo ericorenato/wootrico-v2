@@ -9,8 +9,10 @@ export interface ContactDTO {
   pn: string | null;
   /** WhatsApp display (push) name. */
   pushName: string | null;
-  /** Last profile picture URL seen (may be null/expired). */
-  avatarUrl: string | null;
+  /** True when the avatar bytes are stored (served by the panel; never expires). */
+  hasAvatar: boolean;
+  /** Stored-at epoch ms — used to cache-bust the avatar when it changes. */
+  avatarVersion: number | null;
   /** Observed in a direct (1:1) conversation. */
   seenInDm: boolean;
   /** Observed as a participant of a group (sender or seeded from the roster). */
@@ -37,6 +39,28 @@ export const listContacts = (opts: { search?: string; page?: number; pageSize?: 
   const qs = p.toString();
   return api<ContactsPage>(`/api/contacts${qs ? `?${qs}` : ''}`);
 };
+
+/**
+ * Fetch a contact's avatar (auth-aware) and return a blob URL — the endpoint
+ * needs the Bearer token, so a plain <img src> won't do. Keyed by lid/pn.
+ * Returns null when there's no avatar (404). Caller should revoke the URL.
+ */
+export async function fetchContactAvatarUrl(
+  lid: string | null,
+  pn: string | null,
+): Promise<string | null> {
+  const p = new URLSearchParams();
+  if (lid) p.set('lid', lid);
+  else if (pn) p.set('pn', pn);
+  else return null;
+  const token = getToken();
+  const res = await fetch(`/api/contacts/avatar?${p.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    cache: 'no-store',
+  });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
 
 /**
  * Download the full directory as CSV (honours the search filter). Uses fetch +

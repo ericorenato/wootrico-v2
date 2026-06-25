@@ -158,7 +158,11 @@ model ContactIdentity {
   pn  String? @unique // phone number digits, without the @s.whatsapp.net suffix
 
   pushName  String? @map("push_name")
-  avatarUrl String? @map("avatar_url") // last WhatsApp profile picture URL seen
+  avatarUrl String? @map("avatar_url") // last WhatsApp profile picture URL seen (for change detection)
+  // When set, the avatar BYTES are stored in ContactAvatar — the panel serves
+  // those (WhatsApp URLs expire). Also used to cache-bust the panel image.
+  avatarStoredAt DateTime? @map("avatar_stored_at")
+  avatar         ContactAvatar?
 
   // Where this person has been observed. Not mutually exclusive: the same
   // canonical identity can be seen both in a DM and as a group participant.
@@ -176,6 +180,19 @@ model ContactIdentity {
   lastSeenAt DateTime? @map("last_seen_at")
 
   @@map("contact_identities")
+}
+
+// Avatar bytes, stored so the panel can show contact photos reliably (WhatsApp
+// profile-picture URLs are temporary/signed and expire). Chatwoot keeps its own
+// uploaded copy; this is for the Wootrico panel. 1:1 with ContactIdentity.
+model ContactAvatar {
+  identityId  String          @id @map("identity_id")
+  identity    ContactIdentity @relation(fields: [identityId], references: [id], onDelete: Cascade)
+  contentType String          @map("content_type")
+  data        Bytes
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  @@map("contact_avatars")
 }
 
 model ProviderConfig {

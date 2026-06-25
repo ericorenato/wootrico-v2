@@ -6,6 +6,7 @@ import type { WhatsAppProvider } from '@wootrico/providers';
 
 const SYNC_TTL = 7 * 24 * 3600; // a week
 const MAX_AVATAR_ATTEMPTS = 5; // bound retries when there's no pic / persistent failure
+const AVATAR_RECHECK_MS = 24 * 3600 * 1000; // re-check an existing avatar at most daily (catch changes)
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 interface SyncedMeta {
@@ -15,6 +16,7 @@ interface SyncedMeta {
   avatarUrl?: string; // last avatar URL applied (to detect changes)
   avatarTried?: string; // last target we fetched the avatar for
   avatarAttempts?: number; // fetch attempts so far (caps retries)
+  avatarCheckedAt?: number; // epoch ms of the last provider avatar fetch (re-check cadence)
 }
 
 /**
@@ -75,24 +77,32 @@ export async function syncContactMeta(opts: {
   // isn't there (Evolution), fetch it from the provider. We retry — bounded by
   // MAX_AVATAR_ATTEMPTS — until the image is actually UPLOADED to Chatwoot, since
   // a fresh URL handed to Chatwoot often fails to download server-side.
+  const now = Date.now();
   let avatarOk = prev.avatarOk === true;
   let avatarUrl: string | undefined;
   let avatarTried = prev.avatarTried;
   let avatarAttempts = prev.avatarAttempts ?? 0;
+  let avatarCheckedAt = prev.avatarCheckedAt ?? 0;
 
   if (opts.avatarUrl && opts.avatarUrl !== prev.avatarUrl) {
+    // Provider sent a (new/changed) avatar in the payload (e.g. uazapi).
     avatarUrl = opts.avatarUrl;
   } else if (
     !opts.avatarUrl &&
-    !avatarOk &&
-    avatarAttempts < MAX_AVATAR_ATTEMPTS &&
     opts.avatarTarget &&
-    typeof opts.provider.fetchProfilePictureUrl === 'function'
+    typeof opts.provider.fetchProfilePictureUrl === 'function' &&
+    // Fetch while we don't have one yet (bounded by attempts), OR periodically
+    // re-check an existing one so a CHANGED photo is picked up without waiting
+    // for the whole cache to expire (e.g. Evolution).
+    ((!avatarOk && avatarAttempts < MAX_AVATAR_ATTEMPTS) ||
+      (avatarOk && now - avatarCheckedAt > AVATAR_RECHECK_MS))
   ) {
     avatarTried = opts.avatarTarget;
-    avatarAttempts += 1;
+    if (!avatarOk) avatarAttempts += 1; // only count toward the give-up cap while not yet ok
+    avatarCheckedAt = now;
     const url = await opts.provider.fetchProfilePictureUrl(opts.avatarTarget).catch(() => null);
-    if (url) avatarUrl = url;
+    // (Re)apply only when the URL actually changed — avoids redundant re-uploads.
+    if (url && url !== prev.avatarUrl) avatarUrl = url;
   }
 
   if (avatarUrl) {
@@ -105,10 +115,22 @@ export async function syncContactMeta(opts: {
       } catch (err) {
         logger.debug({ err, integrationId: opts.integrationId }, 'setContactAvatar failed');
       }
+      // Store the BYTES for the panel (WhatsApp URLs expire) — independent of the
+      // media-library config. The panel serves these instead of the volatile URL.
+      await prisma.contactAvatar
+        .upsert({
+          where: { identityId: opts.identifier },
+          create: { identityId: opts.identifier, contentType: img.contentType, data: img.buffer },
+          update: { contentType: img.contentType, data: img.buffer },
+        })
+        .catch(() => undefined);
     }
     // Mirror onto the GLOBAL identity row so the panel's contacts list shows it.
     await prisma.contactIdentity
-      .update({ where: { id: opts.identifier }, data: { avatarUrl } })
+      .update({
+        where: { id: opts.identifier },
+        data: { avatarUrl, ...(img ? { avatarStoredAt: new Date() } : {}) },
+      })
       .catch(() => undefined);
   }
 
@@ -121,6 +143,7 @@ export async function syncContactMeta(opts: {
       avatarUrl: avatarUrl ?? prev.avatarUrl,
       avatarTried,
       avatarAttempts,
+      avatarCheckedAt,
     } satisfies SyncedMeta,
     SYNC_TTL,
   );

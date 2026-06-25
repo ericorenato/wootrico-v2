@@ -66,7 +66,7 @@ export default async function contactRoutes(app: FastifyInstance) {
           lid: true,
           pn: true,
           pushName: true,
-          avatarUrl: true,
+          avatarStoredAt: true,
           seenInDm: true,
           seenInGroup: true,
           lastGroupName: true,
@@ -82,7 +82,10 @@ export default async function contactRoutes(app: FastifyInstance) {
       lid: c.lid,
       pn: c.pn,
       pushName: c.pushName,
-      avatarUrl: c.avatarUrl,
+      // Bytes-backed photo served by the panel (WhatsApp URLs expire). The version
+      // (stored-at ms) lets the client cache-bust when the photo changes.
+      hasAvatar: !!c.avatarStoredAt,
+      avatarVersion: c.avatarStoredAt ? c.avatarStoredAt.getTime() : null,
       seenInDm: c.seenInDm,
       seenInGroup: c.seenInGroup,
       groupName: c.lastGroupName,
@@ -92,6 +95,25 @@ export default async function contactRoutes(app: FastifyInstance) {
     }));
 
     return { contacts, total, page, pageSize };
+  });
+
+  // Serve a contact's avatar BYTES (stored when fresh). Keyed by lid/pn (already
+  // shown in the table) — the canonical UUID stays hidden.
+  app.get('/api/contacts/avatar', guard, async (req, reply) => {
+    const { lid, pn } = req.query as { lid?: string; pn?: string };
+    const where = lid ? { lid } : pn ? { pn } : null;
+    if (!where) return reply.code(400).send({ error: 'bad_request' });
+    const ident = await app.prisma.contactIdentity.findFirst({ where, select: { id: true } });
+    if (!ident) return reply.code(404).send({ error: 'not_found' });
+    const av = await app.prisma.contactAvatar.findUnique({
+      where: { identityId: ident.id },
+      select: { contentType: true, data: true },
+    });
+    if (!av) return reply.code(404).send({ error: 'not_found' });
+    return reply
+      .header('Content-Type', av.contentType)
+      .header('Cache-Control', 'private, max-age=3600')
+      .send(av.data);
   });
 
   // Full CSV export of the directory (honours the same search filter). Returns
