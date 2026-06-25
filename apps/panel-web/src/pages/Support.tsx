@@ -61,7 +61,8 @@ export default function Support() {
       .finally(() => setBusy(false));
   }
 
-  function send() {
+  // Trial/expirada: registra o chamado e direciona à oferta da Hotmart.
+  function sendAndBuy() {
     const text = message.trim();
     if (!text) {
       setError('Descreva sua dificuldade antes de enviar.');
@@ -70,19 +71,27 @@ export default function Support() {
     setError('');
     setSent(false);
     setNeedsPurchase(false);
+    if (checkoutUrl) window.open(checkoutUrl, '_blank', 'noopener');
+    registerTicket(text);
+    setNeedsPurchase(true); // mantém o rascunho
+  }
 
-    if (eligible) {
-      // Abre o WhatsApp SINCRONAMENTE (no gesto do clique) — assim não é bloqueado.
-      if (number) window.open(waUrl(text), '_blank', 'noopener');
-      registerTicket(text);
-      setMessage('');
-      localStorage.removeItem(DRAFT_KEY);
-    } else {
-      // Trial/expirada: registra o chamado e direciona à oferta da Hotmart.
-      if (checkoutUrl) window.open(checkoutUrl, '_blank', 'noopener');
-      registerTicket(text);
-      setNeedsPurchase(true); // mantém o rascunho
+  // Paga ativa: o botão é um LINK real (abre o WhatsApp de forma confiável). Aqui só
+  // validamos e registramos o chamado; a navegação do <a> abre a aba.
+  function onWhatsappClick(e: { preventDefault: () => void }) {
+    const text = message.trim();
+    if (!text) {
+      e.preventDefault();
+      setError('Descreva sua dificuldade antes de enviar.');
+      return;
     }
+    if (!number) {
+      // Sem número configurado: não há WhatsApp — registra e avisa, sem fingir abrir.
+      e.preventDefault();
+    }
+    setError('');
+    setSent(false);
+    registerTicket(text);
   }
 
   return (
@@ -135,21 +144,28 @@ export default function Support() {
 
         {sent && eligible && (
           <p className="mb-5 text-base text-emerald-300">
-            Chamado enviado! Abrimos o WhatsApp do suporte numa nova aba.
+            {number
+              ? 'Chamado enviado! Abrimos o WhatsApp do suporte numa nova aba.'
+              : 'Chamado enviado! Nosso suporte vai responder em breve.'}
           </p>
         )}
 
-        <Button onClick={send} loading={busy} className="text-base">
-          {eligible ? (
-            <>
-              <MessageCircle size={18} /> Abrir suporte no WhatsApp
-            </>
-          ) : (
-            <>
-              <LifeBuoy size={18} /> Enviar chamado
-            </>
-          )}
-        </Button>
+        {eligible ? (
+          <a
+            href={number ? waUrl(message.trim() || 'Olá! Preciso de ajuda com o Wootrico.') : '#'}
+            target={number ? '_blank' : undefined}
+            rel="noopener noreferrer"
+            onClick={onWhatsappClick}
+            aria-disabled={busy}
+            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 text-base font-bold text-white shadow-lg shadow-blue-500/20 transition hover:bg-blue-500"
+          >
+            <MessageCircle size={18} /> Abrir suporte no WhatsApp
+          </a>
+        ) : (
+          <Button onClick={sendAndBuy} loading={busy} className="text-base">
+            <LifeBuoy size={18} /> Enviar chamado
+          </Button>
+        )}
       </div>
     </div>
   );
