@@ -11,9 +11,64 @@ import {
   SlidersHorizontal,
   LifeBuoy,
   BookOpen,
+  Instagram,
+  Youtube,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
+
+const UTM = '?utm_source=wootrico_panel';
+const FOOTER_LINKS = [
+  { href: `https://ericorenato.com.br/privacidade${UTM}`, label: 'Privacidade' },
+  { href: `https://ericorenato.com.br/termos${UTM}`, label: 'Política de uso' },
+  { href: `https://clawhermes.ericorenato.com.br/${UTM}`, label: 'Cursos' },
+  { href: `https://ericorenato.com.br${UTM}`, label: 'ericorenato.com.br' },
+];
+
+function PanelFooter() {
+  return (
+    <footer className="border-t border-white/5 px-6 py-5">
+      <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-neutral-500">
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5">
+          {FOOTER_LINKS.map((l, i) => (
+            <span key={l.href} className="flex items-center gap-3">
+              {i > 0 && <span className="text-neutral-700">·</span>}
+              <a
+                href={l.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-neutral-200 transition-colors"
+              >
+                {l.label}
+              </a>
+            </span>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <span>por Érico Renato</span>
+          <a
+            href="https://www.instagram.com/erico.arenato"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Instagram"
+            className="text-neutral-500 hover:text-white transition-colors"
+          >
+            <Instagram size={16} />
+          </a>
+          <a
+            href="https://www.youtube.com/@ericorenato.automacao"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="YouTube"
+            className="text-neutral-500 hover:text-white transition-colors"
+          >
+            <Youtube size={16} />
+          </a>
+        </div>
+      </div>
+    </footer>
+  );
+}
 
 const NAV = [
   { to: '/', label: 'Início', icon: LayoutDashboard, end: true },
@@ -85,8 +140,9 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="flex-1 bg-[#050509] min-h-screen">
-        <div className="max-w-6xl mx-auto px-6 py-10">{children}</div>
+      <main className="flex-1 bg-[#050509] min-h-screen flex flex-col">
+        <div className="flex-1 w-full max-w-6xl mx-auto px-6 py-10">{children}</div>
+        <PanelFooter />
       </main>
     </div>
   );
