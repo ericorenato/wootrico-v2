@@ -143,23 +143,23 @@ export default async function mediaRoutes(app: FastifyInstance) {
     const disposition = download ? 'attachment' : 'inline';
     const name = safeName(asset.fileName, `${asset.messageType}-${asset.id}`);
 
-    // S3: hand the browser a short-lived direct URL (offloads the bytes).
-    const presigned = await driver
-      .presignedUrl(asset.storageKey, {
-        disposition,
-        downloadName: name,
-        contentType: asset.mimeType,
-      })
-      .catch(() => null);
-    if (presigned) return reply.redirect(presigned, 302);
-
-    // Local: stream the file ourselves.
-    if (!(await driver.exists(asset.storageKey))) return reply.code(404).send({ error: 'gone' });
-    const stream = await driver.stream(asset.storageKey);
+    // Always PROXY the bytes through the panel (same-origin). We deliberately do
+    // NOT redirect to a presigned S3 URL: the panel loads media via fetch()+blob
+    // (it needs the Bearer token), and a cross-origin fetch to S3 fails CORS — and
+    // self-hosted S3/MinIO endpoints are often internal and unreachable from the
+    // browser. Streaming here works for S3, MinIO and the embedded DB driver.
+    let stream;
+    try {
+      stream = await driver.stream(asset.storageKey);
+    } catch (err) {
+      app.log.warn({ err, id, driver: asset.storageDriver }, 'media stream failed');
+      return reply.code(404).send({ error: 'gone' });
+    }
     return reply
       .header('Content-Type', asset.mimeType)
       .header('Content-Length', String(asset.size))
       .header('Content-Disposition', `${disposition}; filename="${name}"`)
+      .header('Cache-Control', 'private, max-age=3600')
       .send(stream);
   });
 
