@@ -5,7 +5,7 @@ export default function Hero() {
   return (
     <section
       id="topo"
-      className="relative w-full min-h-[88vh] sm:min-h-[92vh] flex items-center overflow-hidden bg-gradient-to-b from-black via-[#050509] to-[#050509] pt-16"
+      className="relative w-full min-h-[88vh] sm:min-h-[92vh] flex items-center overflow-hidden bg-gradient-to-b from-black via-[#050509] to-[#050509] pt-24"
     >
       {/* Background glows — desktop only (mais leve no mobile) */}
       <div className="absolute inset-0 z-0 pointer-events-none hidden sm:block">
@@ -24,7 +24,7 @@ export default function Hero() {
             <img
               src="/logo_wootrico.png"
               alt="Wootrico"
-              className="w-28 h-28 sm:w-36 sm:h-36 object-contain drop-shadow-[0_0_40px_rgba(59,130,246,0.35)]"
+              className="w-56 h-56 sm:w-72 sm:h-72 object-contain drop-shadow-[0_0_40px_rgba(59,130,246,0.35)]"
             />
           </motion.div>
 
@@ -58,8 +58,10 @@ export default function Hero() {
             transition={{ duration: 0.8, delay: 0.45 }}
             className="text-base sm:text-lg md:text-xl text-neutral-300 font-light max-w-2xl mx-auto leading-relaxed mb-8"
           >
-            Tudo na <span className="text-white font-semibold">sua própria VPS</span>, controlado
-            por um painel. Sem mexer em código: você <span className="text-white font-semibold">cola um comando no terminal</span> e o Wootrico sobe sozinho.
+            O Wootrico é o <span className="text-white font-semibold">integrador</span> que conecta{' '}
+            <span className="text-white font-semibold">Evolution Go, UAZAPI e Z-API ao Chatwoot</span>{' '}
+            — tudo na sua própria VPS, controlado por um painel. Sem mexer em código: você cola um
+            comando no terminal e o Wootrico sobe sozinho.
           </motion.p>
 
           <motion.div

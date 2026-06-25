@@ -30,12 +30,12 @@ export default function Navbar() {
           : 'bg-transparent'
       }`}
     >
-      <nav className="container mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <nav className="container mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
         <a href="#topo" className="flex items-center gap-2.5">
           <img
             src="/logo_wootrico.png"
             alt="Wootrico"
-            className="w-9 h-9 rounded-xl object-contain"
+            className="w-[4.5rem] h-[4.5rem] rounded-xl object-contain"
           />
           <span className="text-lg font-bold tracking-tight">Wootrico</span>
         </a>
@@ -58,18 +58,20 @@ export default function Navbar() {
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Instagram"
-            className="hidden sm:flex w-9 h-9 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 items-center justify-center text-neutral-300 hover:text-white transition-colors"
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-white text-sm font-semibold shadow-lg shadow-pink-500/25 transition hover:opacity-90 bg-gradient-to-br from-[#feda75] via-[#d62976] to-[#4f5bd5]"
           >
             <Instagram className="w-4 h-4" />
+            <span className="hidden lg:inline">Instagram</span>
           </a>
           <a
             href="https://www.youtube.com/@ericorenato.automacao"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="YouTube"
-            className="hidden sm:flex w-9 h-9 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 items-center justify-center text-neutral-300 hover:text-white transition-colors"
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-white text-sm font-semibold shadow-lg shadow-red-500/25 transition hover:opacity-90 bg-[#FF0000]"
           >
             <Youtube className="w-4 h-4" />
+            <span className="hidden lg:inline">YouTube</span>
           </a>
           <a
             href="#instalacao"

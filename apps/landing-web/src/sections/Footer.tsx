@@ -9,7 +9,7 @@ export default function Footer() {
             <img
               src="/logo_wootrico.png"
               alt="Wootrico"
-              className="w-10 h-10 rounded-xl object-contain"
+              className="w-20 h-20 rounded-xl object-contain"
             />
             <div className="leading-tight">
               <p className="text-base font-bold text-white">Wootrico</p>
@@ -40,24 +40,25 @@ export default function Footer() {
             </a>
           </nav>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-neutral-400 mr-1">Acompanhe:</span>
             <a
               href="https://www.instagram.com/erico.arenato"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Instagram"
-              className="w-10 h-10 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 flex items-center justify-center text-neutral-300 hover:text-white transition-colors"
+              aria-label="Instagram de Érico Renato"
+              className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-white text-sm font-semibold shadow-lg shadow-pink-500/25 transition hover:opacity-90 bg-gradient-to-br from-[#feda75] via-[#d62976] to-[#4f5bd5]"
             >
-              <Instagram className="w-5 h-5" />
+              <Instagram className="w-5 h-5" /> Instagram
             </a>
             <a
               href="https://www.youtube.com/@ericorenato.automacao"
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="YouTube"
-              className="w-10 h-10 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 flex items-center justify-center text-neutral-300 hover:text-white transition-colors"
+              aria-label="YouTube de Érico Renato"
+              className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-white text-sm font-semibold shadow-lg shadow-red-500/25 transition hover:opacity-90 bg-[#FF0000]"
             >
-              <Youtube className="w-5 h-5" />
+              <Youtube className="w-5 h-5" /> YouTube
             </a>
           </div>
         </div>
