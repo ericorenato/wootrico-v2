@@ -35,12 +35,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Tolerate bodyless POSTs and any content-type (best-effort JSON). Replaces the
-  // strict default JSON parser that rejects empty bodies.
+  // strict default JSON parser that rejects empty bodies. Buffers the raw BYTES
+  // and decodes UTF-8 only at the end — concatenating chunks as strings would
+  // corrupt multi-byte chars (e.g. "ú") split across chunk boundaries (→ "��").
   const jsonParser = (_req: unknown, payload: NodeJS.ReadableStream, done: (e: Error | null, body?: unknown) => void) => {
-    let data = '';
-    payload.on('data', (c) => (data += c));
+    const chunks: Buffer[] = [];
+    payload.on('data', (c: Buffer | string) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    payload.on('error', () => done(null, {}));
     payload.on('end', () => {
       try {
+        const data = Buffer.concat(chunks).toString('utf8');
         done(null, data ? JSON.parse(data) : {});
       } catch {
         done(null, {});
