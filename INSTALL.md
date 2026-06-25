@@ -73,12 +73,17 @@ para não colidir com outras instalações Docker), e pergunta a rede, o **domí
 infra (Postgres/RabbitMQ/Redis — reaproveita ou sobe embarcados). No 1º acesso
 (`https://SEU_DOMINIO`) o **setup wizard** cria o admin (nome + e-mail) e **ativa a licença**.
 
-**Atualizar / desinstalar** (rode da mesma pasta da instalação — ele acha o `./wootrico`):
+A instalação também registra o comando **`wootrico`** (em `/usr/local/bin`). Depois é só:
 
 ```bash
-curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash -s update      # repull + redeploy (preserva o .env)
-curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash -s uninstall   # remove a stack (pergunta se apaga os volumes)
+sudo wootrico update      # baixa a versão NOVA do instalador, atualiza a imagem e redeploya (preserva o .env)
+sudo wootrico uninstall   # remove a stack (pergunta se apaga os volumes)
+wootrico --help           # ajuda
 ```
+
+Rode da mesma pasta da instalação (ele acha o `./wootrico`). O `update` é auto-atualizável:
+baixa o `install.sh` mais recente e se re-executa. O one-liner também funciona como fallback:
+`curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash -s update`.
 
 > O instalador só puxa a **imagem pública** do Docker Hub e gera o compose — não expõe código.
 > O `curl | bash` funciona sem criar arquivo porque os prompts são lidos do `/dev/tty`.

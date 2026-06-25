@@ -2,8 +2,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Wootrico v2 — instalador para VPS (Docker Swarm).
 #   curl -fsSL https://wootrico.ericorenato.com.br/install.sh | sudo bash
-#   …| sudo bash -s update     # pull da imagem + regenera compose + redeploy (preserva .env)
-#   …| sudo bash -s uninstall  # remover a stack (e opcionalmente volumes)
+#
+# A instalação também registra o comando `wootrico` (em /usr/local/bin), então
+# depois é só:
+#   wootrico update       # baixa a versão nova, atualiza a imagem e redeploya (preserva .env)
+#   wootrico uninstall    # remove a stack (e opcionalmente os volumes)
+#   wootrico --help       # ajuda
 #
 # NÃO clona o repositório nem expõe código: a stack sobe via Compose GERADO pelo
 # instalador usando a imagem PÚBLICA do Docker Hub. Detecta o SO/Docker/Swarm,
@@ -17,6 +21,14 @@ set -euo pipefail
 STACK_NAME="wootrico"
 IMAGE="${WOOTRICO_IMAGE:-ericoautomacao/wootrico-v2:latest}"
 ENV_FILE=".env"
+# CLI: o instalador se copia para cá, virando o comando `wootrico`.
+CLI_PATH="${WOOTRICO_CLI_PATH:-/usr/local/bin/wootrico}"
+INSTALL_URL="${WOOTRICO_INSTALL_URL:-https://wootrico.ericorenato.com.br/install.sh}"
+# Caminho absoluto DESTE script (vazio quando rodado por `curl | bash`, via stdin).
+SELF_SRC=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SELF_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
+fi
 
 if [ -t 1 ]; then C_B="\033[1m"; C_G="\033[32m"; C_Y="\033[33m"; C_R="\033[31m"; C_C="\033[36m"; C_0="\033[0m"; else C_B=""; C_G=""; C_Y=""; C_R=""; C_C=""; C_0=""; fi
 info()  { echo -e "${C_C}›${C_0} $*"; }
@@ -40,6 +52,46 @@ confirm() {
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else err "Rode como root ou instale sudo."; exit 1; fi
+  fi
+}
+
+usage() {
+  cat <<EOF
+Wootrico — integração WhatsApp + Chatwoot (self-hosted)
+
+Uso:
+  wootrico install      Instalar / reconfigurar a stack (padrão)
+  wootrico update       Baixar a versão nova, atualizar a imagem e redeployar (preserva o .env)
+  wootrico uninstall    Remover a stack (pergunta sobre os volumes)
+  wootrico --help       Esta ajuda
+
+Instalação inicial (one-liner):
+  curl -fsSL ${INSTALL_URL} | sudo bash
+EOF
+}
+
+# Baixa o install.sh mais novo da URL pública para o comando `wootrico`. 0 = ok.
+self_update() {
+  local tmp; tmp="$(mktemp)"
+  if command -v curl >/dev/null 2>&1 \
+    && curl -fsSL "$INSTALL_URL" -o "$tmp" 2>/dev/null \
+    && [ -s "$tmp" ] && head -n1 "$tmp" | grep -q '^#!'; then
+    $SUDO install -m 0755 "$tmp" "$CLI_PATH" 2>/dev/null && { rm -f "$tmp"; return 0; }
+  fi
+  rm -f "$tmp"; return 1
+}
+
+# Instala/atualiza o comando `wootrico` em CLI_PATH: copia este arquivo quando há
+# um (bash install.sh), senão baixa da URL pública (curl | bash). Best-effort.
+install_cli() {
+  if [ -n "$SELF_SRC" ] && [ -r "$SELF_SRC" ] && [ "$SELF_SRC" != "$CLI_PATH" ]; then
+    $SUDO install -m 0755 "$SELF_SRC" "$CLI_PATH" 2>/dev/null \
+      && { ok "Comando 'wootrico' instalado em $CLI_PATH"; return 0; }
+  fi
+  if self_update; then
+    ok "Comando 'wootrico' instalado em $CLI_PATH"
+  else
+    warn "Não consegui instalar o comando 'wootrico' (siga usando o one-liner do curl)."
   fi
 }
 # Leitura global de um valor do .env (helpers get_env/set_env locais ficam em configure_env).
@@ -158,6 +210,7 @@ cmd_install() {
   pull_image      # resolve o digest ANTES de gerar o compose (fixa por digest)
   write_compose
   deploy_stack
+  install_cli     # instala o comando `wootrico` (update/uninstall/--help)
   print_summary
 }
 
@@ -623,6 +676,16 @@ print_summary() {
 # ───────────────────────────── UPDATE ─────────────────────────────
 cmd_update() {
   need_root
+  # Auto-atualização: baixa o install.sh mais novo, atualiza o comando `wootrico`
+  # e re-executa a versão nova (uma única vez, via WOOTRICO_SELF_UPDATED).
+  if [ "${WOOTRICO_SELF_UPDATED:-}" != "1" ]; then
+    if self_update; then
+      ok "Comando 'wootrico' atualizado para a versão mais nova"
+      exec env WOOTRICO_SELF_UPDATED=1 "$CLI_PATH" update
+    else
+      warn "Não consegui baixar a versão nova do instalador — seguindo com a atual."
+    fi
+  fi
   enter_install_dir manage
   title "Atualizar"
   # Reaproveita as escolhas da instalação (rede/Traefik) e regenera o compose
@@ -652,9 +715,19 @@ cmd_uninstall() {
   ok "Concluído. (o arquivo .env foi preservado)"
 }
 
-case "${1:-install}" in
+# Comando padrão: o one-liner (curl | bash, sem argumento) INSTALA; o comando
+# `wootrico` sem argumento mostra a AJUDA.
+arg="${1:-}"
+if [ -z "$arg" ]; then
+  case "${BASH_SOURCE[0]:-}" in
+    */wootrico) arg="--help" ;;
+    *) arg="install" ;;
+  esac
+fi
+case "$arg" in
   install) cmd_install ;;
   update) cmd_update ;;
   uninstall) cmd_uninstall ;;
-  *) echo "uso: install.sh [install|update|uninstall]"; exit 1 ;;
+  -h | --help | help) usage ;;
+  *) err "Comando desconhecido: $arg"; echo; usage; exit 1 ;;
 esac
