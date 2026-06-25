@@ -66,6 +66,7 @@ export default async function contactRoutes(app: FastifyInstance) {
           lid: true,
           pn: true,
           pushName: true,
+          avatarUrl: true,
           avatarStoredAt: true,
           seenInDm: true,
           seenInGroup: true,
@@ -86,6 +87,8 @@ export default async function contactRoutes(app: FastifyInstance) {
       // (stored-at ms) lets the client cache-bust when the photo changes.
       hasAvatar: !!c.avatarStoredAt,
       avatarVersion: c.avatarStoredAt ? c.avatarStoredAt.getTime() : null,
+      // Raw WhatsApp URL — fallback for contacts not re-synced yet (may expire).
+      avatarUrl: c.avatarUrl,
       seenInDm: c.seenInDm,
       seenInGroup: c.seenInGroup,
       groupName: c.lastGroupName,

@@ -71,14 +71,14 @@ function contactKey(c: ContactDTO): string {
 }
 
 function Avatar({ contact }: { contact: ContactDTO }) {
-  // Lazily fetch the stored avatar bytes (auth-aware) → blob URL. Revoked on
-  // unmount / change. Falls back to initials when there's no photo.
-  const [url, setUrl] = useState<string | null>(null);
+  // Prefer the stored bytes (auth-aware fetch → blob URL, permanent). While a
+  // contact hasn't been re-synced yet, fall back to the raw WhatsApp URL (works
+  // until it expires) so existing photos don't vanish. Initials as last resort.
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [rawFailed, setRawFailed] = useState(false);
   useEffect(() => {
-    if (!contact.hasAvatar) {
-      setUrl(null);
-      return;
-    }
+    setBlobUrl(null);
+    if (!contact.hasAvatar) return;
     let alive = true;
     let blob: string | null = null;
     fetchContactAvatarUrl(contact.lid, contact.pn).then((u) => {
@@ -87,7 +87,7 @@ function Avatar({ contact }: { contact: ContactDTO }) {
         return;
       }
       blob = u;
-      setUrl(u);
+      setBlobUrl(u);
     });
     return () => {
       alive = false;
@@ -95,10 +95,18 @@ function Avatar({ contact }: { contact: ContactDTO }) {
     };
   }, [contact.hasAvatar, contact.avatarVersion, contact.lid, contact.pn]);
 
+  const src =
+    blobUrl ?? (!contact.hasAvatar && contact.avatarUrl && !rawFailed ? contact.avatarUrl : null);
+
   return (
     <div className="w-9 h-9 rounded-full overflow-hidden bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-      {url ? (
-        <img src={url} alt="" className="w-full h-full object-cover" />
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          className="w-full h-full object-cover"
+          onError={() => setRawFailed(true)}
+        />
       ) : (
         <span className="text-[11px] font-medium text-neutral-400">{initials(contact)}</span>
       )}

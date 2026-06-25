@@ -13,6 +13,8 @@ export interface ContactDTO {
   hasAvatar: boolean;
   /** Stored-at epoch ms — used to cache-bust the avatar when it changes. */
   avatarVersion: number | null;
+  /** Raw WhatsApp URL — fallback while bytes aren't stored yet (may expire). */
+  avatarUrl: string | null;
   /** Observed in a direct (1:1) conversation. */
   seenInDm: boolean;
   /** Observed as a participant of a group (sender or seeded from the roster). */
