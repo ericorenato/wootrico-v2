@@ -115,12 +115,9 @@ export const deleteKey = (id: string) =>
 export const activateKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/activate`, { method: 'POST' });
 
-/** Convert a key to paid. lifetime=false (default) gives 1 year; true = never expires. */
-export const upgradeKey = (id: string, lifetime = false) =>
-  api<{ ok: boolean }>(`/admin/keys/${id}/upgrade`, {
-    method: 'POST',
-    body: JSON.stringify({ lifetime }),
-  });
+/** Convert a key to paid — gets the standard paid window (1 year). */
+export const upgradeKey = (id: string) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}/upgrade`, { method: 'POST' });
 
 export const getWebhookKeys = () => api<{ keys: WebhookKeyRow[] }>('/admin/webhook-keys');
 
@@ -296,8 +293,8 @@ export const grantLicense = (body: { email: string; name?: string; plan?: 'trial
 export const reactivateTrial = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/reactivate-trial`, { method: 'POST' });
 
-/** Set/override a key's expiry (ISO string) or clear it (null = lifetime). */
-export const setKeyExpiry = (id: string, expiresAt: string | null) =>
+/** Set/override a paid key's expiry (ISO string). A date is required (no lifetime). */
+export const setKeyExpiry = (id: string, expiresAt: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/set-expiry`, {
     method: 'POST',
     body: JSON.stringify({ expiresAt }),

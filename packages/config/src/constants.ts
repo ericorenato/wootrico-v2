@@ -13,7 +13,8 @@ export const LICENSE_STATUSES = ['unactivated', 'active', 'warning', 'blocked'] 
 export type LicenseStatus = (typeof LICENSE_STATUSES)[number];
 
 // 'trial' = free time-limited key (auto-issued at signup, expires after the
-// trial window); 'paid' = lifetime key (bought, or granted by the admin).
+// trial window); 'paid' = bought/granted key with an expiry (default 1 year,
+// renewable). Neither plan is ever lifetime — every key always has an expiry.
 export const LICENSE_PLANS = ['trial', 'paid'] as const;
 export type LicensePlan = (typeof LICENSE_PLANS)[number];
 

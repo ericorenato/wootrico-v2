@@ -131,7 +131,7 @@ export async function activateLicense(licenseKey: string): Promise<ActivationRes
 /**
  * Register a purchase intent for this installation and return the external
  * checkout URL (if configured). The payment webhook later settles the most
- * recent pending intent for the buyer's email and delivers a lifetime key.
+ * recent pending intent for the buyer's email and delivers a paid key.
  */
 export async function requestPurchase(email?: string | null): Promise<{ checkoutUrl: string | null }> {
   const state = await getLicenseState();

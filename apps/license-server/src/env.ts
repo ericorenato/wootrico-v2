@@ -12,9 +12,9 @@ export const cfg = {
   // the key is inactive and the customer must buy a definitive license (no free
   // renewal).
   trialDays: Number(process.env.LICENSE_TRIAL_DAYS ?? 14),
-  // Paid keys are now time-limited (default 1 year). A paid purchase/renewal
-  // grants this many days; the admin can override the date per key (or clear it
-  // to make a key lifetime).
+  // Paid keys are time-limited (default 1 year). A paid purchase/renewal grants
+  // this many days; the admin can override the date per key (always a date —
+  // there are no lifetime keys).
   paidDays: Number(process.env.LICENSE_PAID_DAYS ?? 365),
   // Checkout URL the customer is sent to when buying (Hotmart). The server
   // appends `?sck=<intentId>` so the payment maps back even if the buyer's

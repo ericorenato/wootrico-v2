@@ -14,7 +14,7 @@ const EnvSchema = z.object({
   PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
   LICENSE_SERVER_URL: z.string().url().default('https://license.example.com'),
   // Optional external checkout URL opened when a customer chooses to buy a
-  // lifetime license. The instanceId is registered with the license server
+  // paid license. The instanceId is registered with the license server
   // first (purchase intent); this is just where the buyer completes payment.
   LICENSE_CHECKOUT_URL: z.string().url().optional(),
   APP_VERSION: z.string().default('0.1.0'),

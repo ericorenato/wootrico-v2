@@ -61,7 +61,7 @@ const EVENT_LABEL: Record<string, string> = {
   admin_create: 'Admin: criada',
   admin_revoke: 'Admin: revogada',
   admin_activate: 'Admin: reativada',
-  admin_upgrade: 'Admin: upgrade vitalícia',
+  admin_upgrade: 'Admin: liberada como paga',
   admin_expire: 'Admin: expirada',
 };
 const WARN = new Set(['ip_alert', 'ip_changed', 'activate_revoked', 'activate_expired']);

@@ -16,8 +16,8 @@ export function computeStatus(state: LicenseState, now = new Date()): LicenseSta
   if (state.status === 'blocked') return 'blocked'; // server said inactive — sticky until re-validated
   if (!state.licenseKey || !state.instanceId) return 'unactivated';
 
-  // Key ran out by the local clock — trial (14d) OR paid (1y). A lifetime key has
-  // a null expiresAt and never self-expires.
+  // Key ran out by the local clock — trial (14d) OR paid (1y). Every key has an
+  // expiry (no lifetime keys); the server always sends expiresAt.
   if (state.expiresAt && now.getTime() >= state.expiresAt.getTime()) {
     return 'blocked';
   }

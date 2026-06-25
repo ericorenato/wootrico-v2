@@ -82,7 +82,7 @@ export default function Health() {
                         {s.instanceId} · {s.licenseKeyId.slice(0, 8)}
                       </p>
                     </div>
-                    <Badge tone="error">{s.plan === 'paid' ? 'Vitalícia' : 'Teste'}</Badge>
+                    <Badge tone="error">{s.plan === 'paid' ? 'Paga' : 'Teste'}</Badge>
                   </div>
                   <dl className="mt-3 grid grid-cols-2 gap-y-1 text-xs border-t border-white/5 pt-3">
                     <dt className="text-neutral-500">Última validação</dt>

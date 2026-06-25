@@ -60,8 +60,8 @@ export default function License() {
   }, []);
 
   // While the license screen is OPEN, re-validate with the server periodically so
-  // admin actions (revogar, expirar, liberar como vitalícia) reflect in ~30–45s
-  // instead of waiting for the next scheduled heartbeat (~6h). Faster (25s) when
+  // admin actions (revogar, expirar, liberar como paga, alterar vencimento) reflect
+  // in ~30–45s instead of waiting for the next scheduled heartbeat (~6h). Faster (25s) when
   // blocked, to recover quickly. Only runs while this page is mounted, so it
   // doesn't add global load.
   useEffect(() => {

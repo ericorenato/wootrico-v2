@@ -38,7 +38,7 @@ export default function Dashboard() {
             <Metric label="Alertas de IP" value={stats.totals.ipAlerts} tone={stats.totals.ipAlerts ? 'text-red-300' : 'text-white'} />
             <Metric label="Total de chaves" value={stats.totals.keys} />
             <Metric label="Teste (trial)" value={stats.totals.trial} />
-            <Metric label="Pagas (vitalícias)" value={stats.totals.paid} tone="text-blue-400" />
+            <Metric label="Pagas" value={stats.totals.paid} tone="text-blue-400" />
             <Metric label="Expiradas / revogadas" value={stats.totals.expired + stats.totals.revoked} tone="text-amber-300" />
           </div>
 

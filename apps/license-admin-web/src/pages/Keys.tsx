@@ -103,7 +103,7 @@ export default function Keys() {
                         {k.revoked ? 'Revogada' : k.expired ? 'Expirada' : 'Ativa'}
                       </Badge>
                       <Badge tone={k.plan === 'paid' ? 'ok' : 'neutral'}>
-                        {k.plan === 'paid' ? 'Vitalícia' : 'Teste'}
+                        {k.plan === 'paid' ? 'Paga' : 'Teste'}
                       </Badge>
                       {k.alerts > 0 && (
                         <span className="inline-flex items-center gap-1 text-red-300 text-[11px]">

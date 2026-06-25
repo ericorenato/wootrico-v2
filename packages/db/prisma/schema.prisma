@@ -412,7 +412,7 @@ model LicenseState {
   dataKeys        String?       @map("data_keys") // all historical secrets (JSON array), encrypted — for decrypt
   instanceId      String?       @map("instance_id")
   plan            String?       // 'trial' | 'paid' — mirrors the server's answer
-  expiresAt       DateTime?     @map("expires_at") // trial expiry (null for paid)
+  expiresAt       DateTime?     @map("expires_at") // expiry mirrored from the server (trial and paid)
   status          LicenseStatus @default(unactivated)
   lastHeartbeatAt DateTime?     @map("last_heartbeat_at")
   nextHeartbeatAt DateTime?     @map("next_heartbeat_at")

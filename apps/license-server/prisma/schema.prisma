@@ -13,9 +13,8 @@ datasource db {
 model LicenseKey {
   id             String       @id @default(uuid())
   keyHash        String       @unique @map("key_hash")
-  // 'trial' (free, time-limited) or 'paid' (lifetime, bought or admin-granted).
-  // Legacy rows ('pro' etc.) are migrated to 'paid' so existing customers never
-  // expire.
+  // 'trial' (free, time-limited) or 'paid' (bought or admin-granted, expiry
+  // default 1 year, renewable). Neither is lifetime — every key has an expiry.
   plan           String       @default("trial")
   email          String?
   name           String?
@@ -30,7 +29,8 @@ model LicenseKey {
   // The customer image derives the integration-credential encryption key from it,
   // so a fake "always-active" server cannot unlock the product (it lacks this).
   secret         String?
-  // Trial keys expire at this instant; paid (lifetime) keys leave it null.
+  // Expiry instant — every key has one (trial ~14d, paid ~1y). Never null in
+  // practice; a missing value is treated as expired (there are no lifetime keys).
   expiresAt      DateTime?    @map("expires_at")
   revokedAt      DateTime?    @map("revoked_at")
   createdAt      DateTime     @default(now()) @map("created_at")

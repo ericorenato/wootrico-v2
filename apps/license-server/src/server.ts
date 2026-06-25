@@ -81,9 +81,9 @@ type KeyLike = { revokedAt: Date | null; plan: string; expiresAt: Date | null };
 /** Whether a license key is currently valid, and if not, why. Online source of truth. */
 function keyStatus(lk: KeyLike, now: Date): { active: boolean; reason: string | null } {
   if (lk.revokedAt) return { active: false, reason: 'revoked' };
-  // Any key with an expiry in the past is inactive — trial (14d) AND paid (1y).
-  // A null expiresAt means lifetime (admin-granted) and never expires.
-  if (lk.expiresAt && lk.expiresAt <= now) return { active: false, reason: 'expired' };
+  // Every key has an expiry — trial (14d) and paid (1y). There is NO lifetime key:
+  // a missing/null expiry is treated as expired (never grants infinite access).
+  if (!lk.expiresAt || lk.expiresAt <= now) return { active: false, reason: 'expired' };
   return { active: true, reason: null };
 }
 
@@ -117,14 +117,14 @@ async function instanceSecrets(instanceId: string): Promise<string[]> {
   return out;
 }
 
-/** Prisma filter: keys that are still valid (not revoked, not past expiry). A
- * null expiresAt is lifetime. Applies uniformly to trial (14d) and paid (1y). */
+/** Prisma filter: keys that are still valid (not revoked, expiry in the future).
+ * Every key has an expiry — trial (14d) and paid (1y); no lifetime keys. */
 function liveKeyFilter(
   now: Date,
 ): import('../generated/client/index.js').Prisma.LicenseKeyWhereInput {
   return {
     revokedAt: null,
-    OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    expiresAt: { gt: now },
   };
 }
 
@@ -276,8 +276,8 @@ app.post('/provision', async (req, reply) => {
       email: { equals: email, mode: 'insensitive' as const },
       // unclaimed, or already bound to THIS instance (re-provision after data loss)
       activations: { none: { revokedAt: null, instanceId: { not: instanceId } } },
-      // a granted trial must still be within its window; paid is lifetime
-      ...(plan === 'trial' ? { expiresAt: { gt: now } } : {}),
+      // the granted key (trial or paid) must still be within its window
+      expiresAt: { gt: now },
     });
     const granted =
       (await prisma.licenseKey.findFirst({ where: grantWhere('paid'), orderBy: { createdAt: 'desc' } })) ??
@@ -725,7 +725,12 @@ async function grantOrRenewPaid(opts: {
   if (lk) {
     const base = lk.expiresAt && lk.expiresAt > now ? lk.expiresAt : now;
     const expiresAt = new Date(base.getTime() + span);
-    await prisma.licenseKey.update({ where: { id: lk.id }, data: { expiresAt, revokedAt: null } });
+    // A payment ALWAYS makes the key paid — a trial that gets paid becomes 'paid'
+    // (não fica trial). Renewals of an already-paid key just push the expiry.
+    await prisma.licenseKey.update({
+      where: { id: lk.id },
+      data: { plan: 'paid', expiresAt, revokedAt: null },
+    });
     if (opts.instanceId) {
       await prisma.activation.upsert({
         where: { licenseKeyId_instanceId: { licenseKeyId: lk.id, instanceId: opts.instanceId } },
@@ -1060,8 +1065,8 @@ app.get('/admin/me', async (req, reply) => {
 // Create a license for a specific user; their instance picks it up automatically
 // on provision (matched by e-mail) — they never see a key. A trial expires after
 // the standard window (reactivate with /admin/keys/:id/reactivate-trial); a paid
-// grant is lifetime. Revoke via /admin/keys/:id/revoke, un-revoke via
-// /admin/keys/:id/activate.
+// grant gets the standard paid window (1 year). Revoke via /admin/keys/:id/revoke,
+// un-revoke via /admin/keys/:id/activate.
 const GrantSchema = z.object({
   email: z.string().email(),
   name: z.string().trim().min(1).max(120).optional(),
@@ -1078,7 +1083,7 @@ app.post('/admin/free-licenses', async (req, reply) => {
     data: {
       keyHash: hashKey(raw),
       plan,
-      expiresAt: plan === 'trial' ? new Date(Date.now() + cfg.trialDays * DAY_MS) : null,
+      expiresAt: new Date(Date.now() + (plan === 'trial' ? cfg.trialDays : cfg.paidDays) * DAY_MS),
       email: p.data.email,
       name: p.data.name,
       provisionedBy: plan === 'paid' ? 'admin-paid' : 'admin-trial',
@@ -1142,8 +1147,9 @@ function statusFilter(
 ): import('../generated/client/index.js').Prisma.LicenseKeyWhereInput {
   if (status === 'revoked') return { revokedAt: { not: null } };
   if (status === 'expired') {
-    // Any non-revoked key past its expiry (trial or paid). Lifetime keys (null) never.
-    return { revokedAt: null, expiresAt: { lte: now } };
+    // Any non-revoked key at/past its expiry (trial or paid); a missing expiry
+    // counts as expired too (there are no lifetime keys).
+    return { revokedAt: null, OR: [{ expiresAt: { lte: now } }, { expiresAt: null }] };
   }
   if (status === 'active') return liveKeyFilter(now);
   return {};
@@ -1462,16 +1468,13 @@ app.post('/admin/keys/:id/activate', async (req, reply) => {
   return { ok: true };
 });
 
-// Manually upgrade a trial key to paid (lifetime) — e.g. after offline payment.
-// Convert a key to PAID. By default it gets the standard paid window (1 year);
-// `lifetime: true` makes it never expire. Clears any revocation.
-const UpgradeSchema = z.object({ lifetime: z.boolean().optional() });
+// Convert a key to PAID — e.g. after an offline/manual sale. Gets the standard
+// paid window (1 year by default; the admin can then adjust via set-expiry).
+// Clears any revocation. There is NO lifetime option.
 app.post('/admin/keys/:id/upgrade', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const { id } = req.params as { id: string };
-  const p = UpgradeSchema.safeParse(req.body ?? {});
-  if (!p.success) return reply.code(400).send({ error: 'validation' });
-  const expiresAt = p.data.lifetime ? null : new Date(Date.now() + cfg.paidDays * DAY_MS);
+  const expiresAt = new Date(Date.now() + cfg.paidDays * DAY_MS);
   await prisma.licenseKey.update({
     where: { id },
     data: { plan: 'paid', expiresAt, revokedAt: null },
@@ -1479,7 +1482,7 @@ app.post('/admin/keys/:id/upgrade', async (req, reply) => {
   await recordEvent({
     type: 'admin_upgrade',
     licenseKeyId: id,
-    meta: { lifetime: !!p.data.lifetime, expiresAt: expiresAt?.toISOString() ?? null },
+    meta: { expiresAt: expiresAt.toISOString() },
   });
   return { ok: true };
 });
@@ -1487,7 +1490,7 @@ app.post('/admin/keys/:id/upgrade', async (req, reply) => {
 // Reactivate an expired/revoked TRIAL: give it a fresh window (+trialDays) and
 // clear any revocation. The customer's instance (polling faster while blocked)
 // picks the renewed trial back up on its next validation. Stays a trial — only
-// `/upgrade` makes it lifetime/paid.
+// `/upgrade` (or a payment) turns it into a paid key.
 app.post('/admin/keys/:id/reactivate-trial', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const { id } = req.params as { id: string };
@@ -1502,20 +1505,20 @@ app.post('/admin/keys/:id/reactivate-trial', async (req, reply) => {
   return { ok: true };
 });
 
-// Set/override a key's expiry date directly — a paid key defaults to 1 year, but
-// the admin can push the date, shorten it, or clear it (null = lifetime).
-const SetExpirySchema = z.object({ expiresAt: z.string().datetime().nullable() });
+// Set/override a PAID key's expiry date — the admin can push it out or shorten it.
+// A date is REQUIRED (no lifetime/null): every key always has an expiry.
+const SetExpirySchema = z.object({ expiresAt: z.string().datetime() });
 app.post('/admin/keys/:id/set-expiry', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
   const { id } = req.params as { id: string };
   const p = SetExpirySchema.safeParse(req.body ?? {});
   if (!p.success) return reply.code(400).send({ error: 'validation' });
-  const expiresAt = p.data.expiresAt ? new Date(p.data.expiresAt) : null;
+  const expiresAt = new Date(p.data.expiresAt);
   await prisma.licenseKey.update({ where: { id }, data: { expiresAt } });
   await recordEvent({
     type: 'admin_set_expiry',
     licenseKeyId: id,
-    meta: { expiresAt: expiresAt?.toISOString() ?? null },
+    meta: { expiresAt: expiresAt.toISOString() },
   });
   return { ok: true };
 });
@@ -1642,8 +1645,8 @@ app.get('/admin/payments/summary', async (req, reply) => {
   };
 });
 
-// Manually expire a TRIAL key now — forces the client to revalidate (get a new
-// trial or buy). Paid keys don't expire (use revoke instead).
+// Manually expire a key NOW (trial OR paid) — forces the client to revalidate
+// (trial → buy; paid → renew). Sets the expiry to now.
 const ExpireKeySchema = z.object({ reason: z.string().trim().max(300).optional() });
 app.post('/admin/keys/:id/expire', async (req, reply) => {
   if (!(await requireAdmin(req, reply))) return;
@@ -1652,7 +1655,6 @@ app.post('/admin/keys/:id/expire', async (req, reply) => {
   if (!p.success) return reply.code(400).send({ error: 'validation' });
   const lk = await prisma.licenseKey.findUnique({ where: { id } });
   if (!lk) return reply.code(404).send({ error: 'not_found' });
-  if (lk.plan !== 'trial') return reply.code(400).send({ error: 'not_trial' });
   await prisma.licenseKey.update({ where: { id }, data: { expiresAt: new Date() } });
   await recordEvent({ type: 'admin_expire', licenseKeyId: id, meta: { reason: p.data.reason ?? null } });
   return { ok: true };

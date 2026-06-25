@@ -76,7 +76,7 @@ export default function FreeLicenses() {
   async function reactivate(r: GrantedLicenseRow) {
     setBusy(r.id);
     try {
-      // Trial regains a fresh window; paid (lifetime) just clears the revocation.
+      // Trial regains a fresh window; paid just clears the revocation.
       await (r.plan === 'trial' ? reactivateTrial(r.id) : activateKey(r.id));
       await load();
     } catch {
@@ -94,7 +94,7 @@ export default function FreeLicenses() {
           <h1 className="mt-5 text-3xl font-semibold tracking-tight text-white">Licenças concedidas</h1>
           <p className="mt-2 max-w-2xl text-sm text-neutral-400">
             Conceda uma licença a um usuário pelo e-mail — <strong className="text-neutral-300">teste</strong>{' '}
-            (expira no prazo) ou <strong className="text-neutral-300">vitalícia</strong> (paga, sem prazo). O
+            (expira em ~14 dias) ou <strong className="text-neutral-300">paga</strong> (vence em 12 meses). O
             cliente <strong className="text-neutral-300">não precisa de chave</strong>: ao ativar o Wootrico
             com esse e-mail, o servidor entrega a licença automaticamente. Você pode reativar ou revogar a
             qualquer momento.
@@ -124,7 +124,7 @@ export default function FreeLicenses() {
               <Field label="Tipo">
                 <Select value={plan} onChange={(e) => setPlan(e.target.value as 'trial' | 'paid')}>
                   <option value="trial">Grátis (teste)</option>
-                  <option value="paid">Vitalícia (paga)</option>
+                  <option value="paid">Paga (12 meses)</option>
                 </Select>
               </Field>
             </div>
@@ -151,7 +151,7 @@ export default function FreeLicenses() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <Badge tone={st.tone}>{st.label}</Badge>
-                    <Badge tone="neutral">{r.plan === 'paid' ? 'Vitalícia' : 'Teste'}</Badge>
+                    <Badge tone="neutral">{r.plan === 'paid' ? 'Paga' : 'Teste'}</Badge>
                     <span className="text-sm text-white truncate">{r.email ?? 'sem e-mail'}</span>
                   </div>
                   <p className="text-xs text-neutral-500 truncate">{r.name ?? '—'}</p>

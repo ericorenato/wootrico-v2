@@ -68,7 +68,7 @@ export default function UserDetail() {
                       <div className="flex items-center gap-2 mb-1">
                         <Badge tone={STATUS_TONE[k.status] ?? 'neutral'}>{STATUS_LABEL[k.status] ?? k.status}</Badge>
                         <Badge tone={k.plan === 'paid' ? 'ok' : 'neutral'}>
-                          {k.plan === 'paid' ? 'Vitalícia' : 'Teste'}
+                          {k.plan === 'paid' ? 'Paga' : 'Teste'}
                         </Badge>
                         {k.alerts > 0 && <span className="text-[11px] text-red-300">{k.alerts} alerta(s) IP</span>}
                       </div>

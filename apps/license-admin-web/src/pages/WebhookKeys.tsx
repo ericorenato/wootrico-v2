@@ -82,7 +82,7 @@ export default function WebhookKeys() {
           O sistema de pagamento deve chamar <code className="text-neutral-200">POST /webhook/payment</code>{' '}
           com o cabeçalho <code className="text-neutral-200">Authorization: Bearer WHK-…</code> e o corpo
           JSON abaixo. O servidor libera a <strong>última intenção de compra pendente</strong> daquele{' '}
-          <code className="text-neutral-200">email</code> e cunha a chave vitalícia; o cliente se atualiza
+          <code className="text-neutral-200">email</code> e cunha a chave paga; o cliente se atualiza
           sozinho. Use <code className="text-neutral-200">paymentRef</code> (id da transação) para
           idempotência — reenvios com o mesmo valor não duplicam.
         </p>

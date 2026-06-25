@@ -10,6 +10,7 @@ import {
   upgradeKey,
   expireKey,
   setKeyExpiry,
+  reactivateTrial,
   deleteKey,
   type KeyDetail as KeyDetailT,
   type LicenseEvent,
@@ -38,7 +39,7 @@ const EVENT_LABEL: Record<string, string> = {
   admin_create: 'Admin: criada',
   admin_revoke: 'Admin: revogada',
   admin_activate: 'Admin: reativada',
-  admin_upgrade: 'Admin: upgrade vitalícia',
+  admin_upgrade: 'Admin: liberada como paga',
   admin_expire: 'Admin: expirada',
   admin_trial_grant: 'Admin: teste concedido',
   admin_paid_grant: 'Admin: licença concedida',
@@ -96,17 +97,14 @@ export default function KeyDetail() {
 
   async function doSetExpiry() {
     const cur = data?.key.expiresAt ? new Date(data.key.expiresAt).toISOString().slice(0, 10) : '';
-    const input = prompt(
-      'Nova data de vencimento (AAAA-MM-DD). Deixe em branco para tornar VITALÍCIA:',
-      cur,
-    );
+    const input = prompt('Nova data de vencimento (AAAA-MM-DD):', cur);
     if (input === null) return; // cancelado
     const trimmed = input.trim();
-    if (trimmed && Number.isNaN(new Date(trimmed).getTime())) {
-      alert('Data inválida.');
+    if (!trimmed || Number.isNaN(new Date(trimmed).getTime())) {
+      alert('Informe uma data válida (AAAA-MM-DD).');
       return;
     }
-    const iso = trimmed ? new Date(`${trimmed}T23:59:59`).toISOString() : null;
+    const iso = new Date(`${trimmed}T23:59:59`).toISOString();
     await act(() => setKeyExpiry(id, iso));
   }
 
@@ -140,7 +138,6 @@ export default function KeyDetail() {
             </div>
             <div className="flex items-center gap-2">
               <Badge tone={k.plan === 'paid' ? 'ok' : 'neutral'}>{k.plan === 'paid' ? 'Paga' : 'Teste'}</Badge>
-              {k.plan === 'paid' && !k.expiresAt && <Badge tone="ok">Vitalícia</Badge>}
               <Badge tone={STATUS_TONE[k.status] ?? 'neutral'}>{STATUS_LABEL[k.status] ?? k.status}</Badge>
             </div>
           </div>
@@ -163,7 +160,7 @@ export default function KeyDetail() {
               <dd className="text-neutral-300">{fmt(k.createdAt)}</dd>
               <dt className="text-neutral-500">Vencimento</dt>
               <dd className={k.status === 'expired' ? 'text-red-300' : 'text-neutral-300'}>
-                {k.expiresAt ? fmt(k.expiresAt) : 'Vitalícia (sem vencimento)'}
+                {k.expiresAt ? fmt(k.expiresAt) : '—'}
               </dd>
               {k.statusReason && (
                 <>
@@ -186,7 +183,8 @@ export default function KeyDetail() {
             </dl>
 
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/5 pt-5">
-              {k.status === 'revoked' ? (
+              {/* Revogada: só dá pra reativar (desfaz a revogação) ou excluir. */}
+              {k.status === 'revoked' && (
                 <Button
                   variant="ghost"
                   className={ACTION_BTN}
@@ -196,57 +194,63 @@ export default function KeyDetail() {
                 >
                   Reativar
                 </Button>
-              ) : (
+              )}
+              {/* Ativa: pode revogar e expirar agora (qualquer plano). */}
+              {k.status === 'active' && (
                 <Button
                   variant="ghost"
                   className={ACTION_BTN}
                   loading={busy}
                   onClick={() => act(() => revokeKey(k.id))}
-                  title="Bloqueia o acesso AGORA (qualquer tipo de chave). É reversível em 'Reativar' e não altera a data de vencimento. Use para abuso, reembolso ou disputa."
+                  title="Bloqueia o acesso AGORA (trial ou paga). É reversível em 'Reativar' e não altera o vencimento. Use para abuso, reembolso ou disputa."
                 >
                   Revogar
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                className={ACTION_BTN}
-                loading={busy}
-                onClick={doSetExpiry}
-                title="Define a data de vencimento da chave (ou deixa em branco para torná-la vitalícia)."
-              >
-                Alterar vencimento
-              </Button>
-              {/* Converter para paga: 1 ano (padrão) ou vitalícia. Disponível para
-                  trial e para uma paga que se queira tornar vitalícia. */}
-              {k.plan === 'trial' && (
+              {/* Alterar vencimento: só para chave PAGA não-revogada (sempre uma data). */}
+              {k.plan === 'paid' && k.status !== 'revoked' && (
                 <Button
                   variant="ghost"
                   className={ACTION_BTN}
                   loading={busy}
-                  onClick={() => act(() => upgradeKey(k.id, false))}
-                  title="Converte o teste em licença paga com vencimento de 1 ano."
+                  onClick={doSetExpiry}
+                  title="Define a data de vencimento da licença paga (renova ou encurta). Sempre uma data — não existe vitalícia."
                 >
-                  Liberar como paga (1 ano)
+                  Alterar vencimento
                 </Button>
               )}
-              {!(k.plan === 'paid' && !k.expiresAt) && (
+              {/* Converter um teste em paga (venda manual/offline) — padrão 12 meses. */}
+              {k.plan === 'trial' && k.status !== 'revoked' && (
                 <Button
                   variant="ghost"
                   className={ACTION_BTN}
                   loading={busy}
-                  onClick={() => act(() => upgradeKey(k.id, true))}
-                  title="Torna a chave paga e vitalícia (sem data de vencimento)."
+                  onClick={() => act(() => upgradeKey(k.id))}
+                  title="Converte o teste em licença paga com vencimento de 12 meses (depois ajustável em 'Alterar vencimento')."
                 >
-                  {k.plan === 'paid' ? 'Tornar vitalícia' : 'Liberar como vitalícia'}
+                  Liberar como paga (12 meses)
                 </Button>
               )}
-              {k.plan === 'trial' && (
+              {/* Reativar teste: dá novo prazo a um trial expirado/revogado. */}
+              {k.plan === 'trial' && (k.status === 'expired' || k.status === 'revoked') && (
+                <Button
+                  variant="ghost"
+                  className={ACTION_BTN}
+                  loading={busy}
+                  onClick={() => act(() => reactivateTrial(k.id))}
+                  title="Dá um novo período de teste (+14 dias) à chave trial e limpa qualquer revogação."
+                >
+                  Reativar teste (+14d)
+                </Button>
+              )}
+              {/* Expirar agora: encerra a chave já (trial → compra; paga → renovação). */}
+              {k.status === 'active' && (
                 <Button
                   variant="ghost"
                   className={ACTION_BTN}
                   loading={busy}
                   onClick={doExpire}
-                  title="Encerra o teste AGORA (vence o trial), levando o cliente ao fluxo de compra. Só para teste; para uma paga use 'Alterar vencimento' ou 'Revogar'."
+                  title="Encerra a chave AGORA (vence). Trial leva ao fluxo de compra; paga, à renovação."
                 >
                   Expirar agora
                 </Button>
