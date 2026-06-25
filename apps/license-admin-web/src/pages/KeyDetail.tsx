@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, AlertTriangle } from 'lucide-react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, AlertTriangle, Trash2 } from 'lucide-react';
 import { Badge, Button, Card, Eyebrow } from '../components/ui';
 import {
   getKey,
@@ -10,6 +10,7 @@ import {
   upgradeKey,
   expireKey,
   setKeyExpiry,
+  deleteKey,
   type KeyDetail as KeyDetailT,
   type LicenseEvent,
 } from '../lib/admin-api';
@@ -43,6 +44,7 @@ const EVENT_LABEL: Record<string, string> = {
   admin_paid_grant: 'Admin: licença concedida',
   admin_reactivate_trial: 'Admin: teste reativado',
   admin_set_expiry: 'Admin: vencimento alterado',
+  admin_delete: 'Admin: chave excluída',
 };
 
 const STATUS_TONE: Record<string, 'ok' | 'error' | 'neutral'> = {
@@ -62,6 +64,7 @@ const ACTION_BTN = '!px-4 !py-2 text-xs';
 
 export default function KeyDetail() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const [data, setData] = useState<KeyDetailT | null>(null);
   const [events, setEvents] = useState<LicenseEvent[]>([]);
   const [busy, setBusy] = useState(false);
@@ -105,6 +108,18 @@ export default function KeyDetail() {
     }
     const iso = trimmed ? new Date(`${trimmed}T23:59:59`).toISOString() : null;
     await act(() => setKeyExpiry(id, iso));
+  }
+
+  async function doDelete() {
+    if (!confirm('Excluir esta chave PERMANENTEMENTE? Esta ação não pode ser desfeita.')) return;
+    setBusy(true);
+    try {
+      await deleteKey(id);
+      navigate('/keys');
+    } catch {
+      alert('Não foi possível excluir (a chave pode estar ativa).');
+      setBusy(false);
+    }
   }
 
   const k = data?.key;
@@ -234,6 +249,17 @@ export default function KeyDetail() {
                   title="Encerra o teste AGORA (vence o trial), levando o cliente ao fluxo de compra. Só para teste; para uma paga use 'Alterar vencimento' ou 'Revogar'."
                 >
                   Expirar agora
+                </Button>
+              )}
+              {(k.status === 'expired' || k.status === 'revoked') && (
+                <Button
+                  variant="ghost"
+                  className={`${ACTION_BTN} !border-red-500/40 hover:!bg-red-500 hover:!text-white !text-red-300`}
+                  loading={busy}
+                  onClick={doDelete}
+                  title="Exclui a chave permanentemente. Disponível apenas para chaves expiradas ou revogadas (não ativas)."
+                >
+                  <Trash2 size={13} /> Excluir
                 </Button>
               )}
             </div>

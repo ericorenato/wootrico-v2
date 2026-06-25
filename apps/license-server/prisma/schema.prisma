@@ -120,6 +120,25 @@ model Payment {
   @@map("payments")
 }
 
+// Support requests opened by customers from their panel. Registered regardless of
+// license status (so the vendor sees trial/expired users too); only paid-active
+// customers are redirected to the support WhatsApp from the panel.
+model SupportTicket {
+  id           String   @id @default(uuid())
+  instanceId   String?  @map("instance_id")
+  licenseKeyId String?  @map("license_key_id")
+  email        String?
+  plan         String? // trial | paid | null (at the time of the request)
+  message      String
+  status       String   @default("open") // open | resolved
+  createdAt    DateTime @default(now()) @map("created_at")
+  resolvedAt   DateTime? @map("resolved_at")
+
+  @@index([status, createdAt])
+  @@index([email, createdAt])
+  @@map("support_tickets")
+}
+
 model HeartbeatLog {
   id           String   @id @default(uuid())
   licenseKeyId String   @map("license_key_id")
@@ -159,6 +178,9 @@ model ServerSettings {
   checkoutUrl      String?  @map("checkout_url") // Hotmart checkout link
   hotmartHottok    String?  @map("hotmart_hottok") // Hotmart webhook token
   hotmartProductId String?  @map("hotmart_product_id") // optional product filter
+  // Support WhatsApp number (digits, country code) delivered to all clients via
+  // the validate response — paid-active customers are redirected here.
+  supportWhatsapp  String?  @map("support_whatsapp")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("server_settings")

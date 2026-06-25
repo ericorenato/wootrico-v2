@@ -8,6 +8,7 @@ import {
   evaluateLicense,
   getLicenseState,
   runHeartbeat,
+  submitSupportTicket,
   LicenseError,
 } from '@wootrico/license-client';
 
@@ -48,8 +49,25 @@ export default async function licenseRoutes(app: FastifyInstance) {
       lastError: state.lastError,
       offline,
       blockedReason,
+      supportWhatsapp: state.supportWhatsapp ?? null,
       serverUrl: process.env.LICENSE_SERVER_URL,
     };
+  });
+
+  // Open a support ticket on the license server. Always registers; the panel
+  // decides whether to redirect to WhatsApp based on the license status.
+  const SupportSchema = z.object({ message: z.string().trim().min(1).max(5000) });
+  app.post('/api/support/ticket', guard, async (req, reply) => {
+    const p = SupportSchema.safeParse(req.body);
+    if (!p.success) return reply.code(400).send({ error: 'validation' });
+    const user = await app.prisma.adminUser.findUnique({ where: { id: req.user.sub } });
+    try {
+      const res = await submitSupportTicket(p.data.message, user?.email ?? req.user.email ?? null);
+      return res;
+    } catch (err) {
+      if (err instanceof LicenseError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   app.post('/api/license/activate', guard, async (req, reply) => {

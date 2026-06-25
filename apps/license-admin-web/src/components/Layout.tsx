@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { KeyRound, Terminal, LogOut, Webhook, Activity, LayoutDashboard, Users, Settings, Gift, CreditCard } from 'lucide-react';
+import { KeyRound, Terminal, LogOut, Webhook, Activity, LayoutDashboard, Users, Settings, Gift, CreditCard, LifeBuoy } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 
 const NAV = [
@@ -9,6 +9,7 @@ const NAV = [
   { to: '/keys', label: 'Chaves', icon: KeyRound },
   { to: '/free-licenses', label: 'Concedidas', icon: Gift },
   { to: '/payments', label: 'Pagamentos', icon: CreditCard },
+  { to: '/support', label: 'Suporte', icon: LifeBuoy },
   { to: '/health', label: 'Saúde', icon: Activity },
   { to: '/logs', label: 'Logs', icon: Terminal },
   { to: '/webhook-keys', label: 'Webhooks', icon: Webhook },

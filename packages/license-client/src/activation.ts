@@ -157,6 +157,37 @@ export async function requestPurchase(email?: string | null): Promise<{ checkout
   return { checkoutUrl: data.checkoutUrl ?? env.LICENSE_CHECKOUT_URL ?? null };
 }
 
+/**
+ * Open a support ticket on the license server (registered regardless of license
+ * status). Returns the support WhatsApp number so the panel can redirect a
+ * paid-active customer to it.
+ */
+export async function submitSupportTicket(
+  message: string,
+  email?: string | null,
+): Promise<{ ok: boolean; supportWhatsapp: string | null }> {
+  const state = await getLicenseState();
+  const key = decryptLicenseKey(state);
+  if (!key || !state.instanceId) throw new LicenseError('not_activated');
+
+  let res: Response;
+  try {
+    res = await fetch(`${env.LICENSE_SERVER_URL}/support-ticket`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ key, instanceId: state.instanceId, email: email ?? undefined, message }),
+    });
+  } catch (err) {
+    throw new LicenseError(`license server unreachable: ${(err as Error).message}`);
+  }
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    supportWhatsapp?: string | null;
+  };
+  if (!res.ok) throw new LicenseError(data.error ?? `support_failed_${res.status}`);
+  return { ok: true, supportWhatsapp: data.supportWhatsapp ?? state.supportWhatsapp ?? null };
+}
+
 /** Release the binding so the key can be moved to another instance. */
 export async function deactivateLicense(): Promise<void> {
   const state = await getLicenseState();

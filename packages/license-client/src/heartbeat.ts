@@ -36,6 +36,7 @@ interface ValidateResponse {
   features?: Record<string, unknown>;
   secret?: string | null;
   secrets?: string[] | null;
+  supportWhatsapp?: string | null;
   error?: string;
 }
 
@@ -92,6 +93,7 @@ export async function runHeartbeat(): Promise<{ status: string }> {
         nextHeartbeatAt: new Date(now.getTime() + jittered(LICENSE.validateIntervalMs)),
         heartbeatFailures: 0,
         features: (data.features ?? state.features ?? {}) as object,
+        supportWhatsapp: data.supportWhatsapp ?? state.supportWhatsapp ?? null,
         lastError: null,
       });
       return { status: 'active' };

@@ -419,6 +419,8 @@ model LicenseState {
   lastValidatedAt DateTime?     @map("last_validated_at") // last successful online check
   heartbeatFailures Int         @default(0) @map("heartbeat_failures") // consecutive unreachable checks → backoff
   features        Json?
+  // Global support WhatsApp number delivered by the license server on validate.
+  supportWhatsapp String?       @map("support_whatsapp")
   lastError       String?       @map("last_error")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")

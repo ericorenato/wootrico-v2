@@ -9,6 +9,7 @@ import {
   KeyRound,
   Terminal,
   SlidersHorizontal,
+  LifeBuoy,
   LogOut,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
@@ -21,6 +22,7 @@ const NAV = [
   { to: '/media', label: 'Mídias', icon: Images },
   { to: '/system', label: 'Sistema', icon: SlidersHorizontal },
   { to: '/license', label: 'Licença', icon: KeyRound },
+  { to: '/support', label: 'Suporte', icon: LifeBuoy },
   { to: '/logs', label: 'Logs', icon: Terminal },
 ];
 

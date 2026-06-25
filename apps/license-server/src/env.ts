@@ -25,6 +25,8 @@ export const cfg = {
   hotmartHottok: process.env.HOTMART_HOTTOK,
   // Optional: only accept Hotmart events for this product id (extra safety).
   hotmartProductId: process.env.HOTMART_PRODUCT_ID,
+  // Support WhatsApp number (digits with country code) delivered to all clients.
+  supportWhatsapp: process.env.LICENSE_SUPPORT_WHATSAPP,
   nodeEnv: process.env.NODE_ENV ?? 'development',
   // Admin web panel credentials (optional). When set, /admin/login issues a JWT;
   // when unset, the panel login is disabled and only ADMIN_TOKEN (Bearer) works.

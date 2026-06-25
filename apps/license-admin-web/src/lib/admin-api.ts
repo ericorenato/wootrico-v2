@@ -108,6 +108,10 @@ export const expireKey = (id: string, reason?: string) =>
 export const revokeKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/revoke`, { method: 'POST' });
 
+/** Delete a key permanently — only allowed when it's not active (expired/revoked). */
+export const deleteKey = (id: string) =>
+  api<{ ok: boolean }>(`/admin/keys/${id}`, { method: 'DELETE' });
+
 export const activateKey = (id: string) =>
   api<{ ok: boolean }>(`/admin/keys/${id}/activate`, { method: 'POST' });
 
@@ -375,10 +379,12 @@ export interface ServerSettings {
   checkoutUrl: string | null;
   hotmartHottok: string | null;
   hotmartProductId: string | null;
+  supportWhatsapp: string | null;
   envDefaults?: {
     checkoutUrl: string | null;
     hotmartHottokSet: boolean;
     hotmartProductId: string | null;
+    supportWhatsapp: string | null;
   };
 }
 
@@ -389,4 +395,35 @@ export const updateSettings = (body: {
   checkoutUrl?: string | null;
   hotmartHottok?: string | null;
   hotmartProductId?: string | null;
+  supportWhatsapp?: string | null;
 }) => api<{ ok: boolean }>('/admin/settings', { method: 'PUT', body: JSON.stringify(body) });
+
+// ── Support tickets ──
+export interface SupportTicket {
+  id: string;
+  instanceId: string | null;
+  licenseKeyId: string | null;
+  email: string | null;
+  plan: string | null;
+  message: string;
+  status: 'open' | 'resolved' | string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export const getSupportTickets = (params: { q?: string; status?: 'open' | 'resolved'; before?: string } = {}) => {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set('q', params.q);
+  if (params.status) sp.set('status', params.status);
+  if (params.before) sp.set('before', params.before);
+  const qs = sp.toString();
+  return api<{ tickets: SupportTicket[]; nextBefore: string | null }>(
+    `/admin/support-tickets${qs ? `?${qs}` : ''}`,
+  );
+};
+
+export const resolveTicket = (id: string) =>
+  api<{ ok: boolean }>(`/admin/support-tickets/${id}/resolve`, { method: 'POST' });
+
+export const reopenTicket = (id: string) =>
+  api<{ ok: boolean }>(`/admin/support-tickets/${id}/reopen`, { method: 'POST' });

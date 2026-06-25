@@ -13,6 +13,8 @@ export interface LicenseStatus {
   offline?: boolean;
   /** When blocked, why: expired/revoked/inactive (buy/renew) vs offline (reconnect). */
   blockedReason?: 'expired' | 'revoked' | 'inactive' | 'offline' | null;
+  /** Global support WhatsApp number (digits) configured on the license server. */
+  supportWhatsapp?: string | null;
   serverUrl?: string;
 }
 
@@ -39,3 +41,10 @@ export const deactivateLicense = () =>
 /** Force an immediate online re-validation (used to recover quickly when blocked). */
 export const triggerHeartbeat = () =>
   api<{ status: string }>('/api/license/heartbeat', { method: 'POST' });
+
+/** Open a support ticket on the license server. Returns the support WhatsApp number. */
+export const submitSupportTicket = (message: string) =>
+  api<{ ok: boolean; supportWhatsapp: string | null }>('/api/support/ticket', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });

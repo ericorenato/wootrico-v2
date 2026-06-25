@@ -519,6 +519,9 @@ const validateHandler = async (req: FastifyRequest, reply: FastifyReply) => {
     features: lk.features ?? {},
     secret: await ensureSecret(lk),
     secrets: await instanceSecrets(instanceId),
+    // Global support WhatsApp — refreshed on every validate (same cadence as the
+    // heartbeat), so changing it in the panel reflects on all clients.
+    supportWhatsapp: await supportWhatsapp(),
     ...(deliveredKey ? { key: deliveredKey } : {}),
   };
 };
@@ -562,6 +565,82 @@ app.post('/purchase-intent', async (req, reply) => {
   return { ok: true, intentId: intent.id, checkoutUrl };
 });
 
+// ── support ticket (customer opened a support request from their panel) ──
+// Registered regardless of license status (the vendor sees trial/expired users
+// too). The client only redirects PAID-active users to the support WhatsApp.
+const SupportTicketSchema = z.object({
+  key: z.string().min(1),
+  instanceId: z.string().min(1),
+  email: z.string().email().optional(),
+  message: z.string().trim().min(1).max(5000),
+});
+app.post('/support-ticket', async (req, reply) => {
+  const p = SupportTicketSchema.safeParse(req.body);
+  if (!p.success) return reply.code(400).send({ error: 'validation' });
+  const { key, instanceId, email, message } = p.data;
+  const lk = await prisma.licenseKey.findUnique({ where: { keyHash: hashKey(key) } });
+  const ticket = await prisma.supportTicket.create({
+    data: {
+      instanceId,
+      licenseKeyId: lk?.id ?? null,
+      email: email ?? lk?.email ?? null,
+      plan: lk?.plan ?? null,
+      message,
+    },
+  });
+  await recordEvent({
+    type: 'support_ticket',
+    licenseKeyId: lk?.id,
+    instanceId,
+    meta: { ticketId: ticket.id },
+  });
+  return { ok: true, ticketId: ticket.id, supportWhatsapp: await supportWhatsapp() };
+});
+
+// ── admin: support tickets ──
+const TicketsQuerySchema = z.object({
+  q: z.string().trim().optional(),
+  status: z.enum(['open', 'resolved']).optional(),
+  before: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(200).optional(),
+});
+app.get('/admin/support-tickets', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const q = TicketsQuerySchema.safeParse(req.query ?? {});
+  if (!q.success) return reply.code(400).send({ error: 'validation' });
+  const take = q.data.limit ?? 50;
+  const rows = await prisma.supportTicket.findMany({
+    where: {
+      ...(q.data.status ? { status: q.data.status } : {}),
+      ...(q.data.q ? { email: { contains: q.data.q, mode: 'insensitive' } } : {}),
+      ...(q.data.before ? { createdAt: { lt: new Date(q.data.before) } } : {}),
+    },
+    orderBy: { createdAt: 'desc' },
+    take: take + 1,
+  });
+  const hasMore = rows.length > take;
+  const tickets = hasMore ? rows.slice(0, take) : rows;
+  const nextBefore = hasMore ? tickets[tickets.length - 1]!.createdAt.toISOString() : null;
+  return { tickets, nextBefore };
+});
+
+app.post('/admin/support-tickets/:id/resolve', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  await prisma.supportTicket.update({
+    where: { id },
+    data: { status: 'resolved', resolvedAt: new Date() },
+  });
+  return { ok: true };
+});
+
+app.post('/admin/support-tickets/:id/reopen', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  await prisma.supportTicket.update({ where: { id }, data: { status: 'open', resolvedAt: null } });
+  return { ok: true };
+});
+
 // ── payment webhook (external provider → license server) ──
 const WebhookPaymentSchema = z.object({
   email: z.string().email(),
@@ -602,6 +681,12 @@ async function paymentConfig(): Promise<{
     hotmartHottok: s?.hotmartHottok || cfg.hotmartHottok,
     hotmartProductId: s?.hotmartProductId || cfg.hotmartProductId,
   };
+}
+
+/** Support WhatsApp number — admin-panel setting takes precedence over env. */
+async function supportWhatsapp(): Promise<string | null> {
+  const s = await prisma.serverSettings.findUnique({ where: { id: 'singleton' } });
+  return s?.supportWhatsapp || cfg.supportWhatsapp || null;
 }
 
 /**
@@ -1435,6 +1520,20 @@ app.post('/admin/keys/:id/set-expiry', async (req, reply) => {
   return { ok: true };
 });
 
+// Delete a key permanently — only when it's NOT active (expired or revoked), so an
+// in-use customer key can't be removed by accident. Activations cascade; payments
+// and events are kept for audit.
+app.delete('/admin/keys/:id', async (req, reply) => {
+  if (!(await requireAdmin(req, reply))) return;
+  const { id } = req.params as { id: string };
+  const lk = await prisma.licenseKey.findUnique({ where: { id } });
+  if (!lk) return reply.code(404).send({ error: 'not_found' });
+  if (keyStatus(lk, new Date()).active) return reply.code(400).send({ error: 'key_active' });
+  await recordEvent({ type: 'admin_delete', licenseKeyId: id, meta: { email: lk.email, plan: lk.plan } });
+  await prisma.licenseKey.delete({ where: { id } });
+  return { ok: true };
+});
+
 // ── admin: payments history (per-user via ?q, per-key via ?keyId, or all) ──
 const PaymentsQuerySchema = z.object({
   q: z.string().trim().optional(),
@@ -1693,6 +1792,7 @@ const SettingsSchema = z.object({
   checkoutUrl: z.string().url().nullable().optional(),
   hotmartHottok: z.string().trim().max(200).nullable().optional(),
   hotmartProductId: z.string().trim().max(100).nullable().optional(),
+  supportWhatsapp: z.string().trim().max(30).nullable().optional(),
 });
 
 app.get('/admin/settings', async (req, reply) => {
@@ -1703,11 +1803,13 @@ app.get('/admin/settings', async (req, reply) => {
     checkoutUrl: s?.checkoutUrl ?? null,
     hotmartHottok: s?.hotmartHottok ?? null,
     hotmartProductId: s?.hotmartProductId ?? null,
+    supportWhatsapp: s?.supportWhatsapp ?? null,
     // Defaults coming from env, shown as placeholders / "active fallback" hints.
     envDefaults: {
       checkoutUrl: cfg.checkoutUrl,
       hotmartHottokSet: !!cfg.hotmartHottok,
       hotmartProductId: cfg.hotmartProductId ?? null,
+      supportWhatsapp: cfg.supportWhatsapp ?? null,
     },
   };
 });
@@ -1723,6 +1825,7 @@ app.put('/admin/settings', async (req, reply) => {
     checkoutUrl: norm(body.data.checkoutUrl),
     hotmartHottok: norm(body.data.hotmartHottok),
     hotmartProductId: norm(body.data.hotmartProductId),
+    supportWhatsapp: norm(body.data.supportWhatsapp),
   };
   await prisma.serverSettings.upsert({
     where: { id: 'singleton' },

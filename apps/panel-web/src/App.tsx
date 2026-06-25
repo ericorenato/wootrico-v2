@@ -9,6 +9,7 @@ import Integrations from './pages/Integrations';
 import IntegrationForm from './pages/IntegrationForm';
 import Contacts from './pages/Contacts';
 import Conversations from './pages/Conversations';
+import Support from './pages/Support';
 import MediaLibrary from './pages/MediaLibrary';
 import License from './pages/License';
 import System from './pages/System';
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="/integrations/:id" element={<Protected><IntegrationForm /></Protected>} />
           <Route path="/contacts" element={<Protected><Contacts /></Protected>} />
           <Route path="/conversations" element={<Protected><Conversations /></Protected>} />
+          <Route path="/support" element={<Protected><Support /></Protected>} />
           <Route path="/media" element={<Protected><MediaLibrary /></Protected>} />
           <Route path="/license" element={<Protected><License /></Protected>} />
           <Route path="/system" element={<Protected><System /></Protected>} />

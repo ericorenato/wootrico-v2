@@ -7,6 +7,7 @@ export default function Settings() {
   const [checkoutUrl, setCheckoutUrl] = useState('');
   const [hottok, setHottok] = useState('');
   const [productId, setProductId] = useState('');
+  const [supportWhatsapp, setSupportWhatsapp] = useState('');
   const [envDefaults, setEnvDefaults] = useState<ServerSettings['envDefaults']>();
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -20,6 +21,7 @@ export default function Settings() {
         setCheckoutUrl(s.checkoutUrl ?? '');
         setHottok(s.hotmartHottok ?? '');
         setProductId(s.hotmartProductId ?? '');
+        setSupportWhatsapp(s.supportWhatsapp ?? '');
         setEnvDefaults(s.envDefaults);
         setLoaded(true);
       })
@@ -51,6 +53,7 @@ export default function Settings() {
         checkoutUrl: url || null,
         hotmartHottok: hottok.trim() || null,
         hotmartProductId: productId.trim() || null,
+        supportWhatsapp: supportWhatsapp.trim() || null,
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
@@ -122,6 +125,23 @@ export default function Settings() {
             Configure o Webhook 2.0 da Hotmart apontando para{' '}
             <code className="text-neutral-300">/webhook/hotmart</code> deste servidor.
           </p>
+        </div>
+      </Card>
+
+      <Card className="max-w-xl mb-6">
+        <h3 className="text-sm font-medium text-white mb-4">Suporte (WhatsApp)</h3>
+        <div className="space-y-5">
+          <Field
+            label="Número do WhatsApp de suporte"
+            hint="Apenas dígitos com código do país (ex.: 5521999999999). É entregue a TODOS os clientes na validação da licença; clientes pagos ativos são direcionados a ele."
+          >
+            <Input
+              value={supportWhatsapp}
+              onChange={(e) => setSupportWhatsapp(e.target.value)}
+              placeholder={envDefaults?.supportWhatsapp ?? '5521999999999'}
+              disabled={!loaded}
+            />
+          </Field>
         </div>
       </Card>
 
