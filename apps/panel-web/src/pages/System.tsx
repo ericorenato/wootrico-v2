@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Database, Network, Zap, Loader2, type LucideIcon } from 'lucide-react';
 import { Badge, Button, Card, Eyebrow } from '../components/ui';
 import ConnectionsEditor from '../components/ConnectionsEditor';
 import MediaStorageEditor from '../components/MediaStorageEditor';
@@ -51,22 +52,72 @@ const STATUS_LABEL: Record<string, string> = {
 };
 const stLabel = (s: string) => STATUS_LABEL[s] ?? s;
 
-function ConnRow({ label, r }: { label: string; r?: { ok: boolean; detail?: string } }) {
+/** Turn a raw driver error into a short, human diagnosis (PT). */
+function friendlyDetail(detail?: string): string {
+  if (!detail) return '';
+  const s = detail.toLowerCase();
+  if (s.includes('enotfound') || s.includes('getaddrinfo')) {
+    const host = detail.match(/(?:ENOTFOUND|getaddrinfo\s+\w+)\s+([^\s:]+)/i)?.[1];
+    return host ? `host não encontrado: ${host}` : 'host não encontrado (DNS)';
+  }
+  if (s.includes('econnrefused')) return 'conexão recusada — porta fechada ou serviço fora';
+  if (s.includes('etimedout') || s.includes('timeout')) return 'tempo esgotado — host inacessível';
+  if (s.includes('ehostunreach') || s.includes('enetunreach')) return 'host inacessível na rede';
+  if (s.includes('econnreset')) return 'conexão reiniciada pelo servidor';
+  if (s.includes('28p01') || s.includes('authentication') || s.includes('password') || s.includes('access denied'))
+    return 'autenticação falhou — usuário ou senha';
+  if (s.includes('3d000') || s.includes('does not exist')) return 'banco de dados inexistente';
+  if (s.includes('access') || s.includes('nxdomain')) return 'host não encontrado (DNS)';
+  return detail;
+}
+
+function ConnRow({
+  label,
+  sub,
+  icon: Icon,
+  r,
+  busy,
+}: {
+  label: string;
+  sub: string;
+  icon: LucideIcon;
+  r?: { ok: boolean; detail?: string };
+  busy: boolean;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
-      <span className="text-sm text-neutral-200">{label}</span>
-      {r ? (
-        <span className="flex items-center gap-2 min-w-0">
-          {r.detail && (
-            <span className="text-xs text-neutral-500 truncate max-w-[18rem]" title={r.detail}>
-              {r.detail}
-            </span>
-          )}
-          <Badge tone={r.ok ? 'ok' : 'error'}>{r.ok ? 'ok' : 'falhou'}</Badge>
-        </span>
-      ) : (
-        <span className="text-xs text-neutral-600">—</span>
-      )}
+    <div className="flex items-center justify-between gap-4 py-3 border-b border-white/5 last:border-0">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+          <Icon size={16} className="text-neutral-300" />
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm text-white">{label}</p>
+          <p className="text-xs text-neutral-500">{sub}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 min-w-0 justify-end">
+        {busy ? (
+          <span className="flex items-center gap-1.5 text-xs text-neutral-400">
+            <Loader2 size={14} className="animate-spin" /> testando…
+          </span>
+        ) : r ? (
+          <>
+            {!r.ok && (
+              <span className="text-xs text-red-300/90 truncate max-w-[15rem]" title={r.detail}>
+                {friendlyDetail(r.detail)}
+              </span>
+            )}
+            {r.ok && r.detail && (
+              <span className="text-xs text-neutral-500 truncate max-w-[12rem]" title={r.detail}>
+                {r.detail}
+              </span>
+            )}
+            <Badge tone={r.ok ? 'ok' : 'error'}>{r.ok ? 'conectado' : 'falhou'}</Badge>
+          </>
+        ) : (
+          <span className="text-xs text-neutral-600">não testado</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -84,6 +135,7 @@ export default function System() {
   }, []);
 
   async function testConnections() {
+    setDiag(null); // limpa para os rows mostrarem "testando…"
     setDiagBusy(true);
     try {
       setDiag(await runDiagnostics());
@@ -150,9 +202,16 @@ export default function System() {
                 Testar conexões
               </Button>
             </div>
-            <ConnRow label="Postgres" r={diag?.postgres} />
-            <ConnRow label="RabbitMQ" r={diag?.rabbitmq} />
-            <ConnRow label="Redis" r={diag?.redis} />
+            <ConnRow label="Postgres" sub="Banco de dados" icon={Database} r={diag?.postgres} busy={diagBusy} />
+            <ConnRow label="RabbitMQ" sub="Fila de mensagens" icon={Network} r={diag?.rabbitmq} busy={diagBusy} />
+            <ConnRow label="Redis" sub="Cache e travas" icon={Zap} r={diag?.redis} busy={diagBusy} />
+            {diag && !diagBusy && (
+              <p className="mt-3 text-xs text-neutral-500">
+                {[diag.postgres, diag.rabbitmq, diag.redis].every((d) => d.ok)
+                  ? '✓ Todas as conexões estão OK.'
+                  : 'Alguma conexão falhou — ajuste em "Conexões (configuração)" logo abaixo.'}
+              </p>
+            )}
           </Card>
 
           {/* Configuração de conexões (editável) */}
