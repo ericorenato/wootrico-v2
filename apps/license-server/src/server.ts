@@ -262,27 +262,53 @@ app.post('/provision', async (req, reply) => {
     };
   }
 
-  // Admin-granted pickup. If the admin pre-issued a license for this e-mail (it
-  // carries a parked raw key, `issuedKey`) that's still live and not claimed by a
-  // DIFFERENT instance, bind it and hand the key over — the customer never sees or
-  // types it. A granted PAID license wins over a granted trial. Checked before the
-  // regular trial logic so a user the admin granted (or re-activated) picks THAT
-  // up instead of being refused or minting a fresh trial.
+  // Admin-granted pickup. If the admin made a license live for this e-mail that's
+  // still valid and not claimed by a DIFFERENT instance, bind it and hand the key
+  // over — the customer never sees or types it. A PAID license wins over a trial.
+  // Checked before the regular trial logic so a user the admin granted (or
+  // re-activated, or "Liberou como paga") picks THAT up instead of being refused
+  // or minting a fresh trial.
+  //
+  // PAID keys are claimable by e-mail even WITHOUT a parked raw key: the admin
+  // "Liberar como paga" (/upgrade) converts an existing trial in place and parks
+  // no `issuedKey`, so we mint & park one at claim time (see below). A TRIAL, by
+  // contrast, must carry a parked `issuedKey` to be claimed by e-mail — otherwise
+  // a plain self-service trial could be handed to anyone sharing the e-mail.
   if (email) {
-    const grantWhere = (plan: 'trial' | 'paid') => ({
-      plan,
-      revokedAt: null,
-      issuedKey: { not: null }, // admin-granted (self-service keys don't park a raw key)
-      email: { equals: email, mode: 'insensitive' as const },
-      // unclaimed, or already bound to THIS instance (re-provision after data loss)
-      activations: { none: { revokedAt: null, instanceId: { not: instanceId } } },
-      // the granted key (trial or paid) must still be within its window
-      expiresAt: { gt: now },
+    const emailEq = { equals: email, mode: 'insensitive' as const };
+    // Unclaimed, or already bound to THIS instance (re-provision after data loss).
+    const notBoundElsewhere = { none: { revokedAt: null, instanceId: { not: instanceId } } };
+    const paidGrant = await prisma.licenseKey.findFirst({
+      where: { plan: 'paid', revokedAt: null, email: emailEq, activations: notBoundElsewhere, expiresAt: { gt: now } },
+      orderBy: { createdAt: 'desc' },
     });
     const granted =
-      (await prisma.licenseKey.findFirst({ where: grantWhere('paid'), orderBy: { createdAt: 'desc' } })) ??
-      (await prisma.licenseKey.findFirst({ where: grantWhere('trial'), orderBy: { createdAt: 'desc' } }));
+      paidGrant ??
+      (await prisma.licenseKey.findFirst({
+        where: {
+          plan: 'trial',
+          revokedAt: null,
+          issuedKey: { not: null }, // self-service trials don't park a raw key
+          email: emailEq,
+          activations: notBoundElsewhere,
+          expiresAt: { gt: now },
+        },
+        orderBy: { createdAt: 'desc' },
+      }));
     if (granted) {
+      // Ensure a raw key exists to deliver. An admin-upgraded paid key has none —
+      // mint & park one now. Rotating the keyHash is safe here: the `notBoundElsewhere`
+      // filter guarantees no OTHER live instance is presenting this key, and this
+      // instance reached step 2 only because it has no live binding of its own.
+      let deliverKey = granted.issuedKey ?? undefined;
+      if (!deliverKey) {
+        const raw = generateKey();
+        await prisma.licenseKey.update({
+          where: { id: granted.id },
+          data: { keyHash: hashKey(raw), issuedKey: raw },
+        });
+        deliverKey = raw;
+      }
       const prevAct = await prisma.activation.findUnique({
         where: { licenseKeyId_instanceId: { licenseKeyId: granted.id, instanceId } },
       });
@@ -314,7 +340,7 @@ app.post('/provision', async (req, reply) => {
         appVersion,
       });
       return {
-        key: granted.issuedKey ?? undefined,
+        key: deliverKey,
         active: true,
         plan: granted.plan,
         expiresAt: granted.expiresAt,
