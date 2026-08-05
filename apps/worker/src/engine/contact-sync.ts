@@ -52,6 +52,13 @@ async function downloadImage(url: string): Promise<AttachmentInput | null> {
 export async function syncContactMeta(opts: {
   integrationId: string;
   identifier: string; // canonical key, for cache namespacing
+  /**
+   * ContactIdentity row id, when this contact IS one. Null for groups (keyed by
+   * the group id) and for DMs whose identity couldn't be resolved — neither has
+   * a row in contact_identities, and writing the avatar/identity against those
+   * keys only produced foreign-key errors on every message.
+   */
+  identityId?: string | null;
   contactId: string | number;
   chatwoot: ChatwootClient;
   provider: WhatsAppProvider;
@@ -117,21 +124,26 @@ export async function syncContactMeta(opts: {
       }
       // Store the BYTES for the panel (WhatsApp URLs expire) — independent of the
       // media-library config. The panel serves these instead of the volatile URL.
-      await prisma.contactAvatar
-        .upsert({
-          where: { identityId: opts.identifier },
-          create: { identityId: opts.identifier, contentType: img.contentType, data: img.buffer },
-          update: { contentType: img.contentType, data: img.buffer },
-        })
-        .catch(() => undefined);
+      // Only for a real identity: a group has no contact_identities row.
+      if (opts.identityId) {
+        await prisma.contactAvatar
+          .upsert({
+            where: { identityId: opts.identityId },
+            create: { identityId: opts.identityId, contentType: img.contentType, data: img.buffer },
+            update: { contentType: img.contentType, data: img.buffer },
+          })
+          .catch((err) => logger.debug({ err }, 'contactAvatar upsert failed'));
+      }
     }
     // Mirror onto the GLOBAL identity row so the panel's contacts list shows it.
-    await prisma.contactIdentity
-      .update({
-        where: { id: opts.identifier },
-        data: { avatarUrl, ...(img ? { avatarStoredAt: new Date() } : {}) },
-      })
-      .catch(() => undefined);
+    if (opts.identityId) {
+      await prisma.contactIdentity
+        .update({
+          where: { id: opts.identityId },
+          data: { avatarUrl, ...(img ? { avatarStoredAt: new Date() } : {}) },
+        })
+        .catch((err) => logger.debug({ err }, 'contactIdentity avatar update failed'));
+    }
   }
 
   await cacheSet(

@@ -13,6 +13,23 @@ import { chatwootAttachmentType } from '../lib/message-type.js';
 import { storeMediaAsset } from '../lib/media-store.js';
 import { logMessage } from '../lib/message-log.js';
 
+/**
+ * Is this Chatwoot contact identifier a GROUP? The shape depends on the provider
+ * that created it on the inbound path:
+ *   evolution / uazapi → `120363…@g.us`   (full JID)
+ *   z-api              → `120363…-group`  (new groups)
+ *                      → `5511999…-1600694041` (legacy `creator-timestamp`)
+ * A DM identifier is either a UUID or plain digits, so neither pattern matches.
+ * Getting this wrong sent group replies down the DM path, which broke quoted
+ * replies (the participant JID was built from the group id).
+ */
+function isGroupIdentifier(identifier: unknown): boolean {
+  if (typeof identifier !== 'string' || !identifier) return false;
+  return (
+    identifier.endsWith('@g.us') || identifier.endsWith('-group') || /^\d+-\d+$/.test(identifier)
+  );
+}
+
 /** Split a provider send target into the (phone, jid, lid) the library indexes. */
 function splitTarget(target: string, isGroup: boolean) {
   if (isGroup) return { phone: null, jid: null, lid: null };
@@ -72,8 +89,7 @@ export async function handleChatwootCallback(
         messageType: 'text',
         kind: 'deleted',
         isReply: false,
-        isGroup:
-          typeof delSender.identifier === 'string' && delSender.identifier.endsWith('@g.us'),
+        isGroup: isGroupIdentifier(delSender.identifier),
         providerMessageId: map?.providerMessageId ?? null,
       });
     }
@@ -90,8 +106,7 @@ export async function handleChatwootCallback(
 
   const conversation = payload.conversation ?? {};
   const sender = conversation.meta?.sender ?? {};
-  const isGroup =
-    typeof sender.identifier === 'string' && sender.identifier.endsWith('@g.us');
+  const isGroup = isGroupIdentifier(sender.identifier);
 
   // canonicalKey: stable id for dedup/lock (same domain as inbound).
   // sendTarget: the actual phone/jid/group we send to on the provider.

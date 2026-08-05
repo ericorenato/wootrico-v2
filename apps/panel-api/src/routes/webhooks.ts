@@ -42,13 +42,25 @@ export default async function webhookRoutes(app: FastifyInstance) {
 
     // The raw payload goes ONLY to the broker (ephemeral). Nothing with content
     // is persisted. We record a content-free audit row.
+    //
+    // A publish that the broker never confirmed is a LOST message: answering 200
+    // would tell the provider it was delivered and it would never re-send it.
+    // So we fail the request instead and let the provider re-deliver.
+    let queueFailed = false;
     if (accepted) {
-      await publishWebhook({
-        integrationId: integration.id,
-        source,
-        payload,
-        receivedAt: new Date().toISOString(),
-      });
+      try {
+        await publishWebhook({
+          integrationId: integration.id,
+          source,
+          payload,
+          receivedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        app.log.error({ err, integrationId: integration.id, source }, 'webhook: enqueue failed');
+        accepted = false;
+        reason = 'queue_unavailable';
+        queueFailed = true;
+      }
     }
 
     await app.prisma.webhookEvent.create({
@@ -64,9 +76,14 @@ export default async function webhookRoutes(app: FastifyInstance) {
         // sweep in the cleanup job), not a fixed per-row TTL.
         expiresAt: null,
       },
-    });
+    }).catch((err) => app.log.warn({ err }, 'webhook: audit row failed'));
 
-    return reply.code(accepted ? 200 : 200).send({ accepted, ...(reason ? { reason } : {}) });
+    // 503 only when WE failed to keep the message; a deliberate refusal
+    // (integration off / license inactive) stays 200 so the provider stops
+    // retrying something we will never accept.
+    return reply
+      .code(queueFailed ? 503 : 200)
+      .send({ accepted, ...(reason ? { reason } : {}) });
   }
 
   app.post('/webhook/:token/provider', async (req, reply) => {

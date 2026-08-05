@@ -137,6 +137,8 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     await syncContactMeta({
       integrationId,
       identifier,
+      // Only a DM has a contact_identities row; a group is keyed by its group id.
+      identityId: isGroup ? null : (identity?.id ?? null),
       contactId,
       chatwoot,
       provider,

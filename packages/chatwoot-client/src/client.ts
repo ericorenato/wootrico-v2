@@ -18,6 +18,15 @@ export interface AttachmentInput {
 
 const E164 = /^\+[1-9]\d{1,14}$/;
 
+/** Most recently active conversation of a list (falls back to the highest id). */
+function latestOf(list: any[]): any | null {
+  if (!list.length) return null;
+  return [...list].sort((a, b) => {
+    const at = Number(a?.last_activity_at ?? 0) - Number(b?.last_activity_at ?? 0);
+    return at !== 0 ? -at : Number(b?.id ?? 0) - Number(a?.id ?? 0);
+  })[0];
+}
+
 export class ChatwootClient {
   private http: AxiosInstance;
   private accountId: string;
@@ -258,6 +267,33 @@ export class ChatwootClient {
 
   // ─────────────────────── conversations ───────────────────────
 
+  /**
+   * All conversations of ONE contact, straight from the contact-scoped endpoint.
+   *
+   * This is the only reliable way to find a contact's conversation: the account
+   * -wide `/conversations` list is paginated (25/page) and ordered by recent
+   * activity, so on a busy account an existing conversation falls outside any
+   * bounded scan and we would wrongly create a new one for every message.
+   *
+   * Returns null (not []) when the endpoint is unavailable, so the caller can
+   * tell "no conversations" from "couldn't ask" and fall back.
+   */
+  async listContactConversations(contactId: string | number): Promise<any[] | null> {
+    try {
+      const res = await this.http.get(this.acc(`/contacts/${contactId}/conversations`));
+      const list = res.data?.payload ?? res.data?.data?.payload ?? res.data;
+      return Array.isArray(list) ? list : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * LEGACY scan of the account-wide conversation list — kept only as a fallback
+   * for Chatwoot versions without the contact-scoped endpoint. Bounded by
+   * `maxPages`, so it can miss conversations on a busy account; never rely on it
+   * as the primary path.
+   */
   async findConversation(opts: {
     contactId: string | number;
     inboxId: string | number;
@@ -271,7 +307,6 @@ export class ChatwootClient {
           status: opts.status,
           inbox_id: opts.inboxId,
           page,
-          sort_order: 'latest_first',
         },
       });
       const list: any[] = res.data?.data?.payload ?? res.data?.payload ?? [];
@@ -301,16 +336,52 @@ export class ChatwootClient {
     });
   }
 
-  /** Find an open conversation (optionally reopen a resolved one) or create a new one. */
+  /**
+   * Reuse the contact's existing conversation in this inbox, or create one.
+   *
+   * Statuses are NOT limited to `open`: a conversation created as `pending`, or
+   * one an agent snoozed, is still the same thread and must be reused — matching
+   * only `open` made every message start a new conversation and scattered the
+   * history across dozens of threads.
+   *
+   * `resolved` is the one status we don't reuse silently: that's what
+   * `reabrirConversa` decides.
+   */
   async findOrCreateConversation(opts: {
     contactId: string | number;
     inboxId: string | number;
     status: ChatwootConversationStatus;
     reopen: boolean;
   }): Promise<any> {
+    const all = await this.listContactConversations(opts.contactId);
+
+    if (all) {
+      const mine = all.filter((c) => String(c?.inbox_id) === String(opts.inboxId));
+
+      // open / pending — live threads, reuse as they are.
+      const live = latestOf(mine.filter((c) => c?.status !== 'resolved' && c?.status !== 'snoozed'));
+      if (live) return live;
+
+      // snoozed — same thread, but hidden from the agent; wake it up.
+      const snoozed = latestOf(mine.filter((c) => c?.status === 'snoozed'));
+      if (snoozed?.id) {
+        await this.reopenConversation(snoozed.id).catch(() => undefined);
+        return snoozed;
+      }
+
+      if (opts.reopen) {
+        const resolved = latestOf(mine.filter((c) => c?.status === 'resolved'));
+        if (resolved?.id) {
+          await this.reopenConversation(resolved.id);
+          return resolved;
+        }
+      }
+      return this.createConversation(opts);
+    }
+
+    // Contact-scoped endpoint unavailable → legacy bounded scan.
     const open = await this.findConversation({ ...opts, status: 'open' });
     if (open) return open;
-
     if (opts.reopen) {
       const resolved = await this.findConversation({ ...opts, status: 'resolved' });
       if (resolved?.id) {

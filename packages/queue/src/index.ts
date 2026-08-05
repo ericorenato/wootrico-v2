@@ -1,5 +1,22 @@
-import amqplib, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
+import amqplib, {
+  type Channel,
+  type ChannelModel,
+  type ConfirmChannel,
+  type ConsumeMessage,
+  type Options,
+} from 'amqplib';
 import { AMQP, env, logger } from '@wootrico/config';
+
+/**
+ * How long to wait for the broker to CONFIRM a publish before giving up.
+ *
+ * This matters most when RabbitMQ raises its memory/disk alarm: the connection
+ * stays open but publishers are BLOCKED, so `publish()` neither throws nor gets
+ * confirmed. Without a deadline the caller would hang forever; with it, the
+ * publish fails loudly and the sender (webhook route / retry path) can react
+ * instead of silently dropping the message.
+ */
+const PUBLISH_CONFIRM_TIMEOUT_MS = 10_000;
 
 /**
  * The job carried by the broker. The raw webhook payload travels INSIDE the
@@ -14,7 +31,7 @@ export interface WebhookJob {
 
 let connection: ChannelModel | undefined;
 let connecting: Promise<ChannelModel> | undefined;
-let pubChannel: Channel | undefined;
+let pubChannel: ConfirmChannel | undefined;
 
 // Set true by closeQueue() so a deliberate shutdown doesn't trigger the
 // reconnect loop (which would fight process.exit).
@@ -33,7 +50,7 @@ interface ConsumerReg {
   queueName: string;
   handler: (job: WebhookJob) => Promise<void>;
   opts: ConsumeOptions;
-  channel?: Channel;
+  channel?: ConfirmChannel;
 }
 const consumers: ConsumerReg[] = [];
 
@@ -136,10 +153,12 @@ export async function assertTopology(ch: Channel): Promise<void> {
   await ch.bindQueue(AMQP.queues.dead, AMQP.dlxExchange, '');
 }
 
-async function publisher(): Promise<Channel> {
+async function publisher(): Promise<ConfirmChannel> {
   if (pubChannel) return pubChannel;
   const conn = await getConnection();
-  const ch = await conn.createChannel();
+  // Confirm channel: the broker acknowledges each publish, so we can tell an
+  // ACCEPTED message from one that merely got buffered in this process.
+  const ch = await conn.createConfirmChannel();
   ch.on('error', (err) => logger.error({ err }, 'amqp publish channel error'));
   ch.on('close', () => {
     if (pubChannel === ch) pubChannel = undefined;
@@ -149,11 +168,56 @@ async function publisher(): Promise<Channel> {
   return ch;
 }
 
-/** Publish a webhook job (ingress side). */
+/**
+ * Publish and WAIT for the broker's confirm. Rejects on nack, on channel error
+ * and on timeout — never resolves for a message the broker hasn't taken
+ * responsibility for. `publish()` returning false only means the local buffer is
+ * full (back-pressure); the confirm still arrives, so it's logged, not an error.
+ */
+function publishConfirmed(
+  ch: ConfirmChannel,
+  exchange: string,
+  routingKey: string,
+  content: Buffer,
+  options: Options.Publish,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const done = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      err ? reject(err) : resolve();
+    };
+    const timer = setTimeout(
+      () =>
+        done(
+          new Error(
+            `amqp publish not confirmed in ${PUBLISH_CONFIRM_TIMEOUT_MS}ms (broker blocked or unreachable)`,
+          ),
+        ),
+      PUBLISH_CONFIRM_TIMEOUT_MS,
+    );
+    try {
+      const flushed = ch.publish(exchange, routingKey, content, options, (err) =>
+        done(err ?? undefined),
+      );
+      if (!flushed) logger.warn({ exchange, routingKey }, 'amqp publish buffer full — back-pressure');
+    } catch (err) {
+      done(err as Error);
+    }
+  });
+}
+
+/**
+ * Publish a webhook job (ingress side). THROWS when the broker did not confirm,
+ * so the caller can answer the provider with an error and let it re-deliver —
+ * previously the request was answered 200 while the message was quietly lost.
+ */
 export async function publishWebhook(job: WebhookJob): Promise<void> {
   const ch = await publisher();
   const rk = job.source === 'provider' ? AMQP.routingKeys.inbound : AMQP.routingKeys.callback;
-  ch.publish(AMQP.exchange, rk, Buffer.from(JSON.stringify(job)), {
+  await publishConfirmed(ch, AMQP.exchange, rk, Buffer.from(JSON.stringify(job)), {
     persistent: true,
     contentType: 'application/json',
   });
@@ -184,7 +248,9 @@ function isRetryable(err: unknown): boolean {
 /** Open a channel and start delivering `queueName` to the registered handler. */
 async function startConsumer(reg: ConsumerReg): Promise<void> {
   const conn = await getConnection();
-  const ch = await conn.createChannel();
+  // Confirm channel here too: the retry path re-publishes and must not ack the
+  // original before the broker has actually taken the copy.
+  const ch = await conn.createConfirmChannel();
   await assertTopology(ch);
   await ch.prefetch(reg.opts.prefetch ?? 8);
 
@@ -220,13 +286,29 @@ async function startConsumer(reg: ConsumerReg): Promise<void> {
         // retry queue (fanout-bound) receives it regardless, but the message
         // keeps the routing key so DLX-on-TTL-expiry routes it back to the
         // correct work queue (inbound/callback).
-        ch.publish(AMQP.retryExchange, msg.fields.routingKey, msg.content, {
-          persistent: true,
-          contentType: 'application/json',
-          headers: { ...msg.properties.headers, 'x-retries': retries + 1 },
-        });
-        logger.warn({ err, retries }, `job failed, scheduled retry ${retries + 1}/${AMQP.maxRetries}`);
-        ch.ack(msg);
+        //
+        // The ack of the original MUST wait for the copy to be confirmed: acking
+        // an unconfirmed re-publish (e.g. while the broker is memory-blocked)
+        // destroys the message.
+        try {
+          await publishConfirmed(ch, AMQP.retryExchange, msg.fields.routingKey, msg.content, {
+            persistent: true,
+            contentType: 'application/json',
+            headers: { ...msg.properties.headers, 'x-retries': retries + 1 },
+          });
+          logger.warn({ err, retries }, `job failed, scheduled retry ${retries + 1}/${AMQP.maxRetries}`);
+          ch.ack(msg);
+        } catch (pubErr) {
+          // Couldn't hand the copy over — put the ORIGINAL back instead of
+          // losing it. The pause keeps a blocked broker from spinning us into a
+          // tight redelivery loop.
+          logger.error(
+            { err: pubErr, queue: reg.queueName },
+            'could not schedule retry — requeueing the original message',
+          );
+          await new Promise((r) => setTimeout(r, 1000));
+          ch.nack(msg, false, true);
+        }
       } else {
         logger.error({ err }, 'job exhausted retries -> dead-letter');
         ch.nack(msg, false, false); // -> DLX -> dead queue
@@ -250,7 +332,7 @@ export async function consume(
   const reg: ConsumerReg = { queueName, handler, opts };
   consumers.push(reg);
   await startConsumer(reg);
-  return reg.channel as Channel;
+  return reg.channel as ConfirmChannel;
 }
 
 export interface PingResult {
