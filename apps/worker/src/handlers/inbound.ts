@@ -25,7 +25,18 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     ignoreGroups: integration.desconsiderarGrupo,
   });
 
-  if (norm.kind === 'ignored' || norm.kind === 'unknown') return;
+  if (norm.kind === 'ignored' || norm.kind === 'unknown') {
+    // 'ignored' is normal (receipts, presence, empty reactions). 'unknown' means
+    // the provider parser didn't recognize the payload shape — usually a
+    // provider/gateway mismatch. Surface it so this failure mode isn't invisible.
+    if (norm.kind === 'unknown') {
+      logger.warn(
+        { integrationId, providerType, origin: norm.origin },
+        'inbound: payload not recognized by provider parser — message dropped',
+      );
+    }
+    return;
+  }
 
   if (norm.kind === 'message_deleted') {
     for (const pid of norm.deletedProviderMessageIds ?? []) {

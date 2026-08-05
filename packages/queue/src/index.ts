@@ -13,7 +13,29 @@ export interface WebhookJob {
 }
 
 let connection: ChannelModel | undefined;
+let connecting: Promise<ChannelModel> | undefined;
 let pubChannel: Channel | undefined;
+
+// Set true by closeQueue() so a deliberate shutdown doesn't trigger the
+// reconnect loop (which would fight process.exit).
+let closing = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let reconnectAttempts = 0;
+
+/**
+ * Registered consumers. amqplib does NOT auto-reconnect, and a dropped
+ * connection silently kills every consumer while the process keeps running its
+ * other timers — so we remember each registration and re-establish it whenever
+ * the connection (or its channel) comes back. Without this, one broker blip
+ * stops all message processing until the worker is manually restarted.
+ */
+interface ConsumerReg {
+  queueName: string;
+  handler: (job: WebhookJob) => Promise<void>;
+  opts: ConsumeOptions;
+  channel?: Channel;
+}
+const consumers: ConsumerReg[] = [];
 
 // Optional runtime override of the broker URL (set at boot from DB settings,
 // taking precedence over the env var). Empty/undefined falls back to env.
@@ -27,14 +49,57 @@ export function effectiveRabbitUrl(): string {
 
 export async function getConnection(): Promise<ChannelModel> {
   if (connection) return connection;
-  connection = await amqplib.connect(effectiveRabbitUrl());
-  connection.on('error', (err) => logger.error({ err }, 'amqp connection error'));
-  connection.on('close', () => {
-    logger.warn('amqp connection closed');
-    connection = undefined;
-    pubChannel = undefined;
-  });
-  return connection;
+  // Coalesce concurrent callers onto a single connect attempt.
+  if (connecting) return connecting;
+  connecting = (async () => {
+    const conn = await amqplib.connect(effectiveRabbitUrl());
+    conn.on('error', (err) => logger.error({ err }, 'amqp connection error'));
+    conn.on('close', () => {
+      const wasConnected = connection !== undefined;
+      connection = undefined;
+      pubChannel = undefined;
+      for (const c of consumers) c.channel = undefined;
+      if (closing) return;
+      logger.warn('amqp connection closed');
+      // Only drive a reconnect when there are consumers to restore. The publish
+      // side heals lazily (publisher() re-creates the channel on the next send).
+      if (wasConnected && consumers.length > 0) scheduleReconnect();
+    });
+    connection = conn;
+    return conn;
+  })();
+  try {
+    return await connecting;
+  } finally {
+    connecting = undefined;
+  }
+}
+
+/** Reconnect with capped exponential backoff, then re-establish all consumers. */
+function scheduleReconnect(): void {
+  if (closing || reconnectTimer) return;
+  const base = Math.min(1000 * 2 ** reconnectAttempts, 30_000);
+  const delay = base * (0.5 + Math.random() * 0.5); // jitter to avoid thundering herd
+  reconnectAttempts += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    void reestablishConsumers();
+  }, delay);
+}
+
+async function reestablishConsumers(): Promise<void> {
+  if (closing || consumers.length === 0) return;
+  try {
+    await getConnection();
+    for (const reg of consumers) {
+      if (!reg.channel) await startConsumer(reg);
+    }
+    reconnectAttempts = 0; // recovered — reset backoff
+    logger.info('amqp reconnected — consumers re-established');
+  } catch (err) {
+    logger.warn({ err }, 'amqp reconnect failed — retrying');
+    scheduleReconnect();
+  }
 }
 
 /** Declare all exchanges/queues/bindings. Idempotent — safe to call on boot. */
@@ -74,9 +139,14 @@ export async function assertTopology(ch: Channel): Promise<void> {
 async function publisher(): Promise<Channel> {
   if (pubChannel) return pubChannel;
   const conn = await getConnection();
-  pubChannel = await conn.createChannel();
-  await assertTopology(pubChannel);
-  return pubChannel;
+  const ch = await conn.createChannel();
+  ch.on('error', (err) => logger.error({ err }, 'amqp publish channel error'));
+  ch.on('close', () => {
+    if (pubChannel === ch) pubChannel = undefined;
+  });
+  await assertTopology(ch);
+  pubChannel = ch;
+  return ch;
 }
 
 /** Publish a webhook job (ingress side). */
@@ -111,26 +181,35 @@ function isRetryable(err: unknown): boolean {
   return true; // 5xx, network errors, timeouts, unknown
 }
 
-/**
- * Consume a queue with manual ack + bounded retry (via the retry queue) and a
- * dead-letter sink for poison messages.
- */
-export async function consume(
-  queueName: string,
-  handler: (job: WebhookJob) => Promise<void>,
-  opts: ConsumeOptions = {},
-): Promise<Channel> {
+/** Open a channel and start delivering `queueName` to the registered handler. */
+async function startConsumer(reg: ConsumerReg): Promise<void> {
   const conn = await getConnection();
   const ch = await conn.createChannel();
   await assertTopology(ch);
-  await ch.prefetch(opts.prefetch ?? 8);
+  await ch.prefetch(reg.opts.prefetch ?? 8);
 
-  await ch.consume(queueName, async (msg: ConsumeMessage | null) => {
+  ch.on('error', (err) =>
+    logger.error({ err, queue: reg.queueName }, 'amqp consumer channel error'),
+  );
+  ch.on('close', () => {
+    if (reg.channel !== ch) return;
+    reg.channel = undefined;
+    // If the whole connection dropped, its 'close' handler drives the reconnect.
+    // If only THIS channel died (e.g. a nack storm), restore just this consumer.
+    if (!closing && connection) {
+      logger.warn({ queue: reg.queueName }, 'consumer channel closed — restarting');
+      void startConsumer(reg).catch((err) =>
+        logger.warn({ err, queue: reg.queueName }, 'failed to restart consumer channel'),
+      );
+    }
+  });
+
+  await ch.consume(reg.queueName, async (msg: ConsumeMessage | null) => {
     if (!msg) return;
     const retries = (msg.properties.headers?.['x-retries'] as number | undefined) ?? 0;
     try {
       const job = JSON.parse(msg.content.toString()) as WebhookJob;
-      await handler(job);
+      await reg.handler(job);
       ch.ack(msg);
     } catch (err) {
       if (!isRetryable(err)) {
@@ -155,7 +234,23 @@ export async function consume(
     }
   });
 
-  return ch;
+  reg.channel = ch;
+}
+
+/**
+ * Consume a queue with manual ack + bounded retry (via the retry queue) and a
+ * dead-letter sink for poison messages. The registration survives connection
+ * drops: consumers are automatically re-established on reconnect.
+ */
+export async function consume(
+  queueName: string,
+  handler: (job: WebhookJob) => Promise<void>,
+  opts: ConsumeOptions = {},
+): Promise<Channel> {
+  const reg: ConsumerReg = { queueName, handler, opts };
+  consumers.push(reg);
+  await startConsumer(reg);
+  return reg.channel as Channel;
 }
 
 export interface PingResult {
@@ -193,6 +288,19 @@ export async function testRabbitUrl(url: string): Promise<PingResult> {
 }
 
 export async function closeQueue(): Promise<void> {
+  closing = true;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+  }
+  for (const reg of consumers) {
+    try {
+      await reg.channel?.close();
+    } catch {
+      /* ignore */
+    }
+    reg.channel = undefined;
+  }
   try {
     await pubChannel?.close();
   } catch {
