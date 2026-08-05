@@ -505,6 +505,11 @@ YAML
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
       RABBITMQ_NODE_PORT: "__RBPORT__"
+      # Alarm at 60% of the container limit below. WITHOUT a container limit
+      # RabbitMQ sizes this from the HOST's total RAM, so on a shared VPS it can
+      # grow to ~40% of the whole machine and starve Chatwoot/Postgres before its
+      # own alarm ever fires — which is exactly when publishers get blocked.
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: ${RABBITMQ_MEMORY_WATERMARK:-0.6}
     volumes: [rabbitmq_data:/var/lib/rabbitmq]
     networks: [wtnet]
     healthcheck:
@@ -516,6 +521,12 @@ YAML
       replicas: 1
       restart_policy: { condition: any, delay: 5s }
       placement: { constraints: [node.role == manager] }
+      # Hard ceiling for the broker. Raise it on a busy instance; lower it on a
+      # small VPS. The watermark above is relative to THIS value, so the alarm
+      # trips (and back-pressure starts) well before the kernel would OOM-kill.
+      resources:
+        limits:
+          memory: ${RABBITMQ_MEMORY_LIMIT:-1G}
 
 YAML
   fi

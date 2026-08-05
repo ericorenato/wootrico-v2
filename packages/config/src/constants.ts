@@ -1,5 +1,15 @@
 /** Shared constants across apps and packages. */
 
+/**
+ * Version of THIS build, surfaced by GET /api/system/info.
+ *
+ * Every instance pulls the same `:latest` image, so without this there is no way
+ * to tell which code a given customer is running short of comparing image dates.
+ * Bump it in the same commit that gets tagged, and keep it equal to the Docker
+ * tag that is published (`ericoautomacao/wootrico-v2:<APP_VERSION>`).
+ */
+export const APP_VERSION = '0.2.0';
+
 export const PROVIDER_TYPES = ['evolution', 'uazapi', 'zapi'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];
 

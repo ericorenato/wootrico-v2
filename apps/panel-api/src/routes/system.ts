@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { env, encrypt, decrypt, encryptJson, decryptJson } from '@wootrico/config';
+import { APP_VERSION, env, encrypt, decrypt, encryptJson, decryptJson } from '@wootrico/config';
 import { evaluateLicense, getLicenseState } from '@wootrico/license-client';
 import { pingRabbit, testRabbitUrl } from '@wootrico/queue';
 import { pingRedis, testRedisUrl } from '@wootrico/cache';
@@ -86,6 +86,9 @@ export default async function systemRoutes(app: FastifyInstance) {
 
     return {
       app: {
+        // Which build this instance runs — every install pulls the same
+        // `:latest`, so support needs this to know what code is out there.
+        version: APP_VERSION,
         publicBaseUrl,
         webhookBase: `${publicBaseUrl}/webhook`,
         setupCompleted: settings?.setupCompleted ?? false,
