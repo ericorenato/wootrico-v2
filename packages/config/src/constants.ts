@@ -8,7 +8,7 @@
  * Bump it in the same commit that gets tagged, and keep it equal to the Docker
  * tag that is published (`ericoautomacao/wootrico-v2:<APP_VERSION>`).
  */
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.2.1';
 
 export const PROVIDER_TYPES = ['evolution', 'uazapi', 'zapi'] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];
