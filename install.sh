@@ -505,11 +505,6 @@ YAML
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wootrico}
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
       RABBITMQ_NODE_PORT: "__RBPORT__"
-      # Alarm at 60% of the container limit below. WITHOUT a container limit
-      # RabbitMQ sizes this from the HOST's total RAM, so on a shared VPS it can
-      # grow to ~40% of the whole machine and starve Chatwoot/Postgres before its
-      # own alarm ever fires — which is exactly when publishers get blocked.
-      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: ${RABBITMQ_MEMORY_WATERMARK:-0.6}
     volumes: [rabbitmq_data:/var/lib/rabbitmq]
     networks: [wtnet]
     healthcheck:
@@ -521,9 +516,16 @@ YAML
       replicas: 1
       restart_policy: { condition: any, delay: 5s }
       placement: { constraints: [node.role == manager] }
-      # Hard ceiling for the broker. Raise it on a busy instance; lower it on a
-      # small VPS. The watermark above is relative to THIS value, so the alarm
-      # trips (and back-pressure starts) well before the kernel would OOM-kill.
+      # Hard ceiling for the broker. Without it RabbitMQ sizes its memory alarm
+      # from the HOST's total RAM (40% of it), so on a VPS shared with Chatwoot
+      # it can grow until the whole machine chokes — and a blocked broker is
+      # exactly what stalls the webhook pipeline. With a cgroup limit set, the
+      # alarm is computed from THIS value instead (default watermark 0.4, i.e.
+      # ~410M for 1G), which trips long before the kernel would OOM-kill.
+      # NOTE: do NOT add RABBITMQ_VM_MEMORY_HIGH_WATERMARK as an env var — it is
+      # deprecated since RabbitMQ 3.9 and the image REFUSES TO BOOT with it set.
+      # Tuning the ratio would require mounting a rabbitmq.conf; the container
+      # limit alone is enough here.
       resources:
         limits:
           memory: ${RABBITMQ_MEMORY_LIMIT:-1G}
