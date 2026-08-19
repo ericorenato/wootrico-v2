@@ -61,6 +61,21 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
 
         // Same person seen under two separate rows → merge (LID is the stable id).
         if (byLid && byPn && byLid.id !== byPn.id) {
+          // ...unless the two rows already carry a DIFFERENT counterpart. Then this
+          // event contradicts an established pairing and merging would fuse two
+          // distinct people into one identity — irreversibly, dragging their
+          // Chatwoot contact and conversation with it. A single bad pairing (e.g. a
+          // parser handing us the ACCOUNT OWNER's LID on an outgoing message) used
+          // to cascade from here until every contact shared one identity.
+          // Trust what is already paired, resolve by the LID (the address the
+          // message actually arrived on), and make the conflict visible.
+          if ((byLid.pn && byLid.pn !== pn) || (byPn.lid && byPn.lid !== lid)) {
+            logger.warn(
+              { pairedPn: !!byLid.pn, pairedLid: !!byPn.lid },
+              'identity: conflicting PN↔LID pairing — refusing to merge',
+            );
+            return toResolved(byLid);
+          }
           await tx.contactIdentity.delete({ where: { id: byPn.id } });
           const merged = await tx.contactIdentity.update({
             where: { id: byLid.id },

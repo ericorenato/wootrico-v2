@@ -7,6 +7,27 @@ function stripJid(v: string | undefined | null): string {
   return (v ?? '').split('@')[0] ?? '';
 }
 
+/**
+ * Classify a list of JID candidates into (phone, LID) by their SUFFIX.
+ *
+ * A LID (`123456@lid`) is not a phone number: taken as one it becomes a bogus
+ * 15+ digit contact number in Chatwoot and a duplicate of the same person. So
+ * candidates are routed by suffix and a bare (suffix-less) value is only
+ * accepted as a phone number.
+ */
+function classifyJids(...candidates: Array<unknown>): { pn: string | null; lid: string | null } {
+  let pn: string | null = null;
+  let lid: string | null = null;
+  for (const raw of candidates) {
+    const j = typeof raw === 'string' ? raw.trim() : '';
+    if (!j || j.endsWith('@g.us')) continue;
+    if (j.endsWith('@lid')) lid ||= stripJid(j);
+    else if (j.endsWith('@s.whatsapp.net') || j.endsWith('@c.us') || !j.includes('@'))
+      pn ||= stripJid(j);
+  }
+  return { pn, lid };
+}
+
 function mapMediaType(m: Record<string, any>): MessageType | null {
   const raw = (m.mediaType || '').toString().toLowerCase();
   const typeName = (m.messageType || '').toString().toLowerCase();
@@ -61,16 +82,23 @@ export function parseUazapiInbound(
     (typeof m.chatid === 'string' && m.chatid.endsWith('@g.us')) ||
     (typeof chat.wa_chatid === 'string' && chat.wa_chatid.endsWith('@g.us'));
 
-  // uazapi exposes the sender's phone (sender_pn) and LID (sender_lid) directly.
-  // The contact is always the OTHER party: for an outgoing (fromMe) DM the
-  // sender is US, so the contact comes from the chat id instead.
+  // uazapi exposes the sender's phone (sender_pn) and LID (sender_lid) directly,
+  // but EVERY `sender*` field describes whoever SENT the message. On a fromMe DM
+  // that is the account owner, not the contact — so an outgoing DM must take both
+  // identifiers from the CHAT (the recipient). Reading `sender_lid` there paired
+  // the contact's phone with the OWNER's LID, and resolveIdentity then merged the
+  // two rows: every contact answered from the phone collapsed onto one canonical
+  // identity, scrambling names, avatars and conversations.
+  //
+  // In a group the chat id is the group, never a person, so only the sender
+  // fields are used (classifyJids drops @g.us anyway).
   const fromMe = !!m.fromMe;
-  const pnRaw =
-    !isGroup && fromMe
-      ? stripJid(m.chatid) || stripJid(m.sender_pn)
-      : stripJid(m.sender_pn) || stripJid(m.sender) || stripJid(m.chatid);
+  const { pn: pnRaw, lid: lidRaw } = isGroup
+    ? classifyJids(m.sender_pn, m.sender, m.sender_lid, m.lid)
+    : fromMe
+      ? classifyJids(m.chatid, chat.wa_chatid, m.chat_lid, m.chatid_lid)
+      : classifyJids(m.sender_pn, m.sender, m.sender_lid, m.lid, m.chatid, chat.wa_chatid);
   const { digits } = pnRaw ? normalizePhone(pnRaw, ctx.defaultCountry) : { digits: null };
-  const lidRaw = stripJid(m.sender_lid) || stripJid(m.lid);
 
   // Reaction: uazapi puts the *reacted message id* in m.reaction (a WhatsApp id
   // string) and the emoji in the text field. Chatwoot has no reaction type, so we
@@ -114,10 +142,17 @@ export function parseUazapiInbound(
     jid: pnRaw || null,
     text,
     media,
-    name: chat.name ?? chat.wa_name ?? chat.wa_contactName ?? body.name ?? null,
-    senderName: m.senderName ?? null,
+    // Chat-scoped fields describe the CONTACT and are safe in both directions.
+    // `m.senderName` / `m.senderProfilePic` describe the SENDER, so on a fromMe
+    // message they are the account owner's — using them renamed the contact after
+    // ourselves and overwrote its avatar with our own profile picture.
+    name: chat.name ?? chat.wa_name ?? chat.wa_contactName ?? null,
+    senderName: fromMe ? null : (m.senderName ?? null),
     senderPhoto:
-      chat.imagePreview ?? chat.image ?? chat.thumbnail ?? m.senderProfilePic ?? null,
+      chat.imagePreview ??
+      chat.image ??
+      chat.thumbnail ??
+      (fromMe ? null : (m.senderProfilePic ?? null)),
     isGroup: !!isGroup,
     groupId: isGroup ? (chat.wa_chatid ?? m.chatid ?? null) : null,
     groupName: isGroup ? (m.groupName ?? chat.name ?? null) : null,

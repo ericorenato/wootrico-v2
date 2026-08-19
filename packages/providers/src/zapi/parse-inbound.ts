@@ -44,6 +44,8 @@ export function parseZapiInbound(
 ): NormalizedInboundMessage {
   const body = (payload ?? {}) as Record<string, any>;
 
+  const fromMe = !!body.fromMe;
+
   const base: NormalizedInboundMessage = {
     origin: 'zapi',
     kind: 'message',
@@ -51,7 +53,7 @@ export function parseZapiInbound(
     text: '',
     name: null,
     isGroup: false,
-    fromMe: !!body.fromMe,
+    fromMe,
     fromApi: !!body.fromApi,
     providerMessageId: body.messageId ?? null,
     raw: payload,
@@ -85,9 +87,9 @@ export function parseZapiInbound(
       phone: pnDigits,
       jid: body.phone ?? null,
       text: `reagiu com ${emoji}`,
-      name: body.senderName ?? body.chatName ?? null,
-      senderName: body.senderName ?? null,
-      senderPhoto: body.photo ?? body.senderPhoto ?? null,
+      name: fromMe ? (body.chatName ?? null) : (body.senderName ?? body.chatName ?? null),
+      senderName: fromMe ? null : (body.senderName ?? null),
+      senderPhoto: fromMe ? null : (body.photo ?? body.senderPhoto ?? null),
       isGroup: isGroupR,
       groupId: isGroupR ? (body.phone ?? null) : null,
       groupName: isGroupR ? (body.chatName ?? null) : null,
@@ -107,9 +109,12 @@ export function parseZapiInbound(
     jid: body.phone ?? null,
     text,
     media,
-    name: body.senderName ?? body.chatName ?? null,
-    senderName: body.senderName ?? null,
-    senderPhoto: body.photo ?? body.senderPhoto ?? null,
+    // `senderName`/`photo` describe whoever SENT the message: on a fromMe message
+    // that is the account owner, so using them renames the contact after ourselves
+    // and overwrites its avatar with our own profile picture.
+    name: fromMe ? (body.chatName ?? null) : (body.senderName ?? body.chatName ?? null),
+    senderName: fromMe ? null : (body.senderName ?? null),
+    senderPhoto: fromMe ? null : (body.photo ?? body.senderPhoto ?? null),
     isGroup,
     groupId: isGroup ? (body.phone ?? null) : null,
     groupName: isGroup ? (body.chatName ?? null) : null,

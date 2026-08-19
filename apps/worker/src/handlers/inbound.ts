@@ -164,10 +164,15 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     }
 
     let created: any;
-    if (norm.media) {
-      let base64 = norm.media.base64;
-      let mime = norm.media.mimeType;
-      if (!base64) {
+    let base64 = norm.media?.base64;
+    let mime = norm.media?.mimeType;
+    if (norm.media && !base64) {
+      // A media download that fails must NOT cost us the whole message: throwing
+      // here sent the job through the retry queue and finally to the dead-letter,
+      // so the text/caption was lost too — and when it was the FIRST message of a
+      // chat, the conversation never showed up in Chatwoot at all. Mirror a notice
+      // instead, so the agent knows to open WhatsApp.
+      try {
         const dl = await provider.downloadMedia({
           providerMessageId: norm.providerMessageId ?? undefined,
           url: norm.media.url,
@@ -176,7 +181,14 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         });
         base64 = dl.base64;
         mime = dl.mimeType ?? mime;
+      } catch (err) {
+        logger.warn(
+          { err, integrationId, messageType: norm.media.type },
+          'inbound: media download failed — mirroring as text',
+        );
       }
+    }
+    if (norm.media && base64) {
       mime = mime ?? 'application/octet-stream';
       // Media library (best-effort, never blocks the mirror). Capture the
       // counterparty number/jid/lid + who sent it for later search/filter.
@@ -212,9 +224,17 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         sourceId: norm.providerMessageId ?? undefined,
       });
     } else {
+      // Chatwoot rejects a message with neither content nor attachment (422),
+      // which the queue treats as permanent and dead-letters — silently losing
+      // the message AND, for a first contact, the conversation. Anything we
+      // couldn't render (unsupported WhatsApp type, undownloadable media) gets a
+      // placeholder so the thread always exists in Chatwoot.
+      const fallback = norm.media
+        ? `📎 _${norm.media.type} recebido, mas não foi possível baixá-lo. Confira no WhatsApp._`
+        : '_(mensagem sem conteúdo suportado — confira no WhatsApp)_';
       created = await chatwoot.createMessage({
         conversationId,
-        content: body,
+        content: body.trim() ? body : fallback,
         messageType: direction,
         inReplyTo,
         sourceId: norm.providerMessageId ?? undefined,
