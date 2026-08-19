@@ -54,15 +54,34 @@ const table = (rows, cols) => {
     ['direction', 'message_type', 'kind', 'is_group', 'qtd'],
   );
 
-  // Quantos contatos/conversas distintos o wootrico está enxergando agora. Se as
-  // conversas estavam misturadas, o esperado depois do reset é este número voltar
-  // a crescer na proporção dos contatos reais.
+  // TESTE RETROATIVO DA FUSÃO DE IDENTIDADES.
+  //
+  // `conversations` é agrupada por peer_key — o id canônico da identidade — e é
+  // gravada ANTES do espelho no Chatwoot, então guarda o histórico completo,
+  // inclusive o de antes da correção. Numa conversa 1-a-1 só existe UM remetente
+  // possível: o contato. Se uma linha não-grupo acumulou VÁRIOS remetentes
+  // distintos, pessoas diferentes foram escritas sob a mesma identidade — a
+  // assinatura da fusão. Grupos têm vários remetentes por natureza e ficam fora.
+  console.log('\n== conversas 1-a-1 com mais de um remetente (assinatura da fusão) ==');
+  table(
+    await prisma.$queryRawUnsafe(`
+      SELECT coalesce(c.contact_name,'-') AS contato,
+             coalesce(c.contact_number,'-') AS numero,
+             count(DISTINCT m.sender)::int AS remetentes,
+             count(m.id)::int AS mensagens
+      FROM conversations c
+      JOIN conversation_messages m ON m.conversation_id = c.id
+      WHERE c.is_group = false AND m.sender IS NOT NULL
+      GROUP BY c.id, c.contact_name, c.contact_number
+      HAVING count(DISTINCT m.sender) > 1
+      ORDER BY remetentes DESC LIMIT 15`),
+    ['contato', 'numero', 'remetentes', 'mensagens'],
+  );
+
   const [ident] = await prisma.$queryRawUnsafe('SELECT count(*)::int AS n FROM contact_identities');
-  const [peers] = await prisma.$queryRawUnsafe(
-    `SELECT count(*)::int AS n FROM conversation_logs WHERE updated_at > now() - interval '${H} hours'`,
-  ).catch(() => [{ n: null }]);
+  const [convs] = await prisma.$queryRawUnsafe('SELECT count(*)::int AS n FROM conversations');
   console.log(`\nidentidades no diretório: ${ident.n}`);
-  if (peers.n !== null) console.log(`conversas tocadas na janela: ${peers.n}`);
+  console.log(`conversas no histórico:   ${convs.n}`);
 
   await prisma.$disconnect();
 })().catch((err) => { console.error(err); process.exit(1); });
