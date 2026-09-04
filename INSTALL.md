@@ -90,6 +90,54 @@ baixa o `install.sh` mais recente e se re-executa. O one-liner também funciona 
 
 ---
 
+## 3. Instalação via Docker Compose (Coolify / Portainer / Dockge)
+
+Para o cliente que **não quer usar o terminal** e já tem um painel de deploy. Use o
+`docker-compose.coolify.yml` — ele não builda nada, só puxa a imagem pública do Docker
+Hub e sobe painel + worker + Postgres/RabbitMQ/Redis embarcados. Todos os pontos que
+precisam de ajuste (senhas, hosts, domínio, rede, infra externa) estão comentados no
+próprio arquivo.
+
+O arquivo também é servido publicamente (o repositório é privado, o cliente não clona nada):
+
+```
+https://wootrico.ericorenato.com.br/wootrico-compose.yml
+```
+
+**No Coolify:**
+
+1. Project → **+ New Resource** → **Docker Compose (Empty)**
+2. Cole o conteúdo de [`docker-compose.coolify.yml`](docker-compose.coolify.yml)
+   (ou copie direto da seção **Instalação** em `wootrico.ericorenato.com.br`)
+3. Aba **Environment Variables** — o Coolify lista sozinho as variáveis `${...}`.
+   Preencha as 5 obrigatórias:
+
+   | Variável | Como obter |
+   |---|---|
+   | `POSTGRES_PASSWORD` | invente uma senha forte (uso interno) |
+   | `RABBITMQ_PASSWORD` | idem |
+   | `PUBLIC_BASE_URL` | `https://SEU_DOMINIO` (sem barra no final) |
+   | `JWT_SECRET` | `openssl rand -base64 48` |
+   | `APP_ENCRYPTION_KEY` | `openssl rand -base64 32` (**tem** que ser 32 bytes) |
+
+4. Aba **Domains** do serviço `app` → domínio + porta **3000**. O Coolify cuida do
+   proxy e do TLS (não use o `docker-compose.traefik.yml` nesse caso).
+5. **Deploy** → abra `https://SEU_DOMINIO` e conclua o setup wizard (admin + licença).
+
+**Fora do Coolify** (Portainer, Dockge, `docker compose` puro): copie
+`.env.compose.example` para `.env`, preencha, descomente o bloco `ports:` do serviço
+`app` e rode `docker compose -f docker-compose.coolify.yml up -d`.
+
+> ⚠️ **Nunca defina `LICENSE_SERVER_URL`** nesse fluxo. A URL do servidor de licença já
+> vem embutida na imagem; declará-la em runtime sobrescreve o valor correto e derruba a
+> licença. Pelo mesmo motivo o compose não usa `env_file`.
+
+Diferenças em relação ao `install.sh`: não registra o comando `wootrico`, não instala
+Traefik e não gera os segredos sozinho — atualizar é redeployar pelo painel (o Coolify
+faz o `pull` da `:latest`). As migrações de banco continuam rodando sozinhas no boot.
+
+---
+
 ## Imagens Docker
 
 | Imagem | Alvo | Quem hospeda |
