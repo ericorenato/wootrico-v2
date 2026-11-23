@@ -179,7 +179,7 @@ export function parseEvolutionInbound(
     else if (j.endsWith('@s.whatsapp.net') || j.endsWith('@c.us')) pnJid ||= j;
   }
   const phoneDigits = pnJid
-    ? normalizePhone(stripJid(pnJid), ctx.defaultCountry).digits
+    ? normalizePhone(stripJid(pnJid), ctx.defaultCountry, { international: true }).digits
     : null;
   const lid = lidJid ? stripJid(lidJid) : null;
 
@@ -198,7 +198,7 @@ export function parseEvolutionInbound(
       ? (groupData.Participants as any[])
           .map((p) => ({
             pn: p?.PhoneNumber?.endsWith?.('@s.whatsapp.net')
-              ? normalizePhone(stripJid(p.PhoneNumber), ctx.defaultCountry).digits
+              ? normalizePhone(stripJid(p.PhoneNumber), ctx.defaultCountry, { international: true }).digits
               : null,
             lid: (p?.LID ?? p?.JID)?.endsWith?.('@lid') ? stripJid(p.LID ?? p.JID) : null,
             // whatsmeow serializes the participant's name as DisplayName.

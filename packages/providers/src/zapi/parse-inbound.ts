@@ -81,7 +81,7 @@ export function parseZapiInbound(
       return { ...base, kind: 'ignored' };
     }
     const pnDigits =
-      !isGroupR && body.phone ? normalizePhone(body.phone, ctx.defaultCountry).digits : null;
+      !isGroupR && body.phone ? normalizePhone(body.phone, ctx.defaultCountry, { international: true }).digits : null;
     return {
       ...base,
       phone: pnDigits,
@@ -101,7 +101,7 @@ export function parseZapiInbound(
   const media = mediaFromBody(body);
   const text = body.text?.message ?? media?.caption ?? '';
   const phoneDigits =
-    !isGroup && body.phone ? normalizePhone(body.phone, ctx.defaultCountry).digits : null;
+    !isGroup && body.phone ? normalizePhone(body.phone, ctx.defaultCountry, { international: true }).digits : null;
 
   const result: NormalizedInboundMessage = {
     ...base,

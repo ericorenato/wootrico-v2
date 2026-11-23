@@ -98,7 +98,7 @@ export function parseUazapiInbound(
     : fromMe
       ? classifyJids(m.chatid, chat.wa_chatid, m.chat_lid, m.chatid_lid)
       : classifyJids(m.sender_pn, m.sender, m.sender_lid, m.lid, m.chatid, chat.wa_chatid);
-  const { digits } = pnRaw ? normalizePhone(pnRaw, ctx.defaultCountry) : { digits: null };
+  const { digits } = pnRaw ? normalizePhone(pnRaw, ctx.defaultCountry, { international: true }) : { digits: null };
 
   // Reaction: uazapi puts the *reacted message id* in m.reaction (a WhatsApp id
   // string) and the emoji in the text field. Chatwoot has no reaction type, so we

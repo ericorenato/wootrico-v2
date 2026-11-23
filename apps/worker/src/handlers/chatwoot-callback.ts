@@ -1,5 +1,5 @@
 import { hmac, logger } from '@wootrico/config';
-import { urlToBase64 } from '@wootrico/providers';
+import { urlToBase64, wrongBrazilianPrefix } from '@wootrico/providers';
 import { withLock, throttle } from '@wootrico/cache';
 import {
   storeMapping,
@@ -116,7 +116,10 @@ export async function handleChatwootCallback(
     canonicalKey = sender.identifier;
     sendTarget = sender.identifier;
   } else {
-    const pn = sender.phone_number ? String(sender.phone_number).replace(/\D/g, '') : null;
+    const rawPn = sender.phone_number ? String(sender.phone_number).replace(/\D/g, '') : null;
+    // A contact saved by an older version may carry a wrong `55` in front of an
+    // international number (+55 1 516…): send to the real number.
+    const pn = wrongBrazilianPrefix(rawPn) ?? rawPn;
     // Chatwoot's contact identifier is our canonical id (set on inbound); fall
     // back to resolving by phone so both paths agree on the same canonical key.
     const identity = pn
@@ -126,7 +129,7 @@ export async function handleChatwootCallback(
     // Prefer the contact's phone; else the number we discovered for it; else the
     // LID; never fall back to the canonical UUID as a send target.
     sendTarget =
-      pn ?? identity?.pn ?? (identity?.lid ? `${identity.lid}@lid` : sender.identifier);
+      pn ?? wrongBrazilianPrefix(identity?.pn) ?? identity?.pn ?? (identity?.lid ? `${identity.lid}@lid` : sender.identifier);
   }
   if (!canonicalKey || !sendTarget) return;
 

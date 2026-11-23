@@ -113,7 +113,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
       : (norm.name ?? norm.senderName ?? (discoveredPhone ?? sendTarget));
     const phoneNumber =
       !isGroup && discoveredPhone
-        ? normalizePhone(discoveredPhone, integration.defaultCountry).e164
+        ? normalizePhone(discoveredPhone, integration.defaultCountry, { international: true }).e164
         : undefined;
     // Prefix the participant name on group messages so it's clear who spoke.
     const body =

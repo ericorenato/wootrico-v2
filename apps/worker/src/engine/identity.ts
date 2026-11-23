@@ -1,5 +1,6 @@
 import { prisma } from '@wootrico/db';
 import { logger } from '@wootrico/config';
+import { wrongBrazilianPrefix } from '@wootrico/providers';
 
 /**
  * GLOBAL contact-identity directory (instance-wide, independent of company).
@@ -56,6 +57,17 @@ export async function resolveIdentity(input: IdentityInput): Promise<ResolvedIde
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       return await prisma.$transaction(async (tx) => {
+        // Heal a number the old normalization saved with a wrong `55` in front
+        // (a US/Canada number: 55 + 1 + 10 digits). Left alone, the row keeps
+        // the wrong number forever — replies go nowhere — and the right number
+        // would show up as a "conflicting pairing" below.
+        if (pn && wrongBrazilianPrefix(`55${pn}`) === pn) {
+          const wrong = await tx.contactIdentity.findUnique({ where: { pn: `55${pn}` } });
+          if (wrong && !(await tx.contactIdentity.findUnique({ where: { pn } }))) {
+            await tx.contactIdentity.update({ where: { id: wrong.id }, data: { pn } });
+            logger.info('identity: removed a wrong Brazilian prefix from an international number');
+          }
+        }
         const byLid = lid ? await tx.contactIdentity.findUnique({ where: { lid } }) : null;
         const byPn = pn ? await tx.contactIdentity.findUnique({ where: { pn } }) : null;
 
