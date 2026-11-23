@@ -20,6 +20,24 @@ export interface InboundMedia {
  * Provider-agnostic normalized inbound message. Every provider's parseInbound
  * returns this shape so the engine is provider-independent.
  */
+/**
+ * The Click-to-WhatsApp AD that started this conversation, when WhatsApp says
+ * so (`contextInfo.externalAdReply` on unofficial APIs). Same meaning as the
+ * Cloud API `referral` object; `ctwaClid` is the click id Meta uses to
+ * attribute conversions back to the ad.
+ */
+export interface InboundAdReferral {
+  ctwaClid: string | null;
+  sourceId: string | null;
+  sourceUrl: string | null;
+  sourceType: string | null;
+  headline: string | null;
+  body: string | null;
+  mediaType: string | null;
+  thumbnailUrl: string | null;
+  conversionSource: string | null;
+}
+
 export interface NormalizedInboundMessage {
   origin: ProviderType;
   kind: InboundKind;
@@ -51,6 +69,8 @@ export interface NormalizedInboundMessage {
   providerMessageId: string | null;
   replyToProviderMessageId?: string | null;
   editedProviderMessageId?: string | null;
+  /** The CTWA ad behind this message, when present (first message from an ad). */
+  adReferral?: InboundAdReferral | null;
   /**
    * True when we know a message was edited but the new text is NOT available
    * (e.g. Evolution GO forwards the edit as an undecrypted `secretEncryptedMessage`).

@@ -2,6 +2,7 @@ import { logger, hmac } from '@wootrico/config';
 import { normalizePhone } from '@wootrico/providers';
 import { assertLicenseActive } from '@wootrico/license-client';
 import { withLock, cacheGet, cacheSet } from '@wootrico/cache';
+import type { NormalizedInboundMessage } from '@wootrico/types';
 import type { ChatwootMessageType, ChatwootConversationStatus } from '@wootrico/chatwoot-client';
 import { storeMapping, getMappingByProviderId, removeByChatwootId } from '../engine/mapping.js';
 import { resolveIdentity, ingestDirectoryHints } from '../engine/identity.js';
@@ -222,6 +223,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         },
         inReplyTo,
         sourceId: norm.providerMessageId ?? undefined,
+        contentAttributes: referralAttributes(norm),
       });
     } else {
       // Chatwoot rejects a message with neither content nor attachment (422),
@@ -238,6 +240,7 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
         messageType: direction,
         inReplyTo,
         sourceId: norm.providerMessageId ?? undefined,
+        contentAttributes: referralAttributes(norm),
       });
     }
 
@@ -376,4 +379,26 @@ export async function handleInbound(payload: unknown, integrationId: string): Pr
     await mirror('outgoing');
     logCreated('outgoing');
   });
+}
+
+/**
+ * The CTWA ad as Chatwoot's WhatsApp Cloud channel stores it
+ * (`content_attributes.referral`, snake_case): whoever reads Chatwoot — the
+ * AI agents, reports — finds the ad in the same place whether the number is on
+ * the official API or on Wootrico.
+ */
+export function referralAttributes(norm: NormalizedInboundMessage): Record<string, unknown> | null {
+  const r = norm.adReferral;
+  if (!r || norm.fromMe) return null;
+  const referral: Record<string, string> = {};
+  if (r.sourceUrl) referral.source_url = r.sourceUrl;
+  if (r.sourceId) referral.source_id = r.sourceId;
+  if (r.sourceType) referral.source_type = r.sourceType;
+  if (r.headline) referral.headline = r.headline;
+  if (r.body) referral.body = r.body;
+  if (r.mediaType) referral.media_type = r.mediaType;
+  if (r.thumbnailUrl) referral.thumbnail_url = r.thumbnailUrl;
+  if (r.ctwaClid) referral.ctwa_clid = r.ctwaClid;
+  if (r.conversionSource) referral.conversion_source = r.conversionSource;
+  return Object.keys(referral).length > 0 ? { referral } : null;
 }

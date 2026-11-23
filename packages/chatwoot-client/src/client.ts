@@ -402,12 +402,18 @@ export class ChatwootClient {
     /** WhatsApp message id — persisted on the Chatwoot message for traceability
      *  and reply threading (in_reply_to_external_id). */
     sourceId?: string | null;
+    /** Extra `content_attributes` (e.g. the CTWA `referral`), merged in. */
+    contentAttributes?: Record<string, unknown> | null;
   }): Promise<any> {
     const body: Record<string, unknown> = {
       content: opts.content,
       message_type: opts.messageType,
     };
-    if (opts.inReplyTo) body.content_attributes = { in_reply_to: opts.inReplyTo };
+    const attrs = {
+      ...(opts.contentAttributes ?? {}),
+      ...(opts.inReplyTo ? { in_reply_to: opts.inReplyTo } : {}),
+    };
+    if (Object.keys(attrs).length > 0) body.content_attributes = attrs;
     if (opts.sourceId) body.source_id = opts.sourceId;
     const res = await this.http.post(
       this.acc(`/conversations/${opts.conversationId}/messages`),
@@ -424,6 +430,8 @@ export class ChatwootClient {
     inReplyTo?: string | number | null;
     /** WhatsApp message id — see createMessage. */
     sourceId?: string | null;
+    /** Extra `content_attributes` — see createMessage. */
+    contentAttributes?: Record<string, unknown> | null;
   }): Promise<any> {
     const form = new FormData();
     if (opts.content) form.append('content', opts.content);
@@ -432,9 +440,11 @@ export class ChatwootClient {
       filename: opts.attachment.filename,
       contentType: opts.attachment.contentType,
     });
-    if (opts.inReplyTo) {
-      form.append('content_attributes', JSON.stringify({ in_reply_to: opts.inReplyTo }));
-    }
+    const attrs = {
+      ...(opts.contentAttributes ?? {}),
+      ...(opts.inReplyTo ? { in_reply_to: opts.inReplyTo } : {}),
+    };
+    if (Object.keys(attrs).length > 0) form.append('content_attributes', JSON.stringify(attrs));
     if (opts.sourceId) form.append('source_id', opts.sourceId);
     const res = await this.http.post(
       this.acc(`/conversations/${opts.conversationId}/messages`),

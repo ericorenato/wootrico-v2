@@ -1,5 +1,5 @@
 import { logger, type MessageType } from '@wootrico/config';
-import type { InboundMedia, NormalizedInboundMessage } from '@wootrico/types';
+import type { InboundAdReferral, InboundMedia, NormalizedInboundMessage } from '@wootrico/types';
 import type { ParseContext } from '../provider.interface.js';
 import { normalizePhone } from '../util/phone.js';
 
@@ -163,10 +163,76 @@ export function parseUazapiInbound(
       content.contextInfo?.stanzaId ??
       null,
     editedProviderMessageId: m.edited ?? m.editMessageId ?? null,
+    adReferral: fromMe ? null : extractAdReferral(m, content),
   };
 
+  if (result.adReferral) {
+    // Keys only (no ad text, no click id): confirms the shape uazapi delivers.
+    logger.info(
+      { hasClid: !!result.adReferral.ctwaClid, hasSourceId: !!result.adReferral.sourceId, sourceType: result.adReferral.sourceType },
+      'uazapi inbound from a click-to-WhatsApp ad',
+    );
+  }
   if (result.editedProviderMessageId) result.kind = 'message_edited';
   if (isGroup && ctx.ignoreGroups) result.kind = 'ignored';
 
   return result;
+}
+
+// ───────────────────────── click-to-WhatsApp ads ─────────────────────────
+
+/** First non-empty string among the given keys (WhatsApp JSON varies in casing). */
+function pick(o: Record<string, any> | null | undefined, ...keys: string[]): string | null {
+  if (!o || typeof o !== 'object') return null;
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'number') return String(v);
+  }
+  return null;
+}
+
+/**
+ * The ad behind a message that came from a Click-to-WhatsApp ad.
+ *
+ * WhatsApp puts it in `contextInfo.externalAdReply` (whatsmeow/Baileys JSON:
+ * `ctwaClid`, `sourceID`, `sourceURL`, `sourceType`, `title`, `body`...). The
+ * `contextInfo` may live on the content itself or on the typed sub-message
+ * (`extendedTextMessage`, `imageMessage`...), and uazapi sometimes flattens
+ * it onto the message — so every place is tried, and every key casing.
+ */
+export function extractAdReferral(
+  m: Record<string, any>,
+  content: Record<string, any>,
+): InboundAdReferral | null {
+  const contexts: Record<string, any>[] = [];
+  const push = (c: unknown) => {
+    if (c && typeof c === 'object') contexts.push(c as Record<string, any>);
+  };
+  push(content.contextInfo);
+  push(m.contextInfo);
+  for (const v of Object.values(content)) {
+    if (v && typeof v === 'object' && (v as any).contextInfo) push((v as any).contextInfo);
+  }
+  for (const ctx of contexts) {
+    const ad = ctx.externalAdReply ?? ctx.ExternalAdReply ?? ctx.external_ad_reply;
+    if (!ad || typeof ad !== 'object') continue;
+    const ref: InboundAdReferral = {
+      ctwaClid: pick(ad, 'ctwaClid', 'ctwa_clid', 'CtwaClid', 'ctwaCLID'),
+      sourceId: pick(ad, 'sourceID', 'sourceId', 'source_id', 'SourceID'),
+      sourceUrl: pick(ad, 'sourceURL', 'sourceUrl', 'source_url', 'SourceURL'),
+      sourceType: pick(ad, 'sourceType', 'source_type', 'SourceType'),
+      headline: pick(ad, 'title', 'Title', 'headline'),
+      body: pick(ad, 'body', 'Body'),
+      mediaType: pick(ad, 'mediaType', 'media_type', 'MediaType'),
+      thumbnailUrl: pick(ad, 'thumbnailURL', 'thumbnailUrl', 'thumbnail_url', 'ThumbnailURL'),
+      conversionSource: pick(ctx, 'conversionSource', 'conversion_source', 'entryPointConversionSource'),
+    };
+    // Only an AD counts: a link preview of any site also uses externalAdReply,
+    // but it carries no click id, no ad id and no ad conversion source.
+    if (ref.ctwaClid || ref.sourceId || /_?ads?$/i.test(ref.conversionSource ?? '') || (ref.sourceType ?? '').toLowerCase() === 'ad') {
+      return ref;
+    }
+  }
+  return null;
 }
